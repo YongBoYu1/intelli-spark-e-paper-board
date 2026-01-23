@@ -6,19 +6,8 @@ import time
 import logging
 from PIL import Image, ImageDraw, ImageFont
 
-base_dir = os.path.dirname(os.path.realpath(__file__))
-default_root = os.path.dirname(base_dir)
-picdir = os.path.join(default_root, 'pic')
-libdir = os.path.join(default_root, 'lib')
-
-# Auto-detect Waveshare repo cloned at /e-Paper on Raspberry Pi
-if (not os.path.exists(picdir)) or (not os.path.exists(libdir)):
-    alt_root = "/e-Paper/RaspberryPi_JetsonNano/python"
-    alt_pic = os.path.join(alt_root, 'pic')
-    alt_lib = os.path.join(alt_root, 'lib')
-    if os.path.exists(alt_pic) and os.path.exists(alt_lib):
-        picdir = alt_pic
-        libdir = alt_lib
+picdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pic')
+libdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'lib')
 if os.path.exists(libdir):
     sys.path.append(libdir)
 
