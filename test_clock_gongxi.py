@@ -4,6 +4,7 @@ import sys
 import os
 import time
 import logging
+import glob
 from PIL import Image, ImageDraw, ImageFont
 
 base_dir = os.path.dirname(os.path.realpath(__file__))
@@ -11,16 +12,35 @@ default_root = os.path.dirname(base_dir)
 picdir = os.path.join(default_root, 'pic')
 libdir = os.path.join(default_root, 'lib')
 
-# Auto-detect Waveshare repo cloned at /e-Paper on Raspberry Pi
-if (not os.path.exists(picdir)) or (not os.path.exists(libdir)):
-    alt_root = "/e-Paper/RaspberryPi_JetsonNano/python"
-    alt_pic = os.path.join(alt_root, 'pic')
-    alt_lib = os.path.join(alt_root, 'lib')
-    if os.path.exists(alt_pic) and os.path.exists(alt_lib):
-        picdir = alt_pic
-        libdir = alt_lib
+# Auto-detect Waveshare repo paths on Raspberry Pi
+candidate_roots = []
+env_root = os.environ.get("WAVESHARE_PYTHON_ROOT")
+if env_root:
+    candidate_roots.append(env_root)
+candidate_roots.extend(
+    [
+        default_root,
+        "/e-Paper/RaspberryPi_JetsonNano/python",
+        "/root/e-Paper/RaspberryPi_JetsonNano/python",
+        "/home/pi/e-Paper/RaspberryPi_JetsonNano/python",
+        "/home/agentpi/e-Paper/RaspberryPi_JetsonNano/python",
+    ]
+)
+candidate_roots.extend(glob.glob("/home/*/e-Paper/RaspberryPi_JetsonNano/python"))
+
+for root in candidate_roots:
+    cand_pic = os.path.join(root, 'pic')
+    cand_lib = os.path.join(root, 'lib')
+    if os.path.exists(cand_pic) and os.path.exists(cand_lib):
+        picdir = cand_pic
+        libdir = cand_lib
+        break
+
 if os.path.exists(libdir):
     sys.path.append(libdir)
+else:
+    logging.error("waveshare_epd lib not found. Set WAVESHARE_PYTHON_ROOT or update paths.")
+    logging.error("Tried roots: %s", ", ".join(candidate_roots))
 
 from waveshare_epd import epd7in5_V2
 
