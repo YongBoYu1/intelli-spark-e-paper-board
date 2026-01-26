@@ -69,6 +69,7 @@ LONGITUDE = 116.4074
 USE_CITY_NAME = True  # If True, use geocoding by city name; otherwise use LAT/LON
 FORECAST_DAYS = 4
 WEATHER_REFRESH_SEC = 15 * 60
+SELECTION_FULL_PARTIAL = True
 
 WEATHER_CODE_TEXT = {
     0: u"晴朗",
@@ -184,9 +185,9 @@ def _display_full_partial(epd, image, w, h):
     _display_partial(epd, image, 0, 0, w, h)
 
 
-SELECT_MARK_SIZE = 14
-SELECT_MARK_MARGIN = 10
-SELECT_MARK_PAD = 2
+SELECT_MARK_SIZE = 16
+SELECT_MARK_MARGIN = 12
+SELECT_MARK_PAD = 6
 
 
 def _http_get_json(url, timeout=8):
@@ -468,16 +469,16 @@ try:
 
     def draw_selection(draw, selected_key):
         if selected_key in boxes:
-            x0, y0, _, _ = boxes[selected_key]
-            mx0 = x0 + SELECT_MARK_MARGIN
+            x0, y0, x1, _ = boxes[selected_key]
+            mx0 = x1 - SELECT_MARK_MARGIN - SELECT_MARK_SIZE
             my0 = y0 + SELECT_MARK_MARGIN
             mx1 = mx0 + SELECT_MARK_SIZE
             my1 = my0 + SELECT_MARK_SIZE
             draw.rectangle((mx0, my0, mx1, my1), fill=0)
 
     def selection_regions(box):
-        x0, y0, _, _ = box
-        mx0 = x0 + SELECT_MARK_MARGIN
+        x0, y0, x1, _ = box
+        mx0 = x1 - SELECT_MARK_MARGIN - SELECT_MARK_SIZE
         my0 = y0 + SELECT_MARK_MARGIN
         mx1 = mx0 + SELECT_MARK_SIZE
         my1 = my0 + SELECT_MARK_SIZE
@@ -615,6 +616,7 @@ try:
                     last_sec = sec
                     frame = base_home.copy()
                     frame_draw = ImageDraw.Draw(frame)
+                    draw_selection(frame_draw, selected)
                     frame_draw.text((time_x, time_y), time.strftime('%H:%M:%S', time.localtime(now)), font=font_time, fill=0)
                     _display_partial(epd, frame, time_box[0], time_box[1], time_box_w, time_box_h)
 
@@ -675,17 +677,20 @@ try:
                     frame_draw = ImageDraw.Draw(frame)
                     draw_selection(frame_draw, selected)
                     frame_draw.text((time_x, time_y), time.strftime('%H:%M:%S'), font=font_time, fill=0)
-                    regions = selection_regions(boxes[prev_selected]) + selection_regions(boxes[selected])
-                    for rx0, ry0, rx1, ry1 in regions:
-                        rx0 = _align8_floor(int(max(0, rx0)))
-                        ry0 = _align8_floor(int(max(0, ry0)))
-                        rx1 = _align8_ceil(int(min(w, rx1)))
-                        ry1 = _align8_ceil(int(min(h, ry1)))
-                        if rx1 <= rx0 or ry1 <= ry0:
-                            continue
-                        region_w = rx1 - rx0
-                        region_h = ry1 - ry0
-                        _display_partial(epd, frame, rx0, ry0, region_w, region_h)
+                    if SELECTION_FULL_PARTIAL:
+                        _display_full_partial(epd, frame, w, h)
+                    else:
+                        regions = selection_regions(boxes[prev_selected]) + selection_regions(boxes[selected])
+                        for rx0, ry0, rx1, ry1 in regions:
+                            rx0 = _align8_floor(int(max(0, rx0)))
+                            ry0 = _align8_floor(int(max(0, ry0)))
+                            rx1 = _align8_ceil(int(min(w, rx1)))
+                            ry1 = _align8_ceil(int(min(h, ry1)))
+                            if rx1 <= rx0 or ry1 <= ry0:
+                                continue
+                            region_w = rx1 - rx0
+                            region_h = ry1 - ry0
+                            _display_partial(epd, frame, rx0, ry0, region_w, region_h)
                 elif key == 'enter' and selected == 'weather':
                     view = "weather"
                     _display_full_partial(epd, draw_loading_page(), w, h)
