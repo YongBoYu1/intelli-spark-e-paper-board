@@ -18,6 +18,8 @@ base_dir = os.path.dirname(os.path.realpath(__file__))
 default_root = os.path.dirname(base_dir)
 picdir = os.path.join(default_root, 'pic')
 libdir = os.path.join(default_root, 'lib')
+LOG_PATH = os.path.join(base_dir, "run.log")
+LAST_FRAME_PATH = os.path.join(base_dir, "last_frame.png")
 
 # Auto-detect Waveshare repo paths on Raspberry Pi
 candidate_roots = []
@@ -51,7 +53,13 @@ else:
 
 from waveshare_epd import epd7in5_V2
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler(LOG_PATH, mode="a", encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
 
 # Weather config
 CITY_NAME = u"北京"
@@ -146,8 +154,34 @@ def _align8_floor(x):
     return x - (x % 8)
 
 
+last_frame_image = None
+
+
+def _save_last_frame(image):
+    try:
+        if image is None:
+            return
+        image.save(LAST_FRAME_PATH)
+    except Exception as e:
+        logging.error("save last_frame.png failed: %s", e)
+
+
+def _display_full(epd, image):
+    global last_frame_image
+    last_frame_image = image
+    _save_last_frame(image)
+    epd.display(epd.getbuffer(image))
+
+
+def _display_partial(epd, image, x, y, w, h):
+    global last_frame_image
+    last_frame_image = image
+    _save_last_frame(image)
+    epd.display_Partial(epd.getbuffer(image), x, y, w, h)
+
+
 def _display_full_partial(epd, image, w, h):
-    epd.display_Partial(epd.getbuffer(image), 0, 0, w, h)
+    _display_partial(epd, image, 0, 0, w, h)
 
 
 SELECT_MARK_SIZE = 14
@@ -547,7 +581,7 @@ try:
     frame_draw = ImageDraw.Draw(frame)
     draw_selection(frame_draw, selected)
     frame_draw.text((time_x, time_y), time.strftime('%H:%M:%S'), font=font_time, fill=0)
-    epd.display(epd.getbuffer(frame))
+    _display_full(epd, frame)
 
     logging.info("start event loop")
     epd.init_part()
@@ -582,7 +616,7 @@ try:
                     frame = base_home.copy()
                     frame_draw = ImageDraw.Draw(frame)
                     frame_draw.text((time_x, time_y), time.strftime('%H:%M:%S', time.localtime(now)), font=font_time, fill=0)
-                    epd.display_Partial(epd.getbuffer(frame), time_box[0], time_box[1], time_box_w, time_box_h)
+                    _display_partial(epd, frame, time_box[0], time_box[1], time_box_w, time_box_h)
 
             # Auto refresh weather data while on weather page
             if view == "weather" and (now - last_fetch) > WEATHER_REFRESH_SEC:
@@ -622,14 +656,6 @@ try:
                     key = 'right'
                 elif seq == '[D':
                     key = 'left'
-            elif ch in ('w', 'W'):
-                key = 'up'
-            elif ch in ('s', 'S'):
-                key = 'down'
-            elif ch in ('a', 'A'):
-                key = 'left'
-            elif ch in ('d', 'D'):
-                key = 'right'
             elif ch in ('\r', '\n', ' '):
                 key = 'enter'
             elif ch in ('e', 'E'):
@@ -638,6 +664,8 @@ try:
                 key = 'back'
             elif ch in ('r', 'R'):
                 key = 'refresh'
+            elif ch in ('s', 'S'):
+                key = 'snapshot'
 
             if view == "home":
                 if key and key in neighbors.get(selected, {}):
@@ -657,7 +685,7 @@ try:
                             continue
                         region_w = rx1 - rx0
                         region_h = ry1 - ry0
-                        epd.display_Partial(epd.getbuffer(frame), rx0, ry0, region_w, region_h)
+                        _display_partial(epd, frame, rx0, ry0, region_w, region_h)
                 elif key == 'enter' and selected == 'weather':
                     view = "weather"
                     _display_full_partial(epd, draw_loading_page(), w, h)
@@ -669,6 +697,9 @@ try:
                         weather_error = str(e)
                     page = draw_weather_page(weather_data, weather_error)
                     _display_full_partial(epd, page, w, h)
+                elif key == 'snapshot':
+                    _save_last_frame(last_frame_image)
+                    logging.info("snapshot saved to %s", LAST_FRAME_PATH)
             else:
                 if key == 'back':
                     view = "home"
@@ -688,6 +719,9 @@ try:
                         weather_error = str(e)
                     page = draw_weather_page(weather_data, weather_error)
                     _display_full_partial(epd, page, w, h)
+                elif key == 'snapshot':
+                    _save_last_frame(last_frame_image)
+                    logging.info("snapshot saved to %s", LAST_FRAME_PATH)
 
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
