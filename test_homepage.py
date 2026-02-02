@@ -11,9 +11,23 @@ import termios
 import tty
 import urllib.request
 import urllib.parse
-from datetime import datetime
+import subprocess
+import signal
+import threading
+import re
+from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageFont
 
+# Optional: GPIO and Gemini SDK
+try:
+    import RPi.GPIO as GPIO
+except Exception:
+    GPIO = None
+
+try:
+    from google import genai
+except Exception:
+    genai = None
 base_dir = os.path.dirname(os.path.realpath(__file__))
 default_root = os.path.dirname(base_dir)
 picdir = os.path.join(default_root, 'pic')
@@ -71,6 +85,26 @@ FORECAST_DAYS = 4
 WEATHER_REFRESH_SEC = 15 * 60
 SELECTION_FULL_PARTIAL = True
 
+# Todo / voice config
+TODO_PATH = os.path.join(base_dir, "todo.txt")
+REMINDER_PATH = os.path.join(base_dir, "reminders.json")
+TODO_REFRESH_SEC = 10
+MAX_TODO_SHOW = 2
+REMINDER_REFRESH_SEC = 10
+
+BUTTON_PIN = 5  # BCM pin for voice trigger (avoid 17 which is e-Paper RST)
+BUTTON_ACTIVE_LOW = True
+DEBOUNCE_MS = 200
+
+AUDIO_DEVICE = "default"  # use `arecord -l` to find, e.g., "plughw:1,0"
+AUDIO_RATE = 16000
+AUDIO_CHANNELS = 1
+RECORD_MAX_SEC = 8
+AUDIO_PATH = "/tmp/voice_todo.wav"
+
+GEMINI_MODEL = "gemini-2.5-flash"
+API_KEY_ENV = "GOOGLE_API_KEY"
+
 WEATHER_CODE_TEXT = {
     0: u"晴朗",
     1: u"大部晴朗",
@@ -118,6 +152,33 @@ def _center_text(draw, text, font, box):
     draw.text((x, y), text, font=font, fill=0)
 
 
+def _truncate_text(draw, text, font, max_width):
+    if not text:
+        return text
+    try:
+        width = draw.textlength(text, font=font)
+    except Exception:
+        width = _text_size(draw, text, font)[0]
+    if width <= max_width:
+        return text
+    ellipsis = u"..."
+    try:
+        ell_w = draw.textlength(ellipsis, font=font)
+    except Exception:
+        ell_w = _text_size(draw, ellipsis, font)[0]
+    max_width = max(0, max_width - ell_w)
+    trimmed = text
+    while trimmed:
+        try:
+            cur_w = draw.textlength(trimmed, font=font)
+        except Exception:
+            cur_w = _text_size(draw, trimmed, font)[0]
+        if cur_w <= max_width:
+            break
+        trimmed = trimmed[:-1]
+    return (trimmed + ellipsis) if trimmed else ellipsis
+
+
 def _draw_checkbox(draw, x, y, size, checked=False):
     draw.rectangle((x, y, x + size, y + size), outline=0, fill=255)
     if checked:
@@ -156,6 +217,7 @@ def _align8_floor(x):
 
 
 last_frame_image = None
+current_frame = None
 
 
 def _save_last_frame(image):
@@ -330,6 +392,432 @@ def fetch_weather():
     }
 
 
+def load_todos():
+    items = []
+    if os.path.exists(TODO_PATH):
+        with open(TODO_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                checked = False
+                text = line
+                if line.startswith("[x]") or line.startswith("[X]"):
+                    checked = True
+                    text = line[3:].strip()
+                elif line.startswith("[ ]"):
+                    checked = False
+                    text = line[3:].strip()
+                items.append((checked, text))
+    return items
+
+
+def todo_stats(items):
+    total = len(items)
+    done = sum(1 for c, _ in items if c)
+    return total, done
+
+
+def append_todos(todos):
+    if not todos:
+        return
+    existing = set()
+    if os.path.exists(TODO_PATH):
+        with open(TODO_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("[ ]"):
+                    existing.add(line[3:].strip())
+                elif line.startswith("[x]") or line.startswith("[X]"):
+                    existing.add(line[3:].strip())
+    with open(TODO_PATH, "a", encoding="utf-8") as f:
+        for t in todos:
+            t = t.strip()
+            if not t or t in existing:
+                continue
+            f.write("[ ] %s\n" % t)
+
+
+def load_reminders():
+    if not os.path.exists(REMINDER_PATH):
+        return []
+    try:
+        with open(REMINDER_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
+    except Exception:
+        return []
+    return []
+
+
+def save_reminders(reminders):
+    try:
+        with open(REMINDER_PATH, "w", encoding="utf-8") as f:
+            json.dump(reminders, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.error("save reminders failed: %s", e)
+
+
+def add_reminders(reminders):
+    if not reminders:
+        return
+    existing = load_reminders()
+    existing_text = {(r.get("text"), r.get("due_ts")) for r in existing}
+    now_ts = int(time.time())
+    for r in reminders:
+        text = r.get("text", "").strip()
+        due_ts = r.get("due_ts")
+        if not text or due_ts is None:
+            continue
+        key = (text, due_ts)
+        if key in existing_text:
+            continue
+        existing.append(
+            {
+                "text": text,
+                "due_ts": int(due_ts),
+                "done": False,
+                "notified": False,
+                "created_ts": now_ts,
+            }
+        )
+    save_reminders(existing)
+
+
+def reminder_stats(reminders):
+    active = [r for r in reminders if not r.get("done")]
+    return len(active)
+
+
+def active_reminders(reminders):
+    active = [r for r in reminders if not r.get("done")]
+    active.sort(key=lambda r: r.get("due_ts") or 0)
+    return active
+
+
+def build_home_task_items(todo_items, reminders, max_items):
+    combined = []
+    for r in active_reminders(reminders):
+        text = (r.get("text") or "").strip()
+        if text:
+            combined.append((False, u"提醒: " + text))
+    combined.extend(todo_items)
+    return combined[:max_items]
+
+
+def build_task_lines(todo_items, reminders, max_lines=10):
+    lines = []
+    active = active_reminders(reminders)
+    if active:
+        lines.append(u"提醒")
+        for r in active:
+            if len(lines) >= max_lines:
+                return lines
+            text = (r.get("text") or "").strip()
+            due_ts = r.get("due_ts")
+            if due_ts:
+                due_text = time.strftime("%m-%d %H:%M", time.localtime(due_ts))
+                lines.append(u"- %s (%s)" % (text, due_text))
+            else:
+                lines.append(u"- %s" % text)
+            if len(lines) >= max_lines:
+                return lines
+    if todo_items:
+        if lines:
+            lines.append(u"待办")
+        for checked, text in todo_items:
+            if len(lines) >= max_lines:
+                return lines
+            prefix = u"[x] " if checked else u"[ ] "
+            lines.append(prefix + text)
+            if len(lines) >= max_lines:
+                return lines
+    if not lines:
+        lines.append(u"暂无待办/提醒")
+    return lines
+
+
+def next_due_reminder(reminders, now_ts):
+    due_list = [r for r in reminders if (not r.get("done")) and (not r.get("notified")) and r.get("due_ts") is not None]
+    due_list.sort(key=lambda r: r.get("due_ts"))
+    for r in due_list:
+        if r.get("due_ts") <= now_ts:
+            return r
+    return None
+
+
+def chinese_num_to_int(text):
+    mapping = {u"零": 0, u"一": 1, u"二": 2, u"三": 3, u"四": 4, u"五": 5, u"六": 6, u"七": 7, u"八": 8, u"九": 9, u"十": 10}
+    if text.isdigit():
+        return int(text)
+    if text == u"十":
+        return 10
+    if len(text) == 2 and text[0] == u"十":
+        return 10 + mapping.get(text[1], 0)
+    if len(text) == 2 and text[1] == u"十":
+        return mapping.get(text[0], 0) * 10
+    if len(text) == 3 and text[1] == u"十":
+        return mapping.get(text[0], 0) * 10 + mapping.get(text[2], 0)
+    return mapping.get(text, 0)
+
+
+def parse_due_datetime(text, now):
+    # Relative patterns
+    if u"明天" in text:
+        return (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+    if u"后天" in text and u"大后天" not in text:
+        return (now + timedelta(days=2)).replace(hour=9, minute=0, second=0, microsecond=0)
+    if u"大后天" in text:
+        return (now + timedelta(days=3)).replace(hour=9, minute=0, second=0, microsecond=0)
+
+    m = re.search(r"([0-9一二三四五六七八九十]+)\s*天后", text)
+    if m:
+        days = chinese_num_to_int(m.group(1))
+        return (now + timedelta(days=days)).replace(hour=9, minute=0, second=0, microsecond=0)
+    m = re.search(r"(还有)?\s*([0-9一二三四五六七八九十]+)\s*天(后|以后|之后)?", text)
+    if m:
+        days = chinese_num_to_int(m.group(2))
+        if days > 0:
+            return (now + timedelta(days=days)).replace(hour=9, minute=0, second=0, microsecond=0)
+    m = re.search(r"([0-9一二三四五六七八九十]+)\s*小时后", text)
+    if m:
+        hours = chinese_num_to_int(m.group(1))
+        return now + timedelta(hours=hours)
+    m = re.search(r"([0-9一二三四五六七八九十]+)\s*分钟后", text)
+    if m:
+        minutes = chinese_num_to_int(m.group(1))
+        return now + timedelta(minutes=minutes)
+
+    # Absolute date: YYYY-MM-DD or MM月DD日
+    m = re.search(r"(20\d{2})[-/年](\d{1,2})[-/月](\d{1,2})", text)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return datetime(y, mo, d, 9, 0, 0)
+    m = re.search(r"(\d{1,2})月(\d{1,2})日", text)
+    if m:
+        y = now.year
+        mo, d = int(m.group(1)), int(m.group(2))
+        return datetime(y, mo, d, 9, 0, 0)
+    return None
+
+
+def extract_reminder_text(text):
+    t = text
+    for kw in [u"提醒我", u"提醒", u"请提醒我", u"请提醒"]:
+        t = t.replace(kw, "")
+    t = re.sub(r"(还有)?\s*[0-9一二三四五六七八九十]+\s*(天后|天以后|天之后|天)", "", t)
+    t = re.sub(r"[0-9一二三四五六七八九十]+\s*(小时后|分钟后)", "", t)
+    t = t.replace(u"明天", "").replace(u"后天", "").replace(u"大后天", "")
+    t = t.replace(u"在", "").replace(u"的时候", "")
+    t = t.strip()
+    return t if t else text.strip()
+
+
+def analyze_text(text):
+    text = text.strip()
+    if not text:
+        return "", [], []
+    api_key = os.environ.get(API_KEY_ENV)
+    if api_key and genai is not None:
+        try:
+            client = genai.Client(api_key=api_key)
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            prompt = (
+                "将输入文本解析为待办或提醒。"
+                "返回 JSON："
+                "{\"transcript\":\"...\",\"todos\":[\"...\"],\"reminders\":[{\"text\":\"...\",\"due\":\"YYYY-MM-DD HH:MM\"}]}\n"
+                "如果是相对时间（如三天后），请转换为绝对时间。"
+                "当前时间：" + now
+            )
+            resp = client.models.generate_content(model=GEMINI_MODEL, contents=[prompt, text])
+            raw = (resp.text or "").strip()
+            payload = _extract_json(raw)
+            if payload:
+                data = json.loads(payload)
+                transcript = data.get("transcript", text)
+                todos = data.get("todos", []) or []
+                reminders = []
+                for r in data.get("reminders", []) or []:
+                    due = r.get("due")
+                    due_ts = None
+                    try:
+                        due_ts = int(datetime.fromisoformat(due).timestamp())
+                    except Exception:
+                        pass
+                    if due_ts:
+                        reminders.append({"text": r.get("text", ""), "due_ts": due_ts})
+                # If model didn't return reminder but text contains time, add local reminder
+                due = parse_due_datetime(text, datetime.now())
+                if due and not reminders:
+                    reminders.append({"text": extract_reminder_text(text), "due_ts": int(due.timestamp())})
+                return transcript, todos, reminders
+        except Exception:
+            pass
+
+    # Fallback: simple local parse
+    now = datetime.now()
+    due = parse_due_datetime(text, now)
+    if due:
+        return text, [], [{"text": extract_reminder_text(text), "due_ts": int(due.timestamp())}]
+    return text, [text], []
+
+
+def _draw_page(title, subtitle, lines, font_title, font_sub, font_body, w, h):
+    image = Image.new('1', (w, h), 255)
+    draw = ImageDraw.Draw(image)
+    margin = 24
+
+    draw.rectangle((0, 0, w - 1, h - 1), outline=0, width=3)
+    draw.text((margin, 12), title, font=font_title, fill=0)
+    if subtitle:
+        draw.text((margin, 60), subtitle, font=font_sub, fill=0)
+
+    y = 110
+    for line in lines:
+        draw.text((margin, y), line, font=font_body, fill=0)
+        y += 40
+        if y > h - 40:
+            break
+
+    return image
+
+
+def _record_audio_fixed():
+    if os.path.exists(AUDIO_PATH):
+        try:
+            os.remove(AUDIO_PATH)
+        except Exception:
+            pass
+
+    cmd = [
+        "arecord",
+        "-D",
+        AUDIO_DEVICE,
+        "-f",
+        "S16_LE",
+        "-r",
+        str(AUDIO_RATE),
+        "-c",
+        str(AUDIO_CHANNELS),
+        "-d",
+        str(RECORD_MAX_SEC),
+        "-t",
+        "wav",
+        AUDIO_PATH,
+    ]
+    logging.info("recording: %s", " ".join(cmd))
+    subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    if os.path.exists(AUDIO_PATH) and os.path.getsize(AUDIO_PATH) > 0:
+        return AUDIO_PATH
+    return None
+
+
+def _record_audio_until_release(pin):
+    if os.path.exists(AUDIO_PATH):
+        try:
+            os.remove(AUDIO_PATH)
+        except Exception:
+            pass
+
+    cmd = [
+        "arecord",
+        "-D",
+        AUDIO_DEVICE,
+        "-f",
+        "S16_LE",
+        "-r",
+        str(AUDIO_RATE),
+        "-c",
+        str(AUDIO_CHANNELS),
+        "-t",
+        "wav",
+        AUDIO_PATH,
+    ]
+    logging.info("recording: %s", " ".join(cmd))
+    proc = subprocess.Popen(cmd, preexec_fn=os.setsid, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    start = time.time()
+    while True:
+        if BUTTON_ACTIVE_LOW:
+            pressed = GPIO.input(pin) == GPIO.LOW
+        else:
+            pressed = GPIO.input(pin) == GPIO.HIGH
+        if not pressed:
+            break
+        if time.time() - start >= RECORD_MAX_SEC:
+            break
+        time.sleep(0.05)
+
+    try:
+        os.killpg(proc.pid, signal.SIGINT)
+        proc.wait(timeout=2)
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    if os.path.exists(AUDIO_PATH) and os.path.getsize(AUDIO_PATH) > 0:
+        return AUDIO_PATH
+    return None
+
+
+def _extract_json(text):
+    text = text.strip()
+    if text.startswith("{") and text.endswith("}"):
+        return text
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return text[start:end + 1]
+    return None
+
+
+def transcribe_and_extract(audio_path):
+    api_key = os.environ.get(API_KEY_ENV)
+    if not api_key:
+        raise RuntimeError("missing API key env: %s" % API_KEY_ENV)
+    if genai is None:
+        raise RuntimeError("google-genai not installed. pip install google-genai")
+
+    client = genai.Client(api_key=api_key)
+    myfile = client.files.upload(file=audio_path)
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    prompt = (
+        "请把音频内容转写成中文文本，并提取待办和提醒。"
+        "只输出 JSON，格式："
+        "{\"transcript\":\"...\",\"todos\":[\"...\"],\"reminders\":[{\"text\":\"...\",\"due\":\"YYYY-MM-DD HH:MM\"}]}"
+        "如果是相对时间（如三天后），请转换为绝对时间。"
+        "当前时间：" + now
+    )
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[prompt, myfile],
+    )
+    text = (response.text or "").strip()
+    payload = _extract_json(text)
+    if payload:
+        data = json.loads(payload)
+        transcript = data.get("transcript", "")
+        todos = data.get("todos", [])
+        reminders = []
+        for r in data.get("reminders", []) or []:
+            due = r.get("due")
+            due_ts = None
+            try:
+                due_ts = int(datetime.fromisoformat(due).timestamp())
+            except Exception:
+                pass
+            if due_ts:
+                reminders.append({"text": r.get("text", ""), "due_ts": due_ts})
+        return transcript, [t for t in todos if isinstance(t, str) and t.strip()], reminders
+
+    return text, [], []
+
+
 try:
     logging.info("epd7in5_V2 homepage demo")
     epd = epd7in5_V2.EPD()
@@ -343,6 +831,7 @@ try:
     font_big = ImageFont.truetype(font_path, 56)
     font_med = ImageFont.truetype(font_path, 28)
     font_small = ImageFont.truetype(font_path, 22)
+    font_sub = ImageFont.truetype(font_path, 28)
     font_title_big = ImageFont.truetype(font_path, 36)
     font_desc = ImageFont.truetype(font_path, 30)
     font_temp = ImageFont.truetype(font_path, 96)
@@ -430,27 +919,11 @@ try:
         left_pad = 16
         draw.text((left_box[0] + left_pad, left_box[1] + 12), u"今日天气", font=font_title, fill=0)
         _draw_weather_icon(draw, left_box[0] + left_pad, left_box[1] + 64)
-        draw.text((left_box[0] + left_pad + 92, left_box[1] + 78), u"16°C", font=font_big, fill=0)
-        draw.text((left_box[0] + left_pad + 92, left_box[1] + 150), u"雨天", font=font_med, fill=0)
-        draw.text((left_box[0] + left_pad + 92, left_box[1] + 182), u"北京", font=font_med, fill=0)
 
         right_pad = 16
         draw.text((right_box[0] + right_pad, right_box[1] + 12), u"今日待办", font=font_title, fill=0)
-        check_x = right_box[0] + right_pad
-        item_x = check_x + 32
-        row_y = right_box[1] + 68
-        row_gap = 42
-
-        _draw_checkbox(draw, check_x, row_y, 18, checked=True)
-        draw.text((item_x, row_y - 6), u"买菜", font=font_med, fill=0)
-
-        _draw_checkbox(draw, check_x, row_y + row_gap, 18, checked=False)
-        draw.text((item_x, row_y + row_gap - 6), u"健身", font=font_med, fill=0)
-
         draw.line((right_box[0] + 12, right_box[1] + 148, right_box[2] - 12, right_box[1] + 148), fill=0, width=1)
         draw.line((right_box[0] + 12, right_box[1] + 178, right_box[2] - 12, right_box[1] + 178), fill=0, width=1)
-
-        draw.text((right_box[0] + right_pad, right_box[1] + 194), u"已完成：1 / 3", font=font_small, fill=0)
 
         draw.line((margin, bottom_top, w - margin, bottom_top), fill=0, width=2)
         for i in range(1, 3):
@@ -458,14 +931,74 @@ try:
             draw.line((x, bottom_top + 10, x, h - 10), fill=0, width=2)
 
         labels = [u"提醒", u"温度", u"已完成"]
-        values = [u"2", u"16°", u"1"]
         for i in range(3):
             x0 = margin + col_w * i
             x1 = x0 + col_w
             _center_text(draw, labels[i], font_small, (x0, bottom_top + 10, x1, bottom_top + 36))
-            _center_text(draw, values[i], font_med, (x0, bottom_top + 36, x1, h - 10))
 
-        return base, (time_x, time_y, time_w, time_h), font_time
+        return base, (time_x, time_y, time_w, time_h), (date_x, date_y, date_w, date_h), font_time, font_date
+
+    def draw_time(draw, now, time_info, date_info, font_time, font_date):
+        time_x, time_y, _, _ = time_info
+        date_x, date_y, _, _ = date_info
+        weekday = WEEKDAY_MAP[int(time.strftime('%w', time.localtime(now)))]
+        date_text = time.strftime('%Y年%m月%d日 ', time.localtime(now)) + u"星期" + weekday
+        time_text = time.strftime('%H:%M:%S', time.localtime(now))
+        draw.text((time_x, time_y), time_text, font=font_time, fill=0)
+        draw.text((date_x, date_y), date_text, font=font_date, fill=0)
+
+    def draw_weather_content(draw, weather):
+        left_pad = 16
+        temp = None
+        desc = u"--"
+        city = CITY_NAME
+        if weather and weather.get("current"):
+            temp = weather["current"].get("temperature")
+            desc = _weather_text(weather["current"].get("weather_code"))
+            city = weather.get("city", city)
+        temp_text = u"--"
+        if temp is not None:
+            temp_text = u"%d°C" % int(round(temp))
+        draw.text((left_box[0] + left_pad + 92, left_box[1] + 78), temp_text, font=font_big, fill=0)
+        draw.text((left_box[0] + left_pad + 92, left_box[1] + 150), desc, font=font_med, fill=0)
+        draw.text((left_box[0] + left_pad + 92, left_box[1] + 182), city, font=font_med, fill=0)
+
+    def draw_todo_content(draw, items, reminders):
+        right_pad = 16
+        check_x = right_box[0] + right_pad
+        item_x = check_x + 32
+        row_y = right_box[1] + 68
+        row_gap = 42
+        show_items = build_home_task_items(items, reminders, MAX_TODO_SHOW)
+        max_width = right_box[2] - item_x - 12
+        for i in range(MAX_TODO_SHOW):
+            y = row_y + i * row_gap
+            checked = False
+            text = u""
+            if i < len(show_items):
+                checked, text = show_items[i]
+            _draw_checkbox(draw, check_x, y, 18, checked=checked)
+            if text:
+                text = _truncate_text(draw, text, font_med, max_width)
+                draw.text((item_x, y - 6), text, font=font_med, fill=0)
+
+        total, done = todo_stats(items)
+        rem_count = reminder_stats(reminders)
+        footer = u"完成：%d/%d  提醒：%d" % (done, total, rem_count)
+        footer = _truncate_text(draw, footer, font_small, right_box[2] - right_box[0] - right_pad * 2)
+        draw.text((right_box[0] + right_pad, right_box[1] + 194), footer, font=font_small, fill=0)
+
+    def draw_bottom_stats(draw, items, weather, reminders):
+        total, done = todo_stats(items)
+        rem_count = reminder_stats(reminders)
+        temp_text = u"--"
+        if weather and weather.get("current") and weather["current"].get("temperature") is not None:
+            temp_text = u"%d°" % int(round(weather["current"]["temperature"]))
+        values = [str(rem_count), temp_text, str(done)]
+        for i in range(3):
+            x0 = margin + col_w * i
+            x1 = x0 + col_w
+            _center_text(draw, values[i], font_med, (x0, bottom_top + 36, x1, h - 10))
 
     def draw_selection(draw, selected_key):
         if selected_key in boxes:
@@ -484,6 +1017,79 @@ try:
         my1 = my0 + SELECT_MARK_SIZE
         p = SELECT_MARK_PAD
         return [(mx0 - p, my0 - p, mx1 + p, my1 + p)]
+
+    def _aligned_region(box):
+        x0, y0, x1, y1 = box
+        x0 = _align8_floor(int(max(0, x0)))
+        y0 = _align8_floor(int(max(0, y0)))
+        x1 = _align8_ceil(int(min(w, x1)))
+        y1 = _align8_ceil(int(min(h, y1)))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return (x0, y0, x1 - x0, y1 - y0)
+
+    current_frame = None
+
+    def update_time_region(now):
+        global current_frame
+        region = (0, 0, w, header_h)
+        current_frame.paste(base_home.crop(region), region)
+        draw = ImageDraw.Draw(current_frame)
+        draw_time(draw, now, time_info, date_info, font_time, font_date)
+        aligned = _aligned_region(region)
+        if aligned:
+            _display_partial(epd, current_frame, *aligned)
+
+    def update_weather_region():
+        global current_frame
+        region = left_box
+        current_frame.paste(base_home.crop(region), region)
+        draw = ImageDraw.Draw(current_frame)
+        draw_weather_content(draw, weather_data)
+        if selected == "weather":
+            draw_selection(draw, selected)
+        aligned = _aligned_region(region)
+        if aligned:
+            _display_partial(epd, current_frame, *aligned)
+
+    def update_todo_region():
+        global current_frame
+        region = right_box
+        current_frame.paste(base_home.crop(region), region)
+        draw = ImageDraw.Draw(current_frame)
+        draw_todo_content(draw, todo_items, reminders)
+        if selected == "todo":
+            draw_selection(draw, selected)
+        aligned = _aligned_region(region)
+        if aligned:
+            _display_partial(epd, current_frame, *aligned)
+
+    def update_bottom_region():
+        global current_frame
+        region = (margin, bottom_top, w - margin, h)
+        current_frame.paste(base_home.crop(region), region)
+        draw = ImageDraw.Draw(current_frame)
+        draw_bottom_stats(draw, todo_items, weather_data, reminders)
+        if selected in ("bottom1", "bottom2", "bottom3"):
+            draw_selection(draw, selected)
+        aligned = _aligned_region(region)
+        if aligned:
+            _display_partial(epd, current_frame, *aligned)
+
+    def render_home_full(use_full=False):
+        global current_frame
+        now = time.time()
+        current_frame = base_home.copy()
+        draw = ImageDraw.Draw(current_frame)
+        draw_time(draw, now, time_info, date_info, font_time, font_date)
+        draw_weather_content(draw, weather_data)
+        draw_todo_content(draw, todo_items, reminders)
+        draw_bottom_stats(draw, todo_items, weather_data, reminders)
+        draw_selection(draw, selected)
+        if use_full:
+            _display_full(epd, current_frame)
+        else:
+            _display_full_partial(epd, current_frame, w, h)
 
     def draw_weather_page(weather_data, error_msg=None):
         base = Image.new('1', (w, h), 255)
@@ -561,6 +1167,41 @@ try:
         draw.text((margin, h - 34), u"Enter 进入 / B 返回 / R 刷新", font=font_small, fill=0)
         return base
 
+    def draw_todo_page(items, reminders):
+        lines = build_task_lines(items, reminders, max_lines=10)
+        return _draw_page(u"待办 / 提醒", u"V 语音 / T 文本 / B 返回", lines, font_title_big, font_sub, font_small, w, h)
+
+    def draw_reminders_page(reminders):
+        lines = []
+        active = active_reminders(reminders)
+        if active:
+            for r in active[:9]:
+                text = (r.get("text") or "").strip()
+                due_ts = r.get("due_ts")
+                if due_ts:
+                    due_text = time.strftime("%m-%d %H:%M", time.localtime(due_ts))
+                    lines.append(u"- %s (%s)" % (text, due_text))
+                else:
+                    lines.append(u"- %s" % text)
+        else:
+            lines.append(u"暂无提醒")
+        return _draw_page(u"提醒清单", u"B 返回", lines, font_title_big, font_sub, font_small, w, h)
+
+    def draw_reminder_page(reminder):
+        title = u"提醒"
+        if not reminder:
+            return _draw_page(title, u"", [u"暂无提醒"], font_title_big, font_sub, font_small, w, h)
+        text = reminder.get("text", "")
+        due_ts = reminder.get("due_ts")
+        due_text = u""
+        if due_ts:
+            due_text = time.strftime("%Y-%m-%d %H:%M", time.localtime(due_ts))
+        lines = [text]
+        if due_text:
+            lines.append(u"时间：" + due_text)
+        lines.append(u"Enter 标记完成 / B 忽略")
+        return _draw_page(title, u"", lines, font_title_big, font_sub, font_small, w, h)
+
     def draw_loading_page(text=u"正在获取天气..."):
         base = Image.new('1', (w, h), 255)
         draw = ImageDraw.Draw(base)
@@ -569,29 +1210,60 @@ try:
         return base
 
     selected = "weather"
-    prev_selected = selected
     view = "home"
     weather_data = None
     weather_error = None
-    last_fetch = 0
+    todo_items = load_todos()
+    reminders = load_reminders()
+    todo_mtime = os.path.getmtime(TODO_PATH) if os.path.exists(TODO_PATH) else 0
+    reminder_mtime = os.path.getmtime(REMINDER_PATH) if os.path.exists(REMINDER_PATH) else 0
+    last_todo_check = 0
+    last_reminder_check = 0
+    current_reminder = None
 
-    base_home, time_rect, font_time = draw_home_base()
-    time_x, time_y, time_w, time_h = time_rect
+    # GPIO setup (optional)
+    if GPIO is not None and BUTTON_PIN is not None:
+        GPIO.setmode(GPIO.BCM)
+        if BUTTON_ACTIVE_LOW:
+            GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            edge = GPIO.FALLING
+        else:
+            GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+            edge = GPIO.RISING
+        GPIO.add_event_detect(BUTTON_PIN, edge, bouncetime=DEBOUNCE_MS)
+    else:
+        logging.info("GPIO button disabled (GPIO not available or BUTTON_PIN is None)")
 
-    frame = base_home.copy()
-    frame_draw = ImageDraw.Draw(frame)
-    draw_selection(frame_draw, selected)
-    frame_draw.text((time_x, time_y), time.strftime('%H:%M:%S'), font=font_time, fill=0)
-    _display_full(epd, frame)
+    weather_lock = threading.Lock()
+    weather_state = {"data": None, "error": None, "updated": False}
+
+    def weather_worker():
+        while True:
+            try:
+                data = fetch_weather()
+                err = None
+            except Exception as e:
+                data = None
+                err = str(e)
+            with weather_lock:
+                weather_state["data"] = data
+                weather_state["error"] = err
+                weather_state["updated"] = True
+            time.sleep(WEATHER_REFRESH_SEC)
+
+    threading.Thread(target=weather_worker, daemon=True).start()
+
+    try:
+        weather_data = fetch_weather()
+    except Exception as e:
+        weather_error = str(e)
+
+    base_home, time_info, date_info, font_time, font_date = draw_home_base()
+    current_frame = base_home.copy()
+    render_home_full(use_full=True)
 
     logging.info("start event loop")
     epd.init_part()
-    update_h = _align8_ceil(header_h)
-    if update_h > h:
-        update_h = h
-    time_box = (0, 0, w, update_h)
-    time_box_w = w
-    time_box_h = update_h
 
     input_stream = sys.stdin
     opened_tty = False
@@ -606,36 +1278,57 @@ try:
     old_settings = termios.tcgetattr(fd)
     tty.setcbreak(fd)
 
-    last_sec = None
-    try:
+    def read_key(timeout):
+        rlist, _, _ = select.select([input_stream], [], [], timeout)
+        if not rlist:
+            return None
+        data = input_stream.read(1)
+        if not data:
+            return None
+        if isinstance(data, bytes):
+            ch = data.decode('utf-8', errors='ignore')
+        else:
+            ch = data
+        key = None
+        if ch == '\x1b':
+            seq_data = input_stream.read(2)
+            if isinstance(seq_data, bytes):
+                seq = seq_data.decode('utf-8', errors='ignore')
+            else:
+                seq = seq_data
+            if seq == '[A':
+                key = 'up'
+            elif seq == '[B':
+                key = 'down'
+            elif seq == '[C':
+                key = 'right'
+            elif seq == '[D':
+                key = 'left'
+        elif ch in ('\r', '\n', ' '):
+            key = 'enter'
+        elif ch in ('e', 'E'):
+            key = 'enter'
+        elif ch in ('b', 'B'):
+            key = 'back'
+        elif ch in ('r', 'R'):
+            key = 'refresh'
+        elif ch in ('s', 'S'):
+            key = 'snapshot'
+        elif ch in ('v', 'V'):
+            key = 'voice'
+        elif ch in ('t', 'T'):
+            key = 'text'
+        return key
+
+    def wait_for_key(valid):
         while True:
-            now = time.time()
-            if view == "home":
-                sec = int(now)
-                if sec != last_sec:
-                    last_sec = sec
-                    frame = base_home.copy()
-                    frame_draw = ImageDraw.Draw(frame)
-                    draw_selection(frame_draw, selected)
-                    frame_draw.text((time_x, time_y), time.strftime('%H:%M:%S', time.localtime(now)), font=font_time, fill=0)
-                    _display_partial(epd, frame, time_box[0], time_box[1], time_box_w, time_box_h)
+            key = read_key(None)
+            if key in valid:
+                return key
 
-            # Auto refresh weather data while on weather page
-            if view == "weather" and (now - last_fetch) > WEATHER_REFRESH_SEC:
-                try:
-                    weather_data = fetch_weather()
-                    weather_error = None
-                    last_fetch = time.time()
-                except Exception as e:
-                    weather_error = str(e)
-
-                page = draw_weather_page(weather_data, weather_error)
-                _display_full_partial(epd, page, w, h)
-
-            timeout = 0.1 if view != "home" else max(0.01, (int(time.time()) + 1) - time.time())
-            rlist, _, _ = select.select([input_stream], [], [], timeout)
-            if not rlist:
-                continue
+    def read_text_line():
+        buf = []
+        while True:
             data = input_stream.read(1)
             if not data:
                 continue
@@ -643,90 +1336,273 @@ try:
                 ch = data.decode('utf-8', errors='ignore')
             else:
                 ch = data
-            key = None
+            if ch in ('\r', '\n'):
+                return ''.join(buf)
+            if ch == '\x03':
+                raise KeyboardInterrupt
+            if ch in ('\x7f', '\b'):
+                if buf:
+                    buf.pop()
+                continue
             if ch == '\x1b':
-                seq_data = input_stream.read(2)
-                if isinstance(seq_data, bytes):
-                    seq = seq_data.decode('utf-8', errors='ignore')
-                else:
-                    seq = seq_data
-                if seq == '[A':
-                    key = 'up'
-                elif seq == '[B':
-                    key = 'down'
-                elif seq == '[C':
-                    key = 'right'
-                elif seq == '[D':
-                    key = 'left'
-            elif ch in ('\r', '\n', ' '):
-                key = 'enter'
-            elif ch in ('e', 'E'):
-                key = 'enter'
-            elif ch in ('b', 'B'):
-                key = 'back'
-            elif ch in ('r', 'R'):
-                key = 'refresh'
-            elif ch in ('s', 'S'):
-                key = 'snapshot'
+                _ = input_stream.read(2)
+                continue
+            if ch:
+                buf.append(ch)
+
+    def text_input_flow():
+        global todo_items, todo_mtime, reminders, reminder_mtime
+        page = _draw_page(u"文本输入", u"输入后回车", [u"可输入提醒，例如：提醒我三天后牛奶过期"], font_title_big, font_sub, font_small, w, h)
+        _display_full_partial(epd, page, w, h)
+        line = read_text_line().strip()
+        if not line:
+            return
+        transcript, todos, new_reminders = analyze_text(line)
+        append_todos(todos)
+        add_reminders(new_reminders)
+        todo_items = load_todos()
+        reminders = load_reminders()
+        if os.path.exists(TODO_PATH):
+            todo_mtime = os.path.getmtime(TODO_PATH)
+        if os.path.exists(REMINDER_PATH):
+            reminder_mtime = os.path.getmtime(REMINDER_PATH)
+        lines = []
+        if todos:
+            lines.append(u"新增待办：")
+            for t in todos[:4]:
+                lines.append(u"- " + t)
+        if new_reminders:
+            lines.append(u"新增提醒：")
+            for r in new_reminders[:3]:
+                lines.append(u"- " + r.get("text", ""))
+        if not lines:
+            lines.append(u"未识别到待办/提醒")
+        done = _draw_page(u"完成", u"已保存", lines, font_title_big, font_sub, font_small, w, h)
+        _display_full_partial(epd, done, w, h)
+        time.sleep(1)
+
+    def voice_flow(use_button=False):
+        global todo_items, todo_mtime, reminders, reminder_mtime
+        while True:
+            subtitle = u"松开按钮结束" if use_button else (u"请在 %d 秒内说话" % RECORD_MAX_SEC)
+            recording = _draw_page(u"正在录音...", subtitle, [], font_title_big, font_sub, font_small, w, h)
+            _display_full_partial(epd, recording, w, h)
+            if use_button and GPIO is not None:
+                audio = _record_audio_until_release(BUTTON_PIN)
+            else:
+                audio = _record_audio_fixed()
+            if not audio:
+                err = _draw_page(u"录音失败", u"V 重试 / T 文本 / B 返回", [], font_title_big, font_sub, font_small, w, h)
+                _display_full_partial(epd, err, w, h)
+                k = wait_for_key({"voice", "text", "back"})
+                if k == "voice":
+                    continue
+                if k == "text":
+                    text_input_flow()
+                return
+            processing = _draw_page(u"识别中...", u"请稍候", [], font_title_big, font_sub, font_small, w, h)
+            _display_full_partial(epd, processing, w, h)
+            try:
+                transcript, todos, new_reminders = transcribe_and_extract(audio)
+            except Exception as e:
+                err = _draw_page(u"识别失败", str(e), [u"V 重试", u"T 文本", u"B 返回"], font_title_big, font_sub, font_small, w, h)
+                _display_full_partial(epd, err, w, h)
+                k = wait_for_key({"voice", "text", "back"})
+                if k == "voice":
+                    continue
+                if k == "text":
+                    text_input_flow()
+                return
+
+            if transcript and not todos and not new_reminders:
+                _, todos, new_reminders = analyze_text(transcript)
+            if transcript and not new_reminders:
+                due = parse_due_datetime(transcript, datetime.now())
+                if due:
+                    new_reminders = [{"text": extract_reminder_text(transcript), "due_ts": int(due.timestamp())}]
+
+            if todos:
+                append_todos(todos)
+                todo_items = load_todos()
+                if os.path.exists(TODO_PATH):
+                    todo_mtime = os.path.getmtime(TODO_PATH)
+            if new_reminders:
+                add_reminders(new_reminders)
+                reminders = load_reminders()
+                if os.path.exists(REMINDER_PATH):
+                    reminder_mtime = os.path.getmtime(REMINDER_PATH)
+
+            lines = []
+            if transcript:
+                lines.append(u"听到：" + transcript[:16])
+                if len(transcript) > 16:
+                    lines.append(transcript[16:32])
+            if todos:
+                lines.append(u"新增待办：")
+                for t in todos[:5]:
+                    lines.append(u"- " + t)
+            if new_reminders:
+                lines.append(u"新增提醒：")
+                for r in new_reminders[:3]:
+                    lines.append(u"- " + r.get("text", ""))
+            if not todos and not new_reminders:
+                lines.append(u"未识别到待办/提醒")
+
+            done = _draw_page(u"完成", u"已保存到 todo.txt", lines, font_title_big, font_sub, font_small, w, h)
+            _display_full_partial(epd, done, w, h)
+            time.sleep(1.5)
+            return
+
+    last_sec = None
+    try:
+        while True:
+            now = time.time()
+
+            if view == "home":
+                sec = int(now)
+                if sec != last_sec:
+                    last_sec = sec
+                    update_time_region(now)
+
+            with weather_lock:
+                if weather_state["updated"]:
+                    weather_state["updated"] = False
+                    weather_data = weather_state["data"]
+                    weather_error = weather_state["error"]
+                    if view == "home":
+                        update_weather_region()
+                        update_bottom_region()
+                    elif view == "weather":
+                        page = draw_weather_page(weather_data, weather_error)
+                        _display_full_partial(epd, page, w, h)
+
+            if now - last_todo_check >= TODO_REFRESH_SEC:
+                last_todo_check = now
+                if os.path.exists(TODO_PATH):
+                    mtime = os.path.getmtime(TODO_PATH)
+                    if mtime != todo_mtime:
+                        todo_mtime = mtime
+                        todo_items = load_todos()
+                        if view == "home":
+                            update_todo_region()
+                            update_bottom_region()
+                        elif view == "todo":
+                            _display_full_partial(epd, draw_todo_page(todo_items, reminders), w, h)
+
+            if now - last_reminder_check >= REMINDER_REFRESH_SEC:
+                last_reminder_check = now
+                if os.path.exists(REMINDER_PATH):
+                    mtime = os.path.getmtime(REMINDER_PATH)
+                    if mtime != reminder_mtime:
+                        reminder_mtime = mtime
+                        reminders = load_reminders()
+                        if view == "home":
+                            update_todo_region()
+                            update_bottom_region()
+                        elif view == "todo":
+                            _display_full_partial(epd, draw_todo_page(todo_items, reminders), w, h)
+                        elif view == "reminders":
+                            _display_full_partial(epd, draw_reminders_page(reminders), w, h)
+
+            # Reminder due check
+            if view in ("home", "todo", "weather"):
+                due = next_due_reminder(reminders, int(now))
+                if due is not None:
+                    current_reminder = due
+                    view = "reminder"
+                    _display_full_partial(epd, draw_reminder_page(current_reminder), w, h)
+
+            if GPIO is not None and BUTTON_PIN is not None and GPIO.event_detected(BUTTON_PIN):
+                if view == "home" and selected == "todo":
+                    view = "todo"
+                    _display_full_partial(epd, draw_todo_page(todo_items, reminders), w, h)
+
+            timeout = 0.1 if view != "home" else max(0.01, (int(time.time()) + 1) - time.time())
+            key = read_key(timeout)
+            if not key:
+                continue
+
+            if key == "snapshot":
+                _save_last_frame(last_frame_image)
+                logging.info("snapshot saved to %s", LAST_FRAME_PATH)
+                continue
 
             if view == "home":
                 if key and key in neighbors.get(selected, {}):
-                    prev_selected = selected
                     selected = neighbors[selected][key]
-                    frame = base_home.copy()
-                    frame_draw = ImageDraw.Draw(frame)
-                    draw_selection(frame_draw, selected)
-                    frame_draw.text((time_x, time_y), time.strftime('%H:%M:%S'), font=font_time, fill=0)
                     if SELECTION_FULL_PARTIAL:
-                        _display_full_partial(epd, frame, w, h)
+                        render_home_full(use_full=False)
                     else:
-                        regions = selection_regions(boxes[prev_selected]) + selection_regions(boxes[selected])
-                        for rx0, ry0, rx1, ry1 in regions:
-                            rx0 = _align8_floor(int(max(0, rx0)))
-                            ry0 = _align8_floor(int(max(0, ry0)))
-                            rx1 = _align8_ceil(int(min(w, rx1)))
-                            ry1 = _align8_ceil(int(min(h, ry1)))
-                            if rx1 <= rx0 or ry1 <= ry0:
-                                continue
-                            region_w = rx1 - rx0
-                            region_h = ry1 - ry0
-                            _display_partial(epd, frame, rx0, ry0, region_w, region_h)
-                elif key == 'enter' and selected == 'weather':
+                        render_home_full(use_full=False)
+                elif key == "enter" and selected == "weather":
                     view = "weather"
-                    _display_full_partial(epd, draw_loading_page(), w, h)
-                    try:
-                        weather_data = fetch_weather()
-                        weather_error = None
-                        last_fetch = time.time()
-                    except Exception as e:
-                        weather_error = str(e)
+                    if weather_data is None:
+                        _display_full_partial(epd, draw_loading_page(), w, h)
+                        try:
+                            weather_data = fetch_weather()
+                            weather_error = None
+                        except Exception as e:
+                            weather_error = str(e)
                     page = draw_weather_page(weather_data, weather_error)
                     _display_full_partial(epd, page, w, h)
-                elif key == 'snapshot':
-                    _save_last_frame(last_frame_image)
-                    logging.info("snapshot saved to %s", LAST_FRAME_PATH)
-            else:
-                if key == 'back':
+                elif key == "enter" and selected == "todo":
+                    view = "todo"
+                    _display_full_partial(epd, draw_todo_page(todo_items, reminders), w, h)
+                elif key == "voice" and selected == "todo":
+                    view = "todo"
+                    _display_full_partial(epd, draw_todo_page(todo_items, reminders), w, h)
+                    voice_flow(use_button=False)
+                    _display_full_partial(epd, draw_todo_page(todo_items, reminders), w, h)
+                elif key == "text" and selected == "todo":
+                    view = "todo"
+                    _display_full_partial(epd, draw_todo_page(todo_items, reminders), w, h)
+                    text_input_flow()
+                    _display_full_partial(epd, draw_todo_page(todo_items, reminders), w, h)
+                elif key == "enter" and selected == "bottom1":
+                    view = "reminders"
+                    _display_full_partial(epd, draw_reminders_page(reminders), w, h)
+                elif key == "enter" and selected in ("bottom2", "bottom3"):
+                    view = "todo"
+                    _display_full_partial(epd, draw_todo_page(todo_items, reminders), w, h)
+            elif view == "weather":
+                if key == "back":
                     view = "home"
-                    base_home, time_rect, font_time = draw_home_base()
-                    time_x, time_y, time_w, time_h = time_rect
-                    frame = base_home.copy()
-                    frame_draw = ImageDraw.Draw(frame)
-                    draw_selection(frame_draw, selected)
-                    frame_draw.text((time_x, time_y), time.strftime('%H:%M:%S'), font=font_time, fill=0)
-                    _display_full_partial(epd, frame, w, h)
-                elif key == 'refresh':
+                    render_home_full(use_full=False)
+                elif key == "refresh":
                     try:
                         weather_data = fetch_weather()
                         weather_error = None
-                        last_fetch = time.time()
                     except Exception as e:
                         weather_error = str(e)
                     page = draw_weather_page(weather_data, weather_error)
                     _display_full_partial(epd, page, w, h)
-                elif key == 'snapshot':
-                    _save_last_frame(last_frame_image)
-                    logging.info("snapshot saved to %s", LAST_FRAME_PATH)
+            elif view == "todo":
+                if key == "back":
+                    view = "home"
+                    render_home_full(use_full=False)
+                elif key == "voice":
+                    voice_flow(use_button=False)
+                    _display_full_partial(epd, draw_todo_page(todo_items, reminders), w, h)
+                elif key == "text":
+                    text_input_flow()
+                    _display_full_partial(epd, draw_todo_page(todo_items, reminders), w, h)
+            elif view == "reminders":
+                if key == "back":
+                    view = "home"
+                    render_home_full(use_full=False)
+            elif view == "reminder":
+                if key in ("enter", "back"):
+                    # mark reminder as done or notified
+                    for r in reminders:
+                        if r.get("text") == current_reminder.get("text") and r.get("due_ts") == current_reminder.get("due_ts"):
+                            if key == "enter":
+                                r["done"] = True
+                            r["notified"] = True
+                    save_reminders(reminders)
+                    reminder_mtime = os.path.getmtime(REMINDER_PATH) if os.path.exists(REMINDER_PATH) else reminder_mtime
+                    current_reminder = None
+                    view = "home"
+                    render_home_full(use_full=False)
 
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -735,6 +1611,7 @@ try:
                 input_stream.close()
             except Exception:
                 pass
+        # Skip GPIO.cleanup here to avoid conflicts with epdconfig/module_exit on ctrl+c
 
 except IOError as e:
     logging.info(e)
