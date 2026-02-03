@@ -67,10 +67,10 @@ def _load_items(path):
                     break
     if not items:
         items = [
-            "[ ] 清理冰箱",
-            "[ ] 补货牛奶",
-            "[x] 贴新便签",
-            "[ ] 购买水果",
+            "[ ] Clean fridge",
+            "[ ] Restock milk",
+            "[x] Replace sticky note",
+            "[ ] Buy fruit",
         ]
     return items
 
@@ -107,7 +107,7 @@ try:
     draw = ImageDraw.Draw(image)
 
     margin = 24
-    title = u"待办清单"
+    title = "Todo List"
     title_w, title_h = _text_size(draw, title, font_title)
     title_x = (epd.width - title_w) // 2
     title_y = margin
@@ -121,7 +121,7 @@ try:
     box_size = 28
     item_gap = 14
     start_y = line_y + 18
-    row_h = max(box_size, _text_size(draw, "测试", font_item)[1]) + item_gap
+    row_h = max(box_size, _text_size(draw, "Test", font_item)[1]) + item_gap
 
     for idx, raw in enumerate(items):
         checked, text = _parse_item(raw)

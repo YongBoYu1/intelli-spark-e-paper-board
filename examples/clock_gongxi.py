@@ -52,7 +52,7 @@ try:
     margin = 24
     gap = 26
     clock_sample = "88:88:88"
-    text = u"恭喜发财"
+    text = "Happy New Year"
 
     font_clock, clock_w, clock_h = _fit_font(
         draw,

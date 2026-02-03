@@ -76,7 +76,7 @@ logging.basicConfig(
 )
 
 # Weather config
-CITY_NAME = u"北京"
+CITY_NAME = "Beijing"
 CITY_COUNTRY = "CN"
 LATITUDE = 39.9042
 LONGITUDE = 116.4074
@@ -106,37 +106,38 @@ GEMINI_MODEL = "gemini-2.5-flash"
 API_KEY_ENV = "GOOGLE_API_KEY"
 
 WEATHER_CODE_TEXT = {
-    0: u"晴朗",
-    1: u"大部晴朗",
-    2: u"多云",
-    3: u"阴",
-    45: u"雾",
-    48: u"雾凇",
-    51: u"小毛雨",
-    53: u"中毛雨",
-    55: u"大毛雨",
-    56: u"轻冻毛雨",
-    57: u"重冻毛雨",
-    61: u"小雨",
-    63: u"中雨",
-    65: u"大雨",
-    66: u"轻冻雨",
-    67: u"重冻雨",
-    71: u"小雪",
-    73: u"中雪",
-    75: u"大雪",
-    77: u"冰粒",
-    80: u"阵雨小",
-    81: u"阵雨中",
-    82: u"阵雨大",
-    85: u"阵雪小",
-    86: u"阵雪大",
-    95: u"雷暴",
-    96: u"雷暴小冰雹",
-    99: u"雷暴大冰雹",
+    0: "Clear",
+    1: "Mostly Clear",
+    2: "Partly Cloudy",
+    3: "Overcast",
+    45: "Fog",
+    48: "Rime Fog",
+    51: "Light Drizzle",
+    53: "Moderate Drizzle",
+    55: "Dense Drizzle",
+    56: "Light Freezing Drizzle",
+    57: "Dense Freezing Drizzle",
+    61: "Light Rain",
+    63: "Moderate Rain",
+    65: "Heavy Rain",
+    66: "Light Freezing Rain",
+    67: "Heavy Freezing Rain",
+    71: "Light Snow",
+    73: "Moderate Snow",
+    75: "Heavy Snow",
+    77: "Snow Grains",
+    80: "Light Rain Showers",
+    81: "Moderate Rain Showers",
+    82: "Heavy Rain Showers",
+    85: "Light Snow Showers",
+    86: "Heavy Snow Showers",
+    95: "Thunderstorm",
+    96: "Thunderstorm, Small Hail",
+    99: "Thunderstorm, Large Hail",
 }
 
-WEEKDAY_MAP = [u"日", u"一", u"二", u"三", u"四", u"五", u"六"]
+WEEKDAY_MAP = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+MONTH_MAP = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 def _text_size(draw, text, font):
@@ -259,12 +260,12 @@ def _http_get_json(url, timeout=8):
 
 def _weather_text(code):
     if code is None:
-        return u"未知"
+        return "Unknown"
     try:
         code = int(code)
     except (ValueError, TypeError):
-        return u"未知"
-    return WEATHER_CODE_TEXT.get(code, u"未知")
+        return "Unknown"
+    return WEATHER_CODE_TEXT.get(code, "Unknown")
 
 
 def _weekday_from_datestr(datestr):
@@ -274,11 +275,18 @@ def _weekday_from_datestr(datestr):
         try:
             d = datetime.fromisoformat(datestr)
         except ValueError:
-            return u""
-    return u"周" + WEEKDAY_MAP[d.weekday() + 1 if d.weekday() < 6 else 0]
+            return ""
+    return WEEKDAY_MAP[d.weekday() % 7]
 
 
-def geocode_city(name, country_code=None, language="zh", count=1):
+def _format_date(ts):
+    dt = datetime.fromtimestamp(ts)
+    weekday = WEEKDAY_MAP[dt.weekday()]
+    month = MONTH_MAP[dt.month - 1]
+    return "%s, %s %d, %d" % (weekday, month, dt.day, dt.year)
+
+
+def geocode_city(name, country_code=None, language="en", count=1):
     params = {
         "name": name,
         "count": count,
@@ -501,7 +509,7 @@ def build_home_task_items(todo_items, reminders, max_items):
     for r in active_reminders(reminders):
         text = (r.get("text") or "").strip()
         if text:
-            combined.append((False, u"提醒: " + text))
+            combined.append((False, "Reminder: " + text))
     combined.extend(todo_items)
     return combined[:max_items]
 
@@ -510,7 +518,7 @@ def build_task_lines(todo_items, reminders, max_lines=10):
     lines = []
     active = active_reminders(reminders)
     if active:
-        lines.append(u"提醒")
+        lines.append("Reminders")
         for r in active:
             if len(lines) >= max_lines:
                 return lines
@@ -525,7 +533,7 @@ def build_task_lines(todo_items, reminders, max_lines=10):
                 return lines
     if todo_items:
         if lines:
-            lines.append(u"待办")
+            lines.append("Todos")
         for checked, text in todo_items:
             if len(lines) >= max_lines:
                 return lines
@@ -534,7 +542,7 @@ def build_task_lines(todo_items, reminders, max_lines=10):
             if len(lines) >= max_lines:
                 return lines
     if not lines:
-        lines.append(u"暂无待办/提醒")
+        lines.append("No todos or reminders")
     return lines
 
 
@@ -547,54 +555,61 @@ def next_due_reminder(reminders, now_ts):
     return None
 
 
-def chinese_num_to_int(text):
-    mapping = {u"零": 0, u"一": 1, u"二": 2, u"三": 3, u"四": 4, u"五": 5, u"六": 6, u"七": 7, u"八": 8, u"九": 9, u"十": 10}
+def _word_num_to_int(text):
     if text.isdigit():
         return int(text)
-    if text == u"十":
-        return 10
-    if len(text) == 2 and text[0] == u"十":
-        return 10 + mapping.get(text[1], 0)
-    if len(text) == 2 and text[1] == u"十":
-        return mapping.get(text[0], 0) * 10
-    if len(text) == 3 and text[1] == u"十":
-        return mapping.get(text[0], 0) * 10 + mapping.get(text[2], 0)
-    return mapping.get(text, 0)
+    mapping = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+    }
+    return mapping.get(text.lower(), 0)
 
 
 def parse_due_datetime(text, now):
+    lower = text.lower()
     # Relative patterns
-    if u"明天" in text:
-        return (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
-    if u"后天" in text and u"大后天" not in text:
+    if "day after tomorrow" in lower:
         return (now + timedelta(days=2)).replace(hour=9, minute=0, second=0, microsecond=0)
-    if u"大后天" in text:
-        return (now + timedelta(days=3)).replace(hour=9, minute=0, second=0, microsecond=0)
+    if "tomorrow" in lower:
+        return (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
 
-    m = re.search(r"([0-9一二三四五六七八九十]+)\s*天后", text)
+    num_pat = r"([0-9]+|one|two|three|four|five|six|seven|eight|nine|ten)"
+    m = re.search(r"in\s+" + num_pat + r"\s+days?", lower)
     if m:
-        days = chinese_num_to_int(m.group(1))
-        return (now + timedelta(days=days)).replace(hour=9, minute=0, second=0, microsecond=0)
-    m = re.search(r"(还有)?\s*([0-9一二三四五六七八九十]+)\s*天(后|以后|之后)?", text)
-    if m:
-        days = chinese_num_to_int(m.group(2))
+        days = _word_num_to_int(m.group(1))
         if days > 0:
             return (now + timedelta(days=days)).replace(hour=9, minute=0, second=0, microsecond=0)
-    m = re.search(r"([0-9一二三四五六七八九十]+)\s*小时后", text)
+    m = re.search(num_pat + r"\s+days?\s+(later|from\s+now|after)", lower)
     if m:
-        hours = chinese_num_to_int(m.group(1))
-        return now + timedelta(hours=hours)
-    m = re.search(r"([0-9一二三四五六七八九十]+)\s*分钟后", text)
+        days = _word_num_to_int(m.group(1))
+        if days > 0:
+            return (now + timedelta(days=days)).replace(hour=9, minute=0, second=0, microsecond=0)
+    m = re.search(r"in\s+" + num_pat + r"\s+hours?", lower)
     if m:
-        minutes = chinese_num_to_int(m.group(1))
-        return now + timedelta(minutes=minutes)
+        hours = _word_num_to_int(m.group(1))
+        if hours > 0:
+            return now + timedelta(hours=hours)
+    m = re.search(r"in\s+" + num_pat + r"\s+minutes?", lower)
+    if m:
+        minutes = _word_num_to_int(m.group(1))
+        if minutes > 0:
+            return now + timedelta(minutes=minutes)
 
-    # Absolute date: YYYY-MM-DD or MM月DD日
-    m = re.search(r"(20\d{2})[-/年](\d{1,2})[-/月](\d{1,2})", text)
+    # Absolute date: YYYY-MM-DD or YYYY/MM/DD
+    m = re.search(r"(20\d{2})[-/](\d{1,2})[-/](\d{1,2})", text)
     if m:
         y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
         return datetime(y, mo, d, 9, 0, 0)
-    m = re.search(r"(\d{1,2})月(\d{1,2})日", text)
+    # Absolute date: MM/DD or MM-DD (assume current year)
+    m = re.search(r"(\d{1,2})[/-](\d{1,2})", text)
     if m:
         y = now.year
         mo, d = int(m.group(1)), int(m.group(2))
@@ -604,12 +619,17 @@ def parse_due_datetime(text, now):
 
 def extract_reminder_text(text):
     t = text
-    for kw in [u"提醒我", u"提醒", u"请提醒我", u"请提醒"]:
+    for kw in ["remind me", "please remind me", "please remind", "reminder", "remind"]:
         t = t.replace(kw, "")
-    t = re.sub(r"(还有)?\s*[0-9一二三四五六七八九十]+\s*(天后|天以后|天之后|天)", "", t)
-    t = re.sub(r"[0-9一二三四五六七八九十]+\s*(小时后|分钟后)", "", t)
-    t = t.replace(u"明天", "").replace(u"后天", "").replace(u"大后天", "")
-    t = t.replace(u"在", "").replace(u"的时候", "")
+    t = re.sub(r"in\s+[0-9]+\s+days?", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"[0-9]+\s+days?\s+(later|from\s+now|after)", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"in\s+[0-9]+\s+hours?", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"in\s+[0-9]+\s+minutes?", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bon\s+(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bon\s+(\d{1,2})[/-](\d{1,2})\b", "", t, flags=re.IGNORECASE)
+    t = t.replace("tomorrow", "")
+    t = t.replace("day after tomorrow", "")
+    t = t.replace(" at ", " ")
     t = t.strip()
     return t if t else text.strip()
 
@@ -624,11 +644,11 @@ def analyze_text(text):
             client = genai.Client(api_key=api_key)
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             prompt = (
-                "将输入文本解析为待办或提醒。"
-                "返回 JSON："
+                "Parse the input into todos or reminders."
+                "Return JSON:"
                 "{\"transcript\":\"...\",\"todos\":[\"...\"],\"reminders\":[{\"text\":\"...\",\"due\":\"YYYY-MM-DD HH:MM\"}]}\n"
-                "如果是相对时间（如三天后），请转换为绝对时间。"
-                "当前时间：" + now
+                "If a relative time is mentioned, convert it to an absolute datetime."
+                "Current time: " + now
             )
             resp = client.models.generate_content(model=GEMINI_MODEL, contents=[prompt, text])
             raw = (resp.text or "").strip()
@@ -787,11 +807,11 @@ def transcribe_and_extract(audio_path):
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     prompt = (
-        "请把音频内容转写成中文文本，并提取待办和提醒。"
-        "只输出 JSON，格式："
+        "Transcribe the audio into English text and extract todos/reminders."
+        "Output JSON only, format:"
         "{\"transcript\":\"...\",\"todos\":[\"...\"],\"reminders\":[{\"text\":\"...\",\"due\":\"YYYY-MM-DD HH:MM\"}]}"
-        "如果是相对时间（如三天后），请转换为绝对时间。"
-        "当前时间：" + now
+        "If a relative time is mentioned, convert it to an absolute datetime."
+        "Current time: " + now
     )
     response = client.models.generate_content(
         model=GEMINI_MODEL,
@@ -890,8 +910,7 @@ try:
             max_width=w - margin * 2,
             max_height=90,
         )
-        weekday = WEEKDAY_MAP[int(time.strftime('%w'))]
-        date_text = time.strftime('%Y年%m月%d日 ') + u"星期" + weekday
+        date_text = _format_date(time.time())
         font_date, date_w, date_h = _fit_font(
             draw,
             date_text,
@@ -917,11 +936,11 @@ try:
         draw.rectangle(right_box, outline=0, width=2)
 
         left_pad = 16
-        draw.text((left_box[0] + left_pad, left_box[1] + 12), u"今日天气", font=font_title, fill=0)
+        draw.text((left_box[0] + left_pad, left_box[1] + 12), "Today's Weather", font=font_title, fill=0)
         _draw_weather_icon(draw, left_box[0] + left_pad, left_box[1] + 64)
 
         right_pad = 16
-        draw.text((right_box[0] + right_pad, right_box[1] + 12), u"今日待办", font=font_title, fill=0)
+        draw.text((right_box[0] + right_pad, right_box[1] + 12), "Today's Tasks", font=font_title, fill=0)
         draw.line((right_box[0] + 12, right_box[1] + 148, right_box[2] - 12, right_box[1] + 148), fill=0, width=1)
         draw.line((right_box[0] + 12, right_box[1] + 178, right_box[2] - 12, right_box[1] + 178), fill=0, width=1)
 
@@ -930,7 +949,7 @@ try:
             x = margin + col_w * i
             draw.line((x, bottom_top + 10, x, h - 10), fill=0, width=2)
 
-        labels = [u"提醒", u"温度", u"已完成"]
+        labels = ["Reminders", "Temp", "Done"]
         for i in range(3):
             x0 = margin + col_w * i
             x1 = x0 + col_w
@@ -941,8 +960,7 @@ try:
     def draw_time(draw, now, time_info, date_info, font_time, font_date):
         time_x, time_y, _, _ = time_info
         date_x, date_y, _, _ = date_info
-        weekday = WEEKDAY_MAP[int(time.strftime('%w', time.localtime(now)))]
-        date_text = time.strftime('%Y年%m月%d日 ', time.localtime(now)) + u"星期" + weekday
+        date_text = _format_date(now)
         time_text = time.strftime('%H:%M:%S', time.localtime(now))
         draw.text((time_x, time_y), time_text, font=font_time, fill=0)
         draw.text((date_x, date_y), date_text, font=font_date, fill=0)
@@ -984,7 +1002,7 @@ try:
 
         total, done = todo_stats(items)
         rem_count = reminder_stats(reminders)
-        footer = u"完成：%d/%d  提醒：%d" % (done, total, rem_count)
+        footer = "Done: %d/%d  Reminders: %d" % (done, total, rem_count)
         footer = _truncate_text(draw, footer, font_small, right_box[2] - right_box[0] - right_pad * 2)
         draw.text((right_box[0] + right_pad, right_box[1] + 194), footer, font=font_small, fill=0)
 
@@ -1096,19 +1114,19 @@ try:
         draw = ImageDraw.Draw(base)
 
         draw.rectangle((0, 0, w - 1, h - 1), outline=0, width=3)
-        draw.text((margin, 14), u"天气", font=font_title_big, fill=0)
+        draw.text((margin, 14), "Weather", font=font_title_big, fill=0)
 
         if weather_data:
             city = weather_data.get("city", CITY_NAME)
             update_text = time.strftime('%H:%M', time.localtime(weather_data.get("fetched_at", time.time())))
-            header_right = city + u"  更新" + update_text
+            header_right = city + "  Updated " + update_text
             w_header, h_header = _text_size(draw, header_right, font_small)
             draw.text((w - margin - w_header, 22), header_right, font=font_small, fill=0)
 
         draw.line((margin, 60, w - margin, 60), fill=0, width=2)
 
         if error_msg:
-            draw.text((margin, 100), u"天气获取失败", font=font_title, fill=0)
+            draw.text((margin, 100), "Weather fetch failed", font=font_title, fill=0)
             draw.text((margin, 150), error_msg, font=font_small, fill=0)
             return base
 
@@ -1129,13 +1147,13 @@ try:
 
         right_x = int(w * 0.55)
         line_y = top_y + 10
-        draw.text((right_x, line_y), u"体感", font=font_small, fill=0)
+        draw.text((right_x, line_y), "Feels", font=font_small, fill=0)
         draw.text((right_x + 90, line_y - 6), (u"%d°C" % int(round(feels))) if feels is not None else u"--", font=font_med, fill=0)
 
-        draw.text((right_x, line_y + 40), u"湿度", font=font_small, fill=0)
+        draw.text((right_x, line_y + 40), "Humidity", font=font_small, fill=0)
         draw.text((right_x + 90, line_y + 34), (u"%d%%" % int(round(humidity))) if humidity is not None else u"--", font=font_med, fill=0)
 
-        draw.text((right_x, line_y + 80), u"风速", font=font_small, fill=0)
+        draw.text((right_x, line_y + 80), "Wind", font=font_small, fill=0)
         draw.text((right_x + 90, line_y + 74), (u"%d" % int(round(wind))) if wind is not None else u"--", font=font_med, fill=0)
         draw.text((right_x + 140, line_y + 80), u"km/h", font=font_small, fill=0)
 
@@ -1162,14 +1180,14 @@ try:
                     temp_range = u"%d/%d°" % (int(round(max_v)), int(round(min_v)))
                 draw.text((x0 + 8, forecast_top + 74), temp_range, font=font_small, fill=0)
         else:
-            draw.text((margin, forecast_top + 20), u"暂无预报数据", font=font_small, fill=0)
+            draw.text((margin, forecast_top + 20), "No forecast data", font=font_small, fill=0)
 
-        draw.text((margin, h - 34), u"Enter 进入 / B 返回 / R 刷新", font=font_small, fill=0)
+        draw.text((margin, h - 34), "Enter Open / B Back / R Refresh", font=font_small, fill=0)
         return base
 
     def draw_todo_page(items, reminders):
         lines = build_task_lines(items, reminders, max_lines=10)
-        return _draw_page(u"待办 / 提醒", u"V 语音 / T 文本 / B 返回", lines, font_title_big, font_sub, font_small, w, h)
+        return _draw_page("Tasks & Reminders", "V Voice / T Text / B Back", lines, font_title_big, font_sub, font_small, w, h)
 
     def draw_reminders_page(reminders):
         lines = []
@@ -1184,13 +1202,13 @@ try:
                 else:
                     lines.append(u"- %s" % text)
         else:
-            lines.append(u"暂无提醒")
-        return _draw_page(u"提醒清单", u"B 返回", lines, font_title_big, font_sub, font_small, w, h)
+            lines.append("No reminders")
+        return _draw_page("Reminder List", "B Back", lines, font_title_big, font_sub, font_small, w, h)
 
     def draw_reminder_page(reminder):
-        title = u"提醒"
+        title = "Reminder"
         if not reminder:
-            return _draw_page(title, u"", [u"暂无提醒"], font_title_big, font_sub, font_small, w, h)
+            return _draw_page(title, "", ["No reminders"], font_title_big, font_sub, font_small, w, h)
         text = reminder.get("text", "")
         due_ts = reminder.get("due_ts")
         due_text = u""
@@ -1198,11 +1216,11 @@ try:
             due_text = time.strftime("%Y-%m-%d %H:%M", time.localtime(due_ts))
         lines = [text]
         if due_text:
-            lines.append(u"时间：" + due_text)
-        lines.append(u"Enter 标记完成 / B 忽略")
-        return _draw_page(title, u"", lines, font_title_big, font_sub, font_small, w, h)
+            lines.append("Time: " + due_text)
+        lines.append("Enter Done / B Ignore")
+        return _draw_page(title, "", lines, font_title_big, font_sub, font_small, w, h)
 
-    def draw_loading_page(text=u"正在获取天气..."):
+    def draw_loading_page(text="Fetching weather..."):
         base = Image.new('1', (w, h), 255)
         draw = ImageDraw.Draw(base)
         draw.rectangle((0, 0, w - 1, h - 1), outline=0, width=3)
@@ -1352,7 +1370,7 @@ try:
 
     def text_input_flow():
         global todo_items, todo_mtime, reminders, reminder_mtime
-        page = _draw_page(u"文本输入", u"输入后回车", [u"可输入提醒，例如：提醒我三天后牛奶过期"], font_title_big, font_sub, font_small, w, h)
+        page = _draw_page("Text Input", "Type then Enter", ["Example: remind me milk expires in 3 days"], font_title_big, font_sub, font_small, w, h)
         _display_full_partial(epd, page, w, h)
         line = read_text_line().strip()
         if not line:
@@ -1368,31 +1386,31 @@ try:
             reminder_mtime = os.path.getmtime(REMINDER_PATH)
         lines = []
         if todos:
-            lines.append(u"新增待办：")
+            lines.append("Added todos:")
             for t in todos[:4]:
                 lines.append(u"- " + t)
         if new_reminders:
-            lines.append(u"新增提醒：")
+            lines.append("Added reminders:")
             for r in new_reminders[:3]:
                 lines.append(u"- " + r.get("text", ""))
         if not lines:
-            lines.append(u"未识别到待办/提醒")
-        done = _draw_page(u"完成", u"已保存", lines, font_title_big, font_sub, font_small, w, h)
+            lines.append("No todos/reminders recognized")
+        done = _draw_page("Done", "Saved", lines, font_title_big, font_sub, font_small, w, h)
         _display_full_partial(epd, done, w, h)
         time.sleep(1)
 
     def voice_flow(use_button=False):
         global todo_items, todo_mtime, reminders, reminder_mtime
         while True:
-            subtitle = u"松开按钮结束" if use_button else (u"请在 %d 秒内说话" % RECORD_MAX_SEC)
-            recording = _draw_page(u"正在录音...", subtitle, [], font_title_big, font_sub, font_small, w, h)
+            subtitle = "Release button to stop" if use_button else ("Speak within %d seconds" % RECORD_MAX_SEC)
+            recording = _draw_page("Recording...", subtitle, [], font_title_big, font_sub, font_small, w, h)
             _display_full_partial(epd, recording, w, h)
             if use_button and GPIO is not None:
                 audio = _record_audio_until_release(BUTTON_PIN)
             else:
                 audio = _record_audio_fixed()
             if not audio:
-                err = _draw_page(u"录音失败", u"V 重试 / T 文本 / B 返回", [], font_title_big, font_sub, font_small, w, h)
+                err = _draw_page("Recording failed", "V Retry / T Text / B Back", [], font_title_big, font_sub, font_small, w, h)
                 _display_full_partial(epd, err, w, h)
                 k = wait_for_key({"voice", "text", "back"})
                 if k == "voice":
@@ -1400,12 +1418,12 @@ try:
                 if k == "text":
                     text_input_flow()
                 return
-            processing = _draw_page(u"识别中...", u"请稍候", [], font_title_big, font_sub, font_small, w, h)
+            processing = _draw_page("Processing...", "Please wait", [], font_title_big, font_sub, font_small, w, h)
             _display_full_partial(epd, processing, w, h)
             try:
                 transcript, todos, new_reminders = transcribe_and_extract(audio)
             except Exception as e:
-                err = _draw_page(u"识别失败", str(e), [u"V 重试", u"T 文本", u"B 返回"], font_title_big, font_sub, font_small, w, h)
+                err = _draw_page("Recognition failed", str(e), ["V Retry", "T Text", "B Back"], font_title_big, font_sub, font_small, w, h)
                 _display_full_partial(epd, err, w, h)
                 k = wait_for_key({"voice", "text", "back"})
                 if k == "voice":
@@ -1434,21 +1452,21 @@ try:
 
             lines = []
             if transcript:
-                lines.append(u"听到：" + transcript[:16])
+                lines.append("Heard: " + transcript[:16])
                 if len(transcript) > 16:
                     lines.append(transcript[16:32])
             if todos:
-                lines.append(u"新增待办：")
+                lines.append("Added todos:")
                 for t in todos[:5]:
                     lines.append(u"- " + t)
             if new_reminders:
-                lines.append(u"新增提醒：")
+                lines.append("Added reminders:")
                 for r in new_reminders[:3]:
                     lines.append(u"- " + r.get("text", ""))
             if not todos and not new_reminders:
-                lines.append(u"未识别到待办/提醒")
+                lines.append("No todos/reminders recognized")
 
-            done = _draw_page(u"完成", u"已保存到 todo.txt", lines, font_title_big, font_sub, font_small, w, h)
+            done = _draw_page("Done", "Saved to todo.txt", lines, font_title_big, font_sub, font_small, w, h)
             _display_full_partial(epd, done, w, h)
             time.sleep(1.5)
             return

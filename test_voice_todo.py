@@ -211,8 +211,8 @@ def transcribe_and_extract(audio_path):
     myfile = client.files.upload(file=audio_path)
 
     prompt = (
-        "请把音频内容转写成中文文本，并提取待办事项。"
-        "只输出 JSON，格式："
+        "Transcribe the audio into English text and extract todos."
+        "Output JSON only, format:"
         "{\"transcript\":\"...\",\"todos\":[\"...\",\"...\"]}"
     )
     response = client.models.generate_content(
@@ -275,29 +275,29 @@ def main():
     else:
         GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
-    idle = _draw_page(u"语音待办", u"按下按钮开始说话", [u"建议语速清晰", u"最多 %d 秒" % RECORD_MAX_SEC], font_title, font_sub, font_body, w, h)
+    idle = _draw_page("Voice Todo", "Press button to speak", ["Speak clearly", "Max %d seconds" % RECORD_MAX_SEC], font_title, font_sub, font_body, w, h)
     _display_full(epd, idle)
 
     try:
         while True:
             GPIO.wait_for_edge(BUTTON_PIN, GPIO.FALLING if BUTTON_ACTIVE_LOW else GPIO.RISING, bouncetime=DEBOUNCE_MS)
 
-            recording = _draw_page(u"正在录音...", u"松开按钮结束", [], font_title, font_sub, font_body, w, h)
+            recording = _draw_page("Recording...", "Release button to stop", [], font_title, font_sub, font_body, w, h)
             _display_full(epd, recording)
             audio = _record_audio_until_release(BUTTON_PIN)
             if not audio:
-                error = _draw_page(u"录音失败", u"请重试", [], font_title, font_sub, font_body, w, h)
+                error = _draw_page("Recording failed", "Please retry", [], font_title, font_sub, font_body, w, h)
                 _display_full(epd, error)
                 time.sleep(1)
                 _display_full(epd, idle)
                 continue
 
-            processing = _draw_page(u"识别中...", u"请稍候", [], font_title, font_sub, font_body, w, h)
+            processing = _draw_page("Processing...", "Please wait", [], font_title, font_sub, font_body, w, h)
             _display_full(epd, processing)
             try:
                 transcript, todos = transcribe_and_extract(audio)
             except Exception as e:
-                err = _draw_page(u"识别失败", str(e), [], font_title, font_sub, font_body, w, h)
+                err = _draw_page("Recognition failed", str(e), [], font_title, font_sub, font_body, w, h)
                 _display_full(epd, err)
                 time.sleep(2)
                 _display_full(epd, idle)
@@ -308,17 +308,17 @@ def main():
 
             lines = []
             if transcript:
-                lines.append(u"听到：" + transcript[:18])
+                lines.append("Heard: " + transcript[:18])
                 if len(transcript) > 18:
                     lines.append(transcript[18:36])
             if todos:
-                lines.append(u"新增待办：")
+                lines.append("Added todos:")
                 for t in todos[:MAX_TODOS]:
                     lines.append(u"- " + t)
             else:
-                lines.append(u"未识别到待办")
+                lines.append("No todos recognized")
 
-            done = _draw_page(u"完成", u"已保存到 todo.txt", lines, font_title, font_sub, font_body, w, h)
+            done = _draw_page("Done", "Saved to todo.txt", lines, font_title, font_sub, font_body, w, h)
             _display_full(epd, done)
             time.sleep(2)
             _display_full(epd, idle)
