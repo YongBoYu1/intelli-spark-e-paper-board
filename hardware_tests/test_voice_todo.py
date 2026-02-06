@@ -23,14 +23,29 @@ except Exception:
     genai = None
 
 base_dir = os.path.dirname(os.path.realpath(__file__))
-default_root = os.path.dirname(base_dir)
+
+
+def _detect_repo_root(start_dir):
+    cur = start_dir
+    for _ in range(3):
+        if os.path.isdir(os.path.join(cur, "third_party", "waveshare_ePaper")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return os.path.dirname(start_dir)
+
+
+repo_root = _detect_repo_root(base_dir)
+default_root = repo_root
 picdir = os.path.join(default_root, 'pic')
 libdir = os.path.join(default_root, 'lib')
 LOG_PATH = os.path.join(base_dir, "run.log")
 LAST_FRAME_PATH = os.path.join(base_dir, "last_frame.png")
 TODO_PATH = os.path.join(base_dir, "todo.txt")
 local_submodule_root = os.path.join(
-    base_dir,
+    repo_root,
     "third_party",
     "waveshare_ePaper",
     "RaspberryPi_JetsonNano",
