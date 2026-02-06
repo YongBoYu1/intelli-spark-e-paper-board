@@ -34,6 +34,13 @@ picdir = os.path.join(default_root, 'pic')
 libdir = os.path.join(default_root, 'lib')
 LOG_PATH = os.path.join(base_dir, "run.log")
 LAST_FRAME_PATH = os.path.join(base_dir, "last_frame.png")
+local_submodule_root = os.path.join(
+    base_dir,
+    "third_party",
+    "waveshare_ePaper",
+    "RaspberryPi_JetsonNano",
+    "python",
+)
 
 # Auto-detect Waveshare repo paths on Raspberry Pi
 candidate_roots = []
@@ -42,6 +49,7 @@ if env_root:
     candidate_roots.append(env_root)
 candidate_roots.extend(
     [
+        local_submodule_root,
         default_root,
         "/e-Paper/RaspberryPi_JetsonNano/python",
         "/root/e-Paper/RaspberryPi_JetsonNano/python",
