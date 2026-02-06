@@ -1,9 +1,16 @@
 # Fridge Ink (Linux User-Space) — E-Paper AI Fridge Magnet Firmware
 
-This repository contains a **Linux user-space** C application for a 7.5" e-paper fridge magnet running on **Raspberry Pi / Jetson**.  
+This repository targets a **Linux user-space C firmware** for a 7.5" e-paper fridge magnet running on **Raspberry Pi / Jetson**.
 It drives a Waveshare e-paper panel, renders a multi-screen UI navigated by a **rotary knob (rotate + press)**, supports **voice input**, and calls a backend that can route requests to **Gemini** for AI actions.
 
-> Design goals: product-grade structure (not demo-style), modular components, testable core logic, minimal hardware-specific code, and clean separation from third-party drivers.
+> Primary language: **C** (firmware). The **Python scripts are only for hardware validation** and live under `hardware_tests/`.
+
+---
+
+## Status
+
+- **C firmware**: architecture planned, implementation pending.
+- **Hardware validation**: Python scripts to verify display, input, audio, and API integration.
 
 ---
 
@@ -47,107 +54,64 @@ It drives a Waveshare e-paper panel, renders a multi-screen UI navigated by a **
 
 ---
 
-## Architecture Overview
+## Hardware Tests (Python)
 
-The firmware is split into clear modules:
-
-- `ui/`  
-  Screen rendering + widgets + e-paper renderer integration.
-
-- `input/`  
-  Knob drivers (GPIO/evdev) producing abstract events.
-
-- `net/`  
-  HTTP client + backend API client.
-
-- `voice/`  
-  ALSA audio capture + voice session workflow.
-
-- `ai/`  
-  Action router (Gemini actions → local state updates + oplog).
-
-- `sync/`  
-  Pull diffs + push local operations (offline-safe).
-
-- `storage/`  
-  KV store + cache + oplog persistence.
-
-- `hal_linux/`  
-  Linux HAL wrappers for SPI/GPIO/time.
-
-Third-party code (Waveshare) is kept isolated in `third_party/`.
+See `hardware_tests/` for display, UI, weather, todo, and voice prototypes used to validate the hardware stack.
 
 ---
 
-## Repository Layout
+## Planned C Architecture
+
+The firmware is split into clear modules:
+
+- `ui/`
+  Screen rendering + widgets + e-paper renderer integration.
+- `input/`
+  Knob drivers (GPIO/evdev) producing abstract events.
+- `net/`
+  HTTP client + backend API client.
+- `voice/`
+  ALSA audio capture + voice session workflow.
+- `ai/`
+  Action router (Gemini actions → local state updates + oplog).
+- `sync/`
+  Pull diffs + push local operations (offline-safe).
+- `storage/`
+  KV store + cache + oplog persistence.
+- `hal_linux/`
+  Linux HAL wrappers for SPI/GPIO/time.
+
+Third-party code (Waveshare) should be isolated in `third_party/`.
+
+---
+
+## Repository Layout (Current)
 
 ```txt
-fridge-ink/
+intelli-spark-e-paper-board/
   README.md
+  .gitignore
+
+  hardware_tests/
+    README.md
+    test_clock_gongxi.py
+    test_homepage.py
+    test_todo.py
+    test_voice_todo.py
+    last_frame.png
+
+  examples/
+    clock_gongxi.py
+    epd_7in5_V2_test.py
+```
+
+## Repository Layout (Target, C Firmware)
+
+```txt
+intelli-spark-e-paper-board/
   CMakeLists.txt
-
   third_party/
-    waveshare_epd/
-      epd/        # only the exact panel driver(s) you use
-      gui/        # GUI_Paint (framebuffer drawing)
-      fonts/      # minimal set of fonts required by UI
-
   src/
-    main.c
-
-    app/
-      app.c
-      app_state.c
-      scheduler.c
-
-    ui/
-      ui.c
-      screens/
-        home.c
-        weather.c
-        calendar.c
-        todo.c
-        shopping.c
-        voice_overlay.c
-      widgets/
-        list.c
-        card.c
-        statusbar.c
-      render/
-        epd_renderer.c
-
-    input/
-      knob_linux.c
-      events.c
-
-    net/
-      http_client.c
-      api_client.c
-
-    voice/
-      audio_capture_alsa.c
-      voice_session.c
-      vad.c (optional)
-
-    ai/
-      action_router.c
-
-    sync/
-      sync.c
-      oplog.c
-
-    storage/
-      kv.c
-      cache.c
-
-    hal_linux/
-      spi_spidev.c
-      gpio_gpiod.c
-      time_linux.c
-
-  include/        # headers mirroring src modules
+  include/
   tests/
-    test_action_router.c
-    test_sync.c
-    test_json.c
-
+```

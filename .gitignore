@@ -1,1 +1,8 @@
 .DS_Store
+
+# Hardware test artifacts
+hardware_tests/run.log
+hardware_tests/last_frame.png
+hardware_tests/todo.txt
+hardware_tests/reminders.json
+hardware_tests/*.wav
