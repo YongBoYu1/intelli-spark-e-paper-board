@@ -57,8 +57,9 @@ def _fit_text_font(draw, fonts, key, max_size, text, max_width, min_size=10):
     return fonts.get(key, min_size)
 
 
-def render_home(image, data, fonts, theme=None):
+def render_home(image, data, fonts, theme=None, overlay=None):
     theme = theme or {}
+    overlay = overlay or {}
     ink = theme.get("ink", 0)
     card = theme.get("card", 255)
     muted = theme.get("muted", ink)
@@ -148,6 +149,8 @@ def render_home(image, data, fonts, theme=None):
         item_border_width,
         checkbox_border_width,
         item_radius,
+        overlay,
+        card_radius,
     )
 
 
@@ -196,8 +199,24 @@ def _draw_left_panel(
     draw.text((battery_x - pt_w - 6, status_y + 2), percent_text, font=percent_font, fill=ink)
 
     now = datetime.now()
-    time_str = data.get("time") or now.strftime("%H:%M")
-    date_str = data.get("date") or _format_date(now)
+
+    # TSX parity: the clock panel is a widget slot (CLOCK or TIMER) with a voice overlay.
+    voice_active = bool(data.get("voice_active"))
+    widget_mode = str(data.get("widget_mode") or "clock").lower()
+    timer_seconds = int(data.get("timer_seconds") or 0)
+    timer_running = bool(data.get("timer_running"))
+
+    if widget_mode == "timer":
+        mm = max(0, timer_seconds) // 60
+        ss = max(0, timer_seconds) % 60
+        time_str = f"{mm:02d}:{ss:02d}"
+        date_str = "TIMER" if timer_running else "PAUSED"
+    elif voice_active:
+        time_str = ""
+        date_str = "LISTENING..."
+    else:
+        time_str = data.get("time") or now.strftime("%H:%M")
+        date_str = data.get("date") or _format_date(now)
 
     time_font_key = theme.get("time_font", "jet_extrabold")
     date_font_key = theme.get("date_font", "inter_bold")
@@ -211,27 +230,38 @@ def _draw_left_panel(
     date_font = fonts.get(date_font_key, 22)
     loc_font = fonts.get(loc_font_key, 12)
 
-    time_w, time_h = text_size(draw, time_str, time_font)
     clock_center_x = x0 + (x1 - x0) / 2
     clock_center_y = y0 + (y1 - y0) / 2 + theme.get("time_center_y", -20)
-    draw_text_centered_clamped(
-        draw,
-        time_str,
-        clock_center_x,
-        clock_center_y,
-        time_font,
-        xmin=x0 + 20,
-        xmax=x1 - 20,
-        fill=ink,
-    )
+    if voice_active:
+        # Minimal mic glyph (robust in 1-bit mode).
+        mic_r = 26
+        cx = int(clock_center_x)
+        cy = int(clock_center_y) - 10
+        draw.ellipse((cx - mic_r, cy - mic_r, cx + mic_r, cy + mic_r), outline=ink, width=3)
+        draw.line((cx, cy + mic_r, cx, cy + mic_r + 18), fill=ink, width=3)
+        draw.line((cx - 18, cy + mic_r + 18, cx + 18, cy + mic_r + 18), fill=ink, width=3)
+        time_h = mic_r * 2
+    else:
+        time_w, time_h = text_size(draw, time_str, time_font)
+        draw_text_centered_clamped(
+            draw,
+            time_str,
+            clock_center_x,
+            clock_center_y,
+            time_font,
+            xmin=x0 + 20,
+            xmax=x1 - 20,
+            fill=ink,
+        )
 
     line_y = clock_center_y + time_h / 2 + theme.get("underline_offset", 8)
-    line_w = 70
-    draw.line(
-        (clock_center_x - line_w / 2, line_y, clock_center_x + line_w / 2, line_y),
-        fill=border,
-        width=underline_width,
-    )
+    if not voice_active:
+        line_w = 70
+        draw.line(
+            (clock_center_x - line_w / 2, line_y, clock_center_x + line_w / 2, line_y),
+            fill=border,
+            width=underline_width,
+        )
 
     date_w = text_width_spaced(draw, date_str, date_font, spacing=2)
     date_h = text_size(draw, date_str, date_font)[1]
@@ -240,7 +270,7 @@ def _draw_left_panel(
     draw_text_spaced(draw, date_str, date_x, date_y, date_font, spacing=2, fill=ink)
 
     location = data.get("location", "")
-    if location:
+    if location and not (voice_active or widget_mode == "timer"):
         pill_w = max(86, text_size(draw, location, loc_font)[0] + 18)
         pill_h = 22
         pill_x = x0 + (x1 - x0 - pill_w) // 2
@@ -329,6 +359,8 @@ def _draw_right_panel(
     item_border_width,
     checkbox_border_width,
     item_radius,
+    overlay,
+    card_radius,
 ):
     x0, y0, x1, y1 = right_card
     padding = 12
@@ -391,6 +423,12 @@ def _draw_right_panel(
     gap = theme.get("item_gap", 10)
     start = (page - 1) * items_per_page
     page_items = reminders[start : start + items_per_page]
+
+    focus = overlay.get("focus") or {}
+    focus_kind = focus.get("kind")
+    focus_idx = focus.get("index")
+    focus_width = int(overlay.get("focus_width", 4) or 4)
+
     for idx, item in enumerate(page_items):
         box = (
             x0 + padding,
@@ -398,6 +436,7 @@ def _draw_right_panel(
             x0 + padding + 458,
             list_top + idx * (item_h + gap) + item_h,
         )
+
         right_text = item.get("time") or item.get("due", "")
         draw_reminder_item(
             draw,
@@ -413,3 +452,16 @@ def _draw_right_panel(
             checkbox_border_width=checkbox_border_width,
             radius=item_radius,
         )
+
+        if focus_kind == "task" and focus_idx == (start + idx):
+            # Draw focus ring on top of the existing border.
+            draw.rounded_rectangle(
+                box,
+                radius=item_radius,
+                outline=ink,
+                width=focus_width,
+                fill=None,
+            )
+
+    # Focus ring for header sections (clock / weather) is drawn by caller (render_app),
+    # because home.py doesn't know the global focused_index mapping.

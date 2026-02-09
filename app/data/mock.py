@@ -29,4 +29,12 @@ def load_dashboard():
             ],
         }
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+
+        # Keep legacy files usable: if reminder_total/page_count are inconsistent with the
+        # reminders list, prefer the list (the app-level system derives paging from data).
+        reminders = data.get("reminders") or []
+        if isinstance(reminders, list):
+            data["reminder_total"] = len(reminders)
+        data.pop("page_count", None)
+        return data

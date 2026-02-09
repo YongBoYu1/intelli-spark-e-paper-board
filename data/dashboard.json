@@ -1,15 +1,14 @@
 {
   "location": "New York",
   "battery": 84,
-  "page": 1,
-  "page_count": 2,
-  "reminder_total": 7,
-  "reminder_due": 6,
   "reminders": [
     {"title": "Doctor Appointment", "time": "14:00"},
     {"title": "Yoghurt Expires", "due": "2 Days"},
     {"title": "Morning Yoga", "time": "08:00"},
-    {"title": "Buy Milk"}
+    {"title": "Buy Milk"},
+    {"title": "Trash Day", "due": "Tomorrow"},
+    {"title": "Pay Rent", "due": "Mar 1"},
+    {"title": "Call Mom", "due": "This week"}
   ],
   "weather": [
     {"dow": "MON", "icon": "sun", "hi": 22, "lo": 12},

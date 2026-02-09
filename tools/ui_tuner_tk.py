@@ -210,6 +210,7 @@ class UITuner(tk.Tk):
         self.list_top = tk.IntVar(value=87)
         self.item_h = tk.IntVar(value=65)
         self.item_gap = tk.IntVar(value=9)
+        self.items_per_page = tk.IntVar(value=5)
 
         # Fonts
         self.time_font = tk.StringVar(value="jet_extrabold")
@@ -280,6 +281,7 @@ class UITuner(tk.Tk):
             self.list_top,
             self.item_h,
             self.item_gap,
+            self.items_per_page,
             self.time_font,
             self.date_font,
             self.title_font,
@@ -481,6 +483,7 @@ class UITuner(tk.Tk):
             "list_top": int(self.list_top.get()),
             "item_h": int(self.item_h.get()),
             "item_gap": int(self.item_gap.get()),
+            "items_per_page": int(self.items_per_page.get()),
             "meta_size": int(self.meta_size.get()),
             "item_size": int(self.item_size.get()),
             "right_size": int(self.right_size.get()),
@@ -645,6 +648,7 @@ class UITuner(tk.Tk):
             ("list_top", self.list_top),
             ("item_h", self.item_h),
             ("item_gap", self.item_gap),
+            ("items_per_page", self.items_per_page),
             ("meta_size", self.meta_size),
             ("item_size", self.item_size),
             ("right_size", self.right_size),
@@ -721,6 +725,7 @@ class UITuner(tk.Tk):
         self.list_top.set(87)
         self.item_h.set(65)
         self.item_gap.set(9)
+        self.items_per_page.set(5)
 
         self.time_font.set("jet_extrabold")
         self.date_font.set("inter_bold")
@@ -827,6 +832,7 @@ class UITuner(tk.Tk):
         row = self._add_scale(parent, "List top", self.list_top, 60, 160, row)
         row = self._add_scale(parent, "Item height", self.item_h, 50, 100, row)
         row = self._add_scale(parent, "Item gap", self.item_gap, 6, 20, row)
+        row = self._add_scale(parent, "Items per page", self.items_per_page, 3, 6, row)
 
         row = self._section_label(parent, "Font sizes", row)
         row = self._add_scale(parent, "Meta size", self.meta_size, 8, 16, row)
