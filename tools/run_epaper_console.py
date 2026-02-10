@@ -22,6 +22,11 @@ import tty
 
 from PIL import Image
 
+# Ensure repo root is importable when running this script directly.
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
 from app.core.reducer import reduce, Rotate, Click, LongPress, Back, Tick
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem
 from app.render.epd import init_epd, display_image
