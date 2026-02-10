@@ -30,6 +30,7 @@ if REPO_ROOT not in sys.path:
 from app.core.reducer import reduce, Rotate, Click, LongPress, Back, Tick
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem
 from app.render.epd import init_epd, display_image
+from app.render.panel import build_panel_theme, quantize_for_panel
 from app.shared.fonts import FontBook
 from app.shared.paths import find_repo_root
 from app.ui.app import render_app
@@ -183,18 +184,32 @@ def _read_key_nonblocking() -> str:
     return "\x1b"
 
 
-def _render_to_epd(epd, state: AppState, fonts: FontBook, theme: dict) -> None:
-    # Force monochrome for e-paper output so what you see matches the panel.
-    t = dict(theme or {})
-    t["ink"] = 0
-    t["border"] = 0
-    t["card"] = 255
-    t["bg"] = 255
-    # muted/color hierarchy cannot exist in 1-bit; keep it black for now.
-    t["muted"] = 0
+def _warn_missing_fonts(fonts: FontBook) -> None:
+    missing = fonts.missing_font_paths()
+    if not missing:
+        return
+    print("[warn] Missing font files. Rendering will fall back and quality may degrade:")
+    for key, path in missing:
+        print(f"  - {key}: {path}")
 
-    image = Image.new("1", (epd.width, epd.height), 255)
-    render_app(image, state, fonts, t)
+
+def _render_to_epd(
+    epd,
+    state: AppState,
+    fonts: FontBook,
+    theme: dict,
+    *,
+    panel_threshold: int,
+    panel_muted: int,
+    panel_gamma: float,
+    panel_dither: bool,
+) -> None:
+    # Render in RGB first, then quantize to 1-bit. This produces less jagged text
+    # than drawing directly to mode '1'.
+    t = build_panel_theme(theme, muted_gray=panel_muted)
+    rgb = Image.new("RGB", (epd.width, epd.height), t.get("bg", (255, 255, 255)))
+    render_app(rgb, state, fonts, t)
+    image = quantize_for_panel(rgb, threshold=panel_threshold, gamma=panel_gamma, dither=panel_dither)
     display_image(epd, image, sleep_after=False)
 
 
@@ -202,6 +217,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--theme", default="ui_tuner_theme.json", help="Theme JSON (optional)")
     parser.add_argument("--tick", type=float, default=0.2, help="Tick interval seconds")
+    parser.add_argument("--panel-threshold", type=int, default=None, help="1-bit threshold (0-255)")
+    parser.add_argument("--panel-muted", type=int, default=None, help="Muted gray before quantization (0-255)")
+    parser.add_argument("--panel-gamma", type=float, default=None, help="Gamma before threshold (0.1-4.0)")
+    parser.add_argument("--panel-dither", action="store_true", help="Use Floyd-Steinberg dithering before 1-bit output")
     args = parser.parse_args()
 
     repo_root = find_repo_root(os.path.dirname(__file__))
@@ -209,11 +228,25 @@ def main() -> int:
     if theme_path and not os.path.isabs(theme_path):
         theme_path = os.path.join(repo_root, theme_path)
     theme = _load_theme(theme_path) if theme_path else {}
+    panel_threshold = int(args.panel_threshold if args.panel_threshold is not None else theme.get("panel_threshold", 168))
+    panel_muted = int(args.panel_muted if args.panel_muted is not None else theme.get("panel_muted", 150))
+    panel_gamma = float(args.panel_gamma if args.panel_gamma is not None else theme.get("panel_gamma", 1.0))
+    panel_dither = bool(args.panel_dither or theme.get("panel_dither", False))
     fonts = _build_fonts(repo_root)
+    _warn_missing_fonts(fonts)
     state = AppState(model=_load_model(repo_root))
 
     epd, _ = init_epd()
-    _render_to_epd(epd, state, fonts, theme)
+    _render_to_epd(
+        epd,
+        state,
+        fonts,
+        theme,
+        panel_threshold=panel_threshold,
+        panel_muted=panel_muted,
+        panel_gamma=panel_gamma,
+        panel_dither=panel_dither,
+    )
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -262,7 +295,16 @@ def main() -> int:
                 tuple((r.rid, r.completed) for r in state.model.reminders),
             )
             if sig != last_render_sig:
-                _render_to_epd(epd, state, fonts, theme)
+                _render_to_epd(
+                    epd,
+                    state,
+                    fonts,
+                    theme,
+                    panel_threshold=panel_threshold,
+                    panel_muted=panel_muted,
+                    panel_gamma=panel_gamma,
+                    panel_dither=panel_dither,
+                )
                 last_render_sig = sig
 
             time.sleep(0.01)

@@ -1,3 +1,5 @@
+import os
+
 from PIL import ImageFont
 
 
@@ -39,3 +41,10 @@ class FontBook:
         font = ImageFont.load_default()
         self._cache[cache_key] = font
         return font
+
+    def missing_font_paths(self):
+        missing = []
+        for key, path in self.font_paths.items():
+            if not path or not os.path.exists(path):
+                missing.append((key, path))
+        return missing

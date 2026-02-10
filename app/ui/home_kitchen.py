@@ -52,17 +52,22 @@ def _theme(theme: dict) -> dict:
     t.setdefault("k_fridge_card_h", 90)
     t.setdefault("k_fridge_card_gap", 12)
     t.setdefault("k_fridge_title_size_rem", 1.125)
-    t.setdefault("k_fridge_badge_size_rem", 0.65)
-    t.setdefault("k_fridge_badge_px", 8)
-    t.setdefault("k_fridge_badge_py", 2)
+    t.setdefault("k_fridge_badge_size_rem", 0.80)
+    t.setdefault("k_fridge_badge_px", 9)
+    t.setdefault("k_fridge_badge_py", 3)
+    t.setdefault("k_fridge_badge_min_w", 88)
 
-    t.setdefault("k_shop_header_size_rem", 0.875)
-    t.setdefault("k_shop_item_size_rem", 1.25)
+    t.setdefault("k_shop_header_size_rem", 0.92)
+    t.setdefault("k_shop_item_size_rem", 1.34)
     t.setdefault("k_shop_item_h", 50)
     t.setdefault("k_shop_item_gap", 0)
 
     t.setdefault("k_kitchen_section_gap", 24)
     t.setdefault("k_kitchen_header_mb", 12)
+    t.setdefault("k_micro_size_px", 11)
+    t.setdefault("k_micro_bold_size_px", 12)
+    t.setdefault("k_inventory_header_size_px", 13)
+    t.setdefault("k_inventory_header_offset_y", 2)
 
     return t
 
@@ -115,15 +120,17 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     f_serif = "playfair_regular"
     f_serif_italic = "playfair_italic"
     f_sans = "inter_regular"
+    f_sans_medium = "inter_medium"
     f_sans_bold = "inter_bold"
     f_mono = "jet_bold"
 
     # Compute sizes
     time_font = fonts.get(f_serif, _font_px(theme["k_clock_size_rem"]))
-    weekday_font = fonts.get(f_mono, _font_px(theme["k_date_size_rem"]))
+    weekday_font = fonts.get("inter_black", _font_px(theme["k_date_size_rem"]))
     month_font = fonts.get(f_serif_italic, _font_px(theme["k_date_size_rem"] * 0.9))
     temp_font = fonts.get(f_sans_bold, 36)
-    tiny_mono = fonts.get(f_mono, 10)
+    tiny_ui = fonts.get(f_sans_medium, int(theme["k_micro_size_px"]))
+    tiny_ui_bold = fonts.get(f_sans_bold, int(theme["k_micro_bold_size_px"]))
 
     # Left panel focus ring (simple)
     focus_idx = int(state.ui.focused_index or 0)
@@ -172,8 +179,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         draw.text((wx, wy), temp, font=temp_font, fill=ink)
         # description under temp
         dword = desc.split("_")[0]
-        dw, dh = text_size(draw, dword, tiny_mono)
-        draw.text((wx + temp_w - dw, wy + temp_h + 2), dword, font=tiny_mono, fill=muted)
+        dw, dh = text_size(draw, dword, tiny_ui)
+        draw.text((wx + temp_w - dw, wy + temp_h + 2), dword, font=tiny_ui, fill=muted)
         # icon
         draw_weather_icon(draw, w0.icon, left_w - pad - icon_size, wy + 4, size=icon_size, ink=ink, stroke=int(theme["k_icon_stroke"]))
 
@@ -188,8 +195,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     # Label (very light)
     label = "FAMILY BOARD"
-    label_w, label_h = text_size(draw, label, tiny_mono)
-    draw.text((pad, rule_y + 14), label, font=tiny_mono, fill=muted)
+    label_w, label_h = text_size(draw, label, tiny_ui)
+    draw.text((pad, rule_y + 14), label, font=tiny_ui, fill=muted)
 
     # Quote text
     quote_font = fonts.get(f_serif_italic, _font_px(theme["k_mood_msg_size_rem"]))
@@ -226,11 +233,11 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     ts_y = quote_y + min(4, len(lines)) * lh + 10
     draw.line((pad, ts_y, pad + 40, ts_y), fill=muted, width=1)
     if ts:
-        draw.text((pad + 50, ts_y - 6), ts.upper(), font=tiny_mono, fill=muted)
+        draw.text((pad + 50, ts_y - 6), ts.upper(), font=tiny_ui, fill=muted)
 
     # Author list (right side of mood area)
     if memos:
-        author_font = fonts.get(f_mono, 12)
+        author_font = fonts.get(f_sans_medium, 12)
         ax0 = left_w - pad - 90
         # vertical separator
         draw.line((ax0 - 18, rule_y + 70, ax0 - 18, h - pad), fill=(230, 230, 230) if isinstance(card, tuple) else ink, width=2)
@@ -251,11 +258,12 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     # Header: Inventory & Alerts + count
     header_y = pad
     inv_label = "INVENTORY & ALERTS"
-    inv_font = tiny_mono
-    draw.text((right_x + pad, header_y), inv_label, font=inv_font, fill=muted)
+    inv_font = fonts.get("inter_semibold", int(theme["k_inventory_header_size_px"]))
+    inv_y = header_y + int(theme["k_inventory_header_offset_y"])
+    draw.text((right_x + pad, inv_y), inv_label, font=inv_font, fill=ink)
     cnt = str(len(fridge))
-    cw, ch = text_size(draw, cnt, inv_font)
-    draw.text((w - pad - cw, header_y), cnt, font=inv_font, fill=ink)
+    cw, ch = text_size(draw, cnt, tiny_ui_bold)
+    draw.text((w - pad - cw, inv_y), cnt, font=tiny_ui_bold, fill=ink)
 
     # Fridge cards grid (2 cols)
     card_gap = int(theme["k_fridge_card_gap"])
@@ -263,7 +271,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     grid_y = header_y + int(theme["k_kitchen_header_mb"]) + 18
     col_w = int((w - right_x - pad * 2 - card_gap) / 2)
     title_font = fonts.get(f_sans_bold, _font_px(theme["k_fridge_title_size_rem"]))
-    badge_font = fonts.get(f_mono, _font_px(theme["k_fridge_badge_size_rem"]))
+    badge_font = fonts.get(f_sans_bold, _font_px(theme["k_fridge_badge_size_rem"]))
 
     visible_fridge = fridge[:4]
     for i, item in enumerate(visible_fridge):
@@ -281,14 +289,17 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         title = truncate_text(draw, item.title, title_font, col_w - 24)
         draw.text((x0 + 12, y0 + 10), title, font=title_font, fill=ink)
 
-        badge = item.right or "STOCKED"
+        badge = (item.right or "STOCKED").upper()
+        badge = truncate_text(draw, badge, badge_font, col_w - 24 - int(theme["k_fridge_badge_px"]) * 2)
         bw, bh = text_size(draw, badge, badge_font)
         bx0 = x0 + 12
         by0 = y1 - 12 - (bh + int(theme["k_fridge_badge_py"]) * 2)
-        bx1 = bx0 + bw + int(theme["k_fridge_badge_px"]) * 2
+        min_w = int(theme.get("k_fridge_badge_min_w", 88))
+        badge_w = max(min_w, bw + int(theme["k_fridge_badge_px"]) * 2)
+        bx1 = bx0 + badge_w
         by1 = by0 + bh + int(theme["k_fridge_badge_py"]) * 2
         draw.rectangle((bx0, by0, bx1, by1), fill=ink)
-        draw.text((bx0 + int(theme["k_fridge_badge_px"]), by0 + int(theme["k_fridge_badge_py"]) - 1), badge.upper(), font=badge_font, fill=card)
+        draw.text((bx0 + int(theme["k_fridge_badge_px"]), by0 + int(theme["k_fridge_badge_py"])), badge, font=badge_font, fill=card)
 
         if is_focus:
             # small check mark
@@ -310,7 +321,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     draw.line((right_x + pad + 42 + stw + 16, shop_y, w - pad, shop_y), fill=(220, 220, 220) if isinstance(card, tuple) else ink, width=1)
 
     # Shopping items list
-    item_font = fonts.get(f_sans, _font_px(theme["k_shop_item_size_rem"]))
+    item_font = fonts.get(f_sans_medium, _font_px(theme["k_shop_item_size_rem"]))
     row_h = int(theme["k_shop_item_h"])
     y = shop_y + 18
     for item in shop[:6]:
