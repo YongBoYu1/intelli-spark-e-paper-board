@@ -47,7 +47,9 @@ def _theme(theme: dict) -> dict:
     t.setdefault("k_clock_nudge_em", -0.20)
     t.setdefault("k_clock_header_pad_bottom", 24)
     t.setdefault("k_clock_header_margin_bottom", 24)
-    t.setdefault("k_clock_date_gap_rem", 0.5)
+    t.setdefault("k_clock_info_gap_px", 8)
+    t.setdefault("k_weekday_month_gap_px", 4)
+    t.setdefault("k_header_rule_gap_px", 14)
 
     t.setdefault("k_fridge_card_h", 90)
     t.setdefault("k_fridge_card_gap", 12)
@@ -66,6 +68,8 @@ def _theme(theme: dict) -> dict:
     t.setdefault("k_kitchen_header_mb", 12)
     t.setdefault("k_micro_size_px", 11)
     t.setdefault("k_micro_bold_size_px", 12)
+    t.setdefault("k_weather_desc_size_px", 12)
+    t.setdefault("k_weather_desc_gap_px", 3)
     t.setdefault("k_inventory_header_size_px", 13)
     t.setdefault("k_inventory_header_offset_y", 2)
 
@@ -127,10 +131,11 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     # Compute sizes
     time_font = fonts.get(f_serif, _font_px(theme["k_clock_size_rem"]))
     weekday_font = fonts.get("inter_black", _font_px(theme["k_date_size_rem"]))
-    month_font = fonts.get(f_serif_italic, _font_px(theme["k_date_size_rem"] * 0.9))
+    month_font = fonts.get(f_serif, _font_px(theme["k_date_size_rem"] * 0.9))
     temp_font = fonts.get(f_sans_bold, 36)
     tiny_ui = fonts.get(f_sans_medium, int(theme["k_micro_size_px"]))
     tiny_ui_bold = fonts.get(f_sans_bold, int(theme["k_micro_bold_size_px"]))
+    weather_desc_font = fonts.get(f_sans_medium, int(theme["k_weather_desc_size_px"]))
 
     # Left panel focus ring (simple)
     focus_idx = int(state.ui.focused_index or 0)
@@ -157,16 +162,23 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     # Huge time
     nudge_em = float(theme["k_clock_nudge_em"])
     time_y = y + int(nudge_em * _font_px(theme["k_clock_size_rem"]))
-    draw.text((pad - 12, time_y), time_str, font=time_font, fill=ink)
+    time_x = pad - 12
+    draw.text((time_x, time_y), time_str, font=time_font, fill=ink)
+    time_bbox = draw.textbbox((time_x, time_y), time_str, font=time_font)
 
-    # Info row: date left, weather right
-    info_y = time_y + _font_px(theme["k_clock_size_rem"]) + int(theme["k_clock_date_gap_rem"] * 16)
+    # Info row: date left, weather right. Use actual time bbox to avoid overlaps.
+    info_y = int(time_bbox[3]) + int(theme["k_clock_info_gap_px"])
 
     # Weekday + month day
+    weekday_w, weekday_h = text_size(draw, weekday, weekday_font)
     draw.text((pad, info_y), weekday, font=weekday_font, fill=ink)
-    draw.text((pad, info_y + 26), month_day, font=month_font, fill=muted)
+    month_y = info_y + weekday_h + int(theme["k_weekday_month_gap_px"])
+    month_w, month_h = text_size(draw, month_day, month_font)
+    draw.text((pad, month_y), month_day, font=month_font, fill=ink)
+    left_info_bottom = month_y + month_h
 
     # Weather snippet (use first day as "today")
+    weather_bottom = left_info_bottom
     if state.model.weather:
         w0 = state.model.weather[0]
         temp = f"{int(w0.hi)}°"
@@ -175,17 +187,21 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         temp_w, temp_h = text_size(draw, temp, temp_font)
         icon_size = int(theme["k_weather_icon_size"])
         wx = left_w - pad - icon_size - 18 - temp_w
-        wy = info_y - 8
+        wy = info_y - 2
         draw.text((wx, wy), temp, font=temp_font, fill=ink)
+        temp_bbox = draw.textbbox((wx, wy), temp, font=temp_font)
         # description under temp
         dword = desc.split("_")[0]
-        dw, dh = text_size(draw, dword, tiny_ui)
-        draw.text((wx + temp_w - dw, wy + temp_h + 2), dword, font=tiny_ui, fill=muted)
+        dw, dh = text_size(draw, dword, weather_desc_font)
+        desc_y = int(temp_bbox[3]) + int(theme["k_weather_desc_gap_px"])
+        draw.text((wx + temp_w - dw, desc_y), dword, font=weather_desc_font, fill=ink)
         # icon
-        draw_weather_icon(draw, w0.icon, left_w - pad - icon_size, wy + 4, size=icon_size, ink=ink, stroke=int(theme["k_icon_stroke"]))
+        icon_y = wy + 4
+        draw_weather_icon(draw, w0.icon, left_w - pad - icon_size, icon_y, size=icon_size, ink=ink, stroke=int(theme["k_icon_stroke"]))
+        weather_bottom = max(int(temp_bbox[3]), desc_y + dh, icon_y + icon_size)
 
     # Bottom rule
-    rule_y = info_y + 62
+    rule_y = max(left_info_bottom, weather_bottom) + int(theme["k_header_rule_gap_px"])
     draw.line((pad, rule_y, left_w - pad, rule_y), fill=ink, width=int(theme["k_border_thick"]))
 
     # Memo section
@@ -196,10 +212,10 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     # Label (very light)
     label = "FAMILY BOARD"
     label_w, label_h = text_size(draw, label, tiny_ui)
-    draw.text((pad, rule_y + 14), label, font=tiny_ui, fill=muted)
+    draw.text((pad, rule_y + 14), label, font=tiny_ui, fill=ink)
 
     # Quote text
-    quote_font = fonts.get(f_serif_italic, _font_px(theme["k_mood_msg_size_rem"]))
+    quote_font = fonts.get(f_serif, _font_px(theme["k_mood_msg_size_rem"]))
     quote_y = rule_y + 86
     if memo:
         quote = f"\"{memo.text}\""
@@ -231,9 +247,9 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     else:
         ts = ""
     ts_y = quote_y + min(4, len(lines)) * lh + 10
-    draw.line((pad, ts_y, pad + 40, ts_y), fill=muted, width=1)
+    draw.line((pad, ts_y, pad + 40, ts_y), fill=ink, width=1)
     if ts:
-        draw.text((pad + 50, ts_y - 6), ts.upper(), font=tiny_ui, fill=muted)
+        draw.text((pad + 50, ts_y - 6), ts.upper(), font=tiny_ui, fill=ink)
 
     # Author list (right side of mood area)
     if memos:
