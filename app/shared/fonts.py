@@ -11,10 +11,31 @@ class FontBook:
         font_key = key if key in self.font_paths else self.default_key
         if font_key is None:
             raise ValueError("No font configured")
-        path = self.font_paths[font_key]
         cache_key = (font_key, size)
         font = self._cache.get(cache_key)
-        if font is None:
-            font = ImageFont.truetype(path, size)
-            self._cache[cache_key] = font
+        if font is not None:
+            return font
+
+        # Preferred font first.
+        candidates = [font_key]
+        # Then try other configured keys as fallback.
+        for k in self.font_paths.keys():
+            if k not in candidates:
+                candidates.append(k)
+
+        for k in candidates:
+            path = self.font_paths.get(k)
+            if not path:
+                continue
+            try:
+                font = ImageFont.truetype(path, size)
+                # Cache under the original requested key so repeated calls stay fast.
+                self._cache[cache_key] = font
+                return font
+            except OSError:
+                continue
+
+        # Last-resort fallback to PIL bitmap font so rendering can continue.
+        font = ImageFont.load_default()
+        self._cache[cache_key] = font
         return font
