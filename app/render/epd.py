@@ -26,6 +26,7 @@ def init_epd():
     return epd, picdir
 
 
-def display_image(epd, image):
+def display_image(epd, image, sleep_after=True):
     epd.display(epd.getbuffer(image))
-    epd.sleep()
+    if sleep_after:
+        epd.sleep()

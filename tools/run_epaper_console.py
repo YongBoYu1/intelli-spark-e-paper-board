@@ -195,7 +195,7 @@ def _render_to_epd(epd, state: AppState, fonts: FontBook, theme: dict) -> None:
 
     image = Image.new("1", (epd.width, epd.height), 255)
     render_app(image, state, fonts, t)
-    display_image(epd, image)
+    display_image(epd, image, sleep_after=False)
 
 
 def main() -> int:
@@ -268,6 +268,10 @@ def main() -> int:
             time.sleep(0.01)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        try:
+            epd.sleep()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
