@@ -33,6 +33,7 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_outer_border", 3)
     t.setdefault("b_split_ratio", 0.60)
     t.setdefault("b_divider_w", 2)
+    t.setdefault("b_show_focus_ring", False)
 
     # Left block
     t.setdefault("b_left_pad", 24)
@@ -57,10 +58,12 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_badge_size", 10)
     t.setdefault("b_badge_px", 8)
     t.setdefault("b_badge_py", 2)
+    t.setdefault("b_badge_max_w", 126)
     t.setdefault("b_mid_split_ratio", 0.53)
     t.setdefault("b_shopping_title_size", 12)
     t.setdefault("b_shopping_item_size", 17)
     t.setdefault("b_shopping_row_h", 36)
+    t.setdefault("b_bottom_pad", 14)
 
     # Shared color tone in RGB mode (ignored in 1-bit)
     t.setdefault("b_muted_gray", 110)
@@ -131,7 +134,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     # Focus on left panel (index 0)
     focus_idx = int(state.ui.focused_index or 0)
-    if not state.ui.idle and focus_idx == 0:
+    if bool(t.get("b_show_focus_ring")) and not state.ui.idle and focus_idx == 0:
         rounded_rect(
             draw,
             (ox0 + 2, oy0 + 2, split_x - 2, oy1 - 2),
@@ -275,6 +278,9 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     inv_row_h = int(t["b_inventory_row_h"])
     y = inv_y + 30
     for item in fridge[:5]:
+        # Keep rows strictly inside the inventory area.
+        if y + inv_row_h > mid_y - 8:
+            break
         is_focus = (focus_rid == item.rid and not item.completed)
 
         if is_focus:
@@ -293,17 +299,26 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
                 badge_fill = ink
                 badge_text = card
 
-        title = truncate_text(draw, item.title, f_inv_item, max(80, (inner_x1 - inner_x0) - 120))
-        draw.text((inner_x0, y + 5), title, font=f_inv_item, fill=text_fill)
-
         badge_text_raw = (item.right or ("OUT" if item.completed else "STOCKED")).upper()
-        bw, bh = text_size(draw, badge_text_raw, f_badge)
+        max_badge_w = min(int(t["b_badge_max_w"]), max(72, (inner_x1 - inner_x0) - 84))
+        badge_text_fit = truncate_text(
+            draw,
+            badge_text_raw,
+            f_badge,
+            max(20, max_badge_w - int(t["b_badge_px"]) * 2),
+        )
+        bw, bh = text_size(draw, badge_text_fit, f_badge)
         bx1 = inner_x1
-        bx0 = max(inner_x0 + 120, bx1 - (bw + int(t["b_badge_px"]) * 2))
+        bx0 = max(inner_x0 + 84, bx1 - (bw + int(t["b_badge_px"]) * 2))
         by0 = y + 6
         by1 = by0 + bh + int(t["b_badge_py"]) * 2
+
+        title_max_w = max(40, (bx0 - 10) - inner_x0)
+        title = truncate_text(draw, item.title, f_inv_item, title_max_w)
+        draw.text((inner_x0, y + 5), title, font=f_inv_item, fill=text_fill)
+
         draw.rectangle((bx0, by0, bx1, by1), fill=badge_fill, outline=ink if item.completed and not is_focus else None, width=1)
-        draw.text((bx0 + int(t["b_badge_px"]), by0 + int(t["b_badge_py"]) - 1), badge_text_raw, font=f_badge, fill=badge_text)
+        draw.text((bx0 + int(t["b_badge_px"]), by0 + int(t["b_badge_py"]) - 1), badge_text_fit, font=f_badge, fill=badge_text)
 
         if item.completed and not is_focus:
             tw = text_size(draw, title, f_inv_item)[0]
@@ -313,9 +328,6 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         draw.line((inner_x0, y + inv_row_h, inner_x1, y + inv_row_h), fill=line_fill, width=1)
         y += inv_row_h
 
-        if y + inv_row_h > mid_y - 6:
-            break
-
     # Shopping header
     shop_title_y = mid_y + rp
     draw.line((inner_x0, shop_title_y + 9, inner_x0 + 14, shop_title_y + 9), fill=ink, width=2)
@@ -323,7 +335,11 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     shop_row_h = int(t["b_shopping_row_h"])
     y = shop_title_y + 28
+    shop_bottom = oy1 - int(t["b_bottom_pad"])
     for item in shop[:6]:
+        # Prevent list rows from spilling outside the outer border.
+        if y + shop_row_h > shop_bottom:
+            break
         is_focus = (focus_rid == item.rid and not item.completed)
         if is_focus:
             draw.rectangle((inner_x0 - 4, y - 2, inner_x1 + 2, y + shop_row_h - 2), fill=ink)
@@ -355,8 +371,6 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
         draw.line((inner_x0, y + shop_row_h, inner_x1, y + shop_row_h), fill=line_fill, width=1)
         y += shop_row_h
-        if y > oy1 - 8:
-            break
 
 
 
