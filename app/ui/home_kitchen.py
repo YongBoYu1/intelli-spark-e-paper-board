@@ -6,12 +6,7 @@ import time
 from PIL import ImageDraw
 
 from app.core.state import AppState
-from app.shared.draw import (
-    rounded_rect,
-    text_size,
-    truncate_text,
-    draw_weather_icon,
-)
+from app.shared.draw import draw_weather_icon, rounded_rect, text_size, truncate_text
 
 
 def _to_rgb(c):
@@ -30,224 +25,200 @@ def _gray_like(value: int, ref):
 
 
 def _theme(theme: dict) -> dict:
-    # Defaults copied from copy-of TSX ThemeContext DEFAULT_THEME.
     t = dict(theme or {})
-    t.setdefault("k_border_radius", 0)
-    t.setdefault("k_container_padding", 32)
-    t.setdefault("k_left_column_width", 420)
 
-    t.setdefault("k_border_thin", 2)
-    t.setdefault("k_border_thick", 4)
+    # Layout
+    t.setdefault("b_margin", 18)
+    t.setdefault("b_outer_radius", 12)
+    t.setdefault("b_outer_border", 3)
+    t.setdefault("b_split_ratio", 0.60)
+    t.setdefault("b_divider_w", 2)
 
-    t.setdefault("k_icon_stroke", 2)
-    t.setdefault("k_weather_icon_size", 48)
+    # Left block
+    t.setdefault("b_left_pad", 24)
+    t.setdefault("b_time_size", 92)
+    t.setdefault("b_weekday_size", 18)
+    t.setdefault("b_date_size", 13)
+    t.setdefault("b_temp_size", 52)
+    t.setdefault("b_weather_desc_size", 12)
+    t.setdefault("b_weather_icon_size", 28)
+    t.setdefault("b_header_gap", 16)
+    t.setdefault("b_left_micro_size", 12)
+    t.setdefault("b_quote_size", 23)
+    t.setdefault("b_quote_lh", 1.18)
+    t.setdefault("b_posted_size", 12)
+    t.setdefault("b_author_size", 12)
 
-    t.setdefault("k_clock_size_rem", 10.0)
-    t.setdefault("k_clock_weight", 400)
-    t.setdefault("k_date_size_rem", 1.4)
-    t.setdefault("k_month_size_scale", 0.82)
+    # Right block
+    t.setdefault("b_right_pad", 22)
+    t.setdefault("b_inventory_title_size", 12)
+    t.setdefault("b_inventory_item_size", 17)
+    t.setdefault("b_inventory_row_h", 36)
+    t.setdefault("b_badge_size", 10)
+    t.setdefault("b_badge_px", 8)
+    t.setdefault("b_badge_py", 2)
+    t.setdefault("b_mid_split_ratio", 0.53)
+    t.setdefault("b_shopping_title_size", 12)
+    t.setdefault("b_shopping_item_size", 17)
+    t.setdefault("b_shopping_row_h", 36)
 
-    t.setdefault("k_mood_title_size_rem", 0.7)
-    t.setdefault("k_mood_msg_size_rem", 2.0)
-    t.setdefault("k_mood_msg_lh", 1.1)
-    t.setdefault("k_mood_quote_size_rem", 1.95)
-    t.setdefault("k_mood_quote_font", "inter_semibold")
-
-    t.setdefault("k_mood_pad_top", 8)
-    t.setdefault("k_clock_nudge_em", -0.20)
-    t.setdefault("k_clock_header_pad_bottom", 24)
-    t.setdefault("k_clock_header_margin_bottom", 24)
-    t.setdefault("k_clock_info_gap_px", 8)
-    t.setdefault("k_weekday_month_gap_px", 4)
-    t.setdefault("k_header_rule_gap_px", 14)
-
-    t.setdefault("k_fridge_card_h", 90)
-    t.setdefault("k_fridge_card_gap", 12)
-    t.setdefault("k_fridge_title_size_rem", 1.125)
-    t.setdefault("k_fridge_badge_size_rem", 0.80)
-    t.setdefault("k_fridge_badge_px", 9)
-    t.setdefault("k_fridge_badge_py", 3)
-    t.setdefault("k_fridge_badge_min_w", 88)
-
-    t.setdefault("k_shop_header_size_rem", 0.92)
-    t.setdefault("k_shop_item_size_rem", 1.34)
-    t.setdefault("k_shop_item_h", 50)
-    t.setdefault("k_shop_item_gap", 0)
-
-    t.setdefault("k_kitchen_section_gap", 24)
-    t.setdefault("k_kitchen_header_mb", 12)
-    t.setdefault("k_micro_size_px", 11)
-    t.setdefault("k_micro_bold_size_px", 12)
-    t.setdefault("k_left_micro_size_px", 12)
-    t.setdefault("k_left_micro_bold_size_px", 13)
-    t.setdefault("k_weather_desc_size_px", 13)
-    t.setdefault("k_weather_desc_gap_px", 3)
-    t.setdefault("k_author_size_px", 14)
-    t.setdefault("k_author_inactive_gray", 88)
-    t.setdefault("k_inventory_header_size_px", 13)
-    t.setdefault("k_inventory_header_offset_y", 2)
+    # Shared color tone in RGB mode (ignored in 1-bit)
+    t.setdefault("b_muted_gray", 110)
+    t.setdefault("b_subtle_gray", 205)
 
     return t
 
 
-def _font_px(rem: float) -> int:
-    return max(1, int(round(float(rem) * 16.0)))
+def _font_px(v) -> int:
+    return max(1, int(round(float(v))))
 
 
-def _visible_tasks(state: AppState):
-    fridge = [r for r in state.model.reminders if (r.category or "") == "fridge" and not r.completed]
-    shop = [r for r in state.model.reminders if (r.category or "") != "fridge" and not r.completed]
+def _weather_word(icon_name: str) -> str:
+    icon = (icon_name or "sun").strip().lower().replace("-", "_")
+    parts = icon.split("_")
+    if not parts:
+        return "SUN"
+    if parts[0] == "partly" and len(parts) > 1:
+        return "PARTLY"
+    return parts[0].upper()
+
+
+def _group_tasks(state: AppState):
+    fridge = [r for r in state.model.reminders if (r.category or "") == "fridge"]
+    shop = [r for r in state.model.reminders if (r.category or "") != "fridge"]
+
+    # Keep incomplete first, then completed (stable within each group).
+    fridge = sorted(fridge, key=lambda r: (r.completed,))
+    shop = sorted(shop, key=lambda r: (r.completed,))
     return fridge, shop
 
 
 def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
-    theme = _theme(theme)
-
+    t = _theme(theme)
     draw = ImageDraw.Draw(image)
     w, h = image.size
 
-    bg = theme.get("bg", (229, 229, 229))
     card = theme.get("card", (252, 252, 252))
     ink = theme.get("ink", (17, 17, 17))
-    muted = theme.get("muted", (160, 160, 160))
-
     if image.mode == "RGB":
-        bg = _to_rgb(bg)
         card = _to_rgb(card)
         ink = _to_rgb(ink)
-        muted = _to_rgb(muted)
     else:
-        # 1-bit mode: accept lists/tuples but collapse to ink/card integers.
         if not isinstance(card, int):
             card = 255
         if not isinstance(ink, int):
             ink = 0
-        if not isinstance(muted, int):
-            muted = ink
 
-    # Base background already filled by caller; ensure the inner surface is paper-white.
+    muted = _gray_like(int(t["b_muted_gray"]), ink)
+    subtle = _gray_like(int(t["b_subtle_gray"]), ink)
+
     draw.rectangle((0, 0, w, h), fill=card)
 
-    pad = int(theme["k_container_padding"])
-    left_w = int(theme["k_left_column_width"])
-    right_x = left_w
-    left_box = (0, 0, left_w, h)
-    right_box = (right_x, 0, w, h)
+    # Outer frame and split
+    m = int(t["b_margin"])
+    ox0, oy0, ox1, oy1 = m, m, w - m, h - m
+    rounded_rect(
+        draw,
+        (ox0, oy0, ox1, oy1),
+        radius=int(t["b_outer_radius"]),
+        outline=ink,
+        width=int(t["b_outer_border"]),
+        fill=card,
+    )
 
-    # Fonts (keyed to our on-disk TTFs)
-    f_serif = "playfair_regular"
-    f_serif_italic = "playfair_italic"
-    f_sans = "inter_regular"
-    f_sans_medium = "inter_medium"
-    f_sans_bold = "inter_bold"
-    f_mono = "jet_bold"
+    split_x = ox0 + int((ox1 - ox0) * float(t["b_split_ratio"]))
+    draw.line((split_x, oy0, split_x, oy1), fill=ink, width=int(t["b_divider_w"]))
 
-    # Compute sizes
-    time_font = fonts.get(f_serif, _font_px(theme["k_clock_size_rem"]))
-    weekday_font = fonts.get("inter_black", _font_px(theme["k_date_size_rem"]))
-    month_font = fonts.get("inter_semibold", _font_px(theme["k_date_size_rem"] * float(theme["k_month_size_scale"])))
-    temp_font = fonts.get(f_sans_bold, 36)
-    tiny_ui = fonts.get(f_sans_medium, int(theme["k_micro_size_px"]))
-    tiny_ui_bold = fonts.get(f_sans_bold, int(theme["k_micro_bold_size_px"]))
-    left_micro_font = fonts.get("inter_medium", int(theme["k_left_micro_size_px"]))
-    left_micro_bold = fonts.get("inter_semibold", int(theme["k_left_micro_bold_size_px"]))
-    weather_desc_font = fonts.get("inter_semibold", int(theme["k_weather_desc_size_px"]))
-
-    # Left panel focus ring (simple)
+    # Focus on left panel (index 0)
     focus_idx = int(state.ui.focused_index or 0)
     if not state.ui.idle and focus_idx == 0:
         rounded_rect(
             draw,
-            (2, 2, left_w - 2, h - 2),
-            radius=12,
+            (ox0 + 2, oy0 + 2, split_x - 2, oy1 - 2),
+            radius=max(2, int(t["b_outer_radius"]) - 2),
             outline=ink,
-            width=4,
+            width=3,
             fill=None,
         )
 
-    # --- MOOD PANEL ---
+    # Fonts
+    f_time = fonts.get("inter_black", _font_px(t["b_time_size"]))
+    f_weekday = fonts.get("inter_black", _font_px(t["b_weekday_size"]))
+    f_date = fonts.get("inter_medium", _font_px(t["b_date_size"]))
+    f_temp = fonts.get("inter_black", _font_px(t["b_temp_size"]))
+    f_weather_desc = fonts.get("inter_semibold", _font_px(t["b_weather_desc_size"]))
+    f_micro = fonts.get("inter_medium", _font_px(t["b_left_micro_size"]))
+    f_quote = fonts.get("playfair_bold", _font_px(t["b_quote_size"]))
+    f_posted = fonts.get("inter_semibold", _font_px(t["b_posted_size"]))
+    f_author = fonts.get("inter_bold", _font_px(t["b_author_size"]))
+
+    f_inv_title = fonts.get("inter_semibold", _font_px(t["b_inventory_title_size"]))
+    f_inv_item = fonts.get("inter_bold", _font_px(t["b_inventory_item_size"]))
+    f_badge = fonts.get("inter_bold", _font_px(t["b_badge_size"]))
+    f_shop_title = fonts.get("inter_semibold", _font_px(t["b_shopping_title_size"]))
+    f_shop_item = fonts.get("inter_medium", _font_px(t["b_shopping_item_size"]))
+
+    # ---------------- Left Panel ----------------
+    lx0, lx1 = ox0 + int(t["b_left_pad"]), split_x - int(t["b_left_pad"])
+    top_y = oy0 + int(t["b_left_pad"])
+
     now = datetime.now()
     time_str = now.strftime("%H:%M")
     weekday = now.strftime("%A").upper()
     month_day = now.strftime("%B %-d") if hasattr(now, "strftime") else now.strftime("%B %d")
 
-    # Header divider
-    header_pad_top = int(theme["k_mood_pad_top"])
-    y = header_pad_top
+    draw.text((lx0, top_y), time_str, font=f_time, fill=ink)
+    time_box = draw.textbbox((lx0, top_y), time_str, font=f_time)
 
-    # Huge time
-    nudge_em = float(theme["k_clock_nudge_em"])
-    time_y = y + int(nudge_em * _font_px(theme["k_clock_size_rem"]))
-    time_x = pad - 12
-    draw.text((time_x, time_y), time_str, font=time_font, fill=ink)
-    time_bbox = draw.textbbox((time_x, time_y), time_str, font=time_font)
+    wy = time_box[3] + 6
+    draw.text((lx0, wy), weekday, font=f_weekday, fill=ink)
+    ww, wh = text_size(draw, weekday, f_weekday)
 
-    # Info row: date left, weather right. Use actual time bbox to avoid overlaps.
-    info_y = int(time_bbox[3]) + int(theme["k_clock_info_gap_px"])
+    dy = wy + wh + 2
+    draw.text((lx0, dy), month_day, font=f_date, fill=ink)
+    _, dh = text_size(draw, month_day, f_date)
 
-    # Weekday + month day
-    weekday_w, weekday_h = text_size(draw, weekday, weekday_font)
-    draw.text((pad, info_y), weekday, font=weekday_font, fill=ink)
-    month_y = info_y + weekday_h + int(theme["k_weekday_month_gap_px"])
-    month_w, month_h = text_size(draw, month_day, month_font)
-    draw.text((pad, month_y), month_day, font=month_font, fill=ink)
-    left_info_bottom = month_y + month_h
-
-    # Weather snippet (use first day as "today")
-    weather_bottom = left_info_bottom
+    weather_bottom = dy + dh
     if state.model.weather:
         w0 = state.model.weather[0]
-        temp = f"{int(w0.hi)}°"
-        desc = (getattr(w0, "icon", "") or "SUNNY").upper()
-        # place on right side of left panel
-        temp_w, temp_h = text_size(draw, temp, temp_font)
-        icon_size = int(theme["k_weather_icon_size"])
-        wx = left_w - pad - icon_size - 18 - temp_w
-        wy = info_y - 2
-        draw.text((wx, wy), temp, font=temp_font, fill=ink)
-        temp_bbox = draw.textbbox((wx, wy), temp, font=temp_font)
-        # description under temp
-        dword = desc.split("_")[0]
-        dw, dh = text_size(draw, dword, weather_desc_font)
-        desc_y = int(temp_bbox[3]) + int(theme["k_weather_desc_gap_px"])
-        draw.text((wx + temp_w - dw, desc_y), dword, font=weather_desc_font, fill=ink)
-        # icon
-        icon_y = wy + 4
-        draw_weather_icon(draw, w0.icon, left_w - pad - icon_size, icon_y, size=icon_size, ink=ink, stroke=int(theme["k_icon_stroke"]))
-        weather_bottom = max(int(temp_bbox[3]), desc_y + dh, icon_y + icon_size)
+        temp_str = f"{int(w0.hi)}°"
+        temp_w, temp_h = text_size(draw, temp_str, f_temp)
+        icon_size = int(t["b_weather_icon_size"])
 
-    # Bottom rule
-    rule_y = max(left_info_bottom, weather_bottom) + int(theme["k_header_rule_gap_px"])
-    draw.line((pad, rule_y, left_w - pad, rule_y), fill=ink, width=int(theme["k_border_thick"]))
+        icon_x = lx1 - icon_size
+        temp_x = icon_x - 16 - temp_w
+        temp_y = wy - 2
+        draw.text((temp_x, temp_y), temp_str, font=f_temp, fill=ink)
 
-    # Memo section
+        desc = _weather_word(getattr(w0, "icon", "sun"))
+        dw, dh2 = text_size(draw, desc, f_weather_desc)
+        desc_y = temp_y + temp_h + 2
+        draw.text((temp_x + temp_w - dw, desc_y), desc, font=f_weather_desc, fill=ink)
+
+        draw_weather_icon(draw, w0.icon, icon_x, temp_y + 4, size=icon_size, ink=ink, stroke=2)
+        weather_bottom = max(weather_bottom, desc_y + dh2, temp_y + 4 + icon_size)
+
+    header_rule_y = weather_bottom + int(t["b_header_gap"])
+    draw.line((lx0, header_rule_y, lx1, header_rule_y), fill=ink, width=3)
+
+    label_y = header_rule_y + 16
+    draw.text((lx0, label_y), "FAMILY BOARD", font=f_micro, fill=muted)
+
     memos = state.model.memos or []
     memo_idx = int(state.ui.memo_index or 0)
     memo = memos[memo_idx % len(memos)] if memos else None
 
-    # Label (very light)
-    label = "FAMILY BOARD"
-    label_w, label_h = text_size(draw, label, left_micro_font)
-    draw.text((pad, rule_y + 14), label, font=left_micro_font, fill=ink)
+    quote_y = label_y + 46
+    quote = f"\"{memo.text}\"" if memo else '"No messages."'
 
-    # Quote text
-    quote_font_key = str(theme.get("k_mood_quote_font") or "inter_semibold")
-    quote_size_rem = float(theme.get("k_mood_quote_size_rem", theme["k_mood_msg_size_rem"]))
-    quote_font = fonts.get(quote_font_key, _font_px(quote_size_rem))
-    quote_y = rule_y + 86
-    if memo:
-        quote = f"\"{memo.text}\""
-    else:
-        quote = "\"No messages.\""
-
-    # soft wrap: very simple (break on spaces)
-    max_w = left_w - pad * 2 - 120
+    quote_right_guard = 120
+    max_quote_w = max(120, (lx1 - lx0) - quote_right_guard)
     words = quote.split(" ")
     lines = []
     cur = ""
     for wd in words:
         nxt = (cur + " " + wd).strip()
-        if text_size(draw, nxt, quote_font)[0] <= max_w or not cur:
+        if not cur or text_size(draw, nxt, f_quote)[0] <= max_quote_w:
             cur = nxt
         else:
             lines.append(cur)
@@ -255,127 +226,138 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     if cur:
         lines.append(cur)
 
-    lh = int(text_size(draw, "Ag", quote_font)[1] * float(theme["k_mood_msg_lh"]))
+    qh = text_size(draw, "Ag", f_quote)[1]
+    qlh = max(1, int(qh * float(t["b_quote_lh"])))
     for i, ln in enumerate(lines[:4]):
-        draw.text((pad, quote_y + i * lh), ln, font=quote_font, fill=ink)
+        draw.text((lx0, quote_y + i * qlh), ln, font=f_quote, fill=ink)
 
-    # Timestamp line
-    if memo:
-        ts = time.strftime("%I:%M %p", time.localtime(memo.timestamp)).lstrip("0")
-    else:
-        ts = ""
-    ts_y = quote_y + min(4, len(lines)) * lh + 10
-    draw.line((pad, ts_y, pad + 40, ts_y), fill=ink, width=1)
-    if ts:
-        draw.text((pad + 50, ts_y - 6), ts.upper(), font=left_micro_font, fill=ink)
+    posted_y = quote_y + min(4, len(lines)) * qlh + 8
+    draw.line((lx0, posted_y, lx0 + 44, posted_y), fill=ink, width=1)
+    posted = time.strftime("%I:%M %p", time.localtime(memo.timestamp)).lstrip("0") if memo else ""
+    if posted:
+        draw.text((lx0 + 54, posted_y - 7), posted.upper(), font=f_posted, fill=ink)
 
-    # Author list (right side of mood area)
-    if memos:
-        author_font = fonts.get("inter_bold", int(theme["k_author_size_px"]))
-        author_inactive = _gray_like(int(theme["k_author_inactive_gray"]), ink)
-        ax0 = left_w - pad - 90
-        # vertical separator
-        draw.line((ax0 - 18, rule_y + 70, ax0 - 18, h - pad), fill=(230, 230, 230) if isinstance(card, tuple) else ink, width=2)
-        ay = quote_y + 40
-        for i, m in enumerate(memos[:6]):
-            is_sel = i == memo_idx
-            fill = ink if is_sel else author_inactive
-            num = f"{i+1}."
-            draw.text((ax0, ay), num, font=author_font, fill=fill)
-            draw.text((ax0 + 24, ay), m.author, font=author_font, fill=fill)
-            if m.is_new:
-                draw.ellipse((ax0 + 70, ay + 4, ax0 + 76, ay + 10), fill=ink)
-            ay += 28
+    # Author list
+    ax = lx1 - 88
+    ay = quote_y + 30
+    inactive = muted
+    for i, m_item in enumerate(memos[:3]):
+        sel = i == memo_idx
+        fill = ink if sel else inactive
+        draw.text((ax, ay), f"{i+1}.", font=f_author, fill=fill)
+        draw.text((ax + 22, ay), m_item.author, font=f_author, fill=fill)
+        if m_item.is_new:
+            draw.ellipse((ax + 84, ay + 5, ax + 92, ay + 13), fill=ink)
+        ay += 28
 
-    # --- KITCHEN PANEL ---
-    fridge, shop = _visible_tasks(state)
+    # ---------------- Right Panel ----------------
+    rx0 = split_x + 1
+    rp = int(t["b_right_pad"])
+    inner_x0 = rx0 + rp
+    inner_x1 = ox1 - rp
 
-    # Header: Inventory & Alerts + count
-    header_y = pad
-    inv_label = "INVENTORY & ALERTS"
-    inv_font = fonts.get("inter_semibold", int(theme["k_inventory_header_size_px"]))
-    inv_y = header_y + int(theme["k_inventory_header_offset_y"])
-    draw.text((right_x + pad, inv_y), inv_label, font=inv_font, fill=ink)
-    cnt = str(len(fridge))
-    cw, ch = text_size(draw, cnt, tiny_ui_bold)
-    draw.text((w - pad - cw, inv_y), cnt, font=tiny_ui_bold, fill=ink)
+    mid_y = oy0 + int((oy1 - oy0) * float(t["b_mid_split_ratio"]))
+    draw.line((rx0, mid_y, ox1, mid_y), fill=ink, width=1)
 
-    # Fridge cards grid (2 cols)
-    card_gap = int(theme["k_fridge_card_gap"])
-    card_h = int(theme["k_fridge_card_h"])
-    grid_y = header_y + int(theme["k_kitchen_header_mb"]) + 18
-    col_w = int((w - right_x - pad * 2 - card_gap) / 2)
-    title_font = fonts.get(f_sans_bold, _font_px(theme["k_fridge_title_size_rem"]))
-    badge_font = fonts.get(f_sans_bold, _font_px(theme["k_fridge_badge_size_rem"]))
+    # Focus lookup by task id (incomplete order from reducer)
+    focus_rid = _kitchen_focus_rid(state, focus_idx)
 
-    visible_fridge = fridge[:4]
-    for i, item in enumerate(visible_fridge):
-        r = i // 2
-        c = i % 2
-        x0 = right_x + pad + c * (col_w + card_gap)
-        y0 = grid_y + r * (card_h + card_gap)
-        x1 = x0 + col_w
-        y1 = y0 + card_h
+    fridge, shop = _group_tasks(state)
 
-        is_focus = (not state.ui.idle and focus_idx > 0 and _kitchen_focus_rid(state, focus_idx) == item.rid)
-        fill = (243, 244, 246) if (isinstance(card, tuple) and is_focus) else card
-        rounded_rect(draw, (x0, y0, x1, y1), radius=0, outline=ink, width=int(theme["k_border_thin"]) + 1, fill=fill)
+    # Inventory header
+    inv_y = oy0 + rp
+    draw.text((inner_x0, inv_y), "INVENTORY & ALERTS", font=f_inv_title, fill=ink)
+    fridge_due = sum(1 for r in fridge if not r.completed)
+    cnt = str(fridge_due)
+    cw, _ = text_size(draw, cnt, f_inv_title)
+    draw.text((inner_x1 - cw, inv_y), cnt, font=f_inv_title, fill=ink)
 
-        title = truncate_text(draw, item.title, title_font, col_w - 24)
-        draw.text((x0 + 12, y0 + 10), title, font=title_font, fill=ink)
-
-        badge = (item.right or "STOCKED").upper()
-        badge = truncate_text(draw, badge, badge_font, col_w - 24 - int(theme["k_fridge_badge_px"]) * 2)
-        bw, bh = text_size(draw, badge, badge_font)
-        bx0 = x0 + 12
-        by0 = y1 - 12 - (bh + int(theme["k_fridge_badge_py"]) * 2)
-        min_w = int(theme.get("k_fridge_badge_min_w", 88))
-        badge_w = max(min_w, bw + int(theme["k_fridge_badge_px"]) * 2)
-        bx1 = bx0 + badge_w
-        by1 = by0 + bh + int(theme["k_fridge_badge_py"]) * 2
-        draw.rectangle((bx0, by0, bx1, by1), fill=ink)
-        draw.text((bx0 + int(theme["k_fridge_badge_px"]), by0 + int(theme["k_fridge_badge_py"])), badge, font=badge_font, fill=card)
+    inv_row_h = int(t["b_inventory_row_h"])
+    y = inv_y + 30
+    for item in fridge[:5]:
+        is_focus = (focus_rid == item.rid and not item.completed)
 
         if is_focus:
-            # small check mark
-            cx = x1 - 22
-            cy = y0 + 14
-            draw.rectangle((cx - 2, cy - 2, cx + 12, cy + 12), outline=ink, width=2, fill=None)
-            draw.line((cx, cy + 6, cx + 4, cy + 10), fill=ink, width=2)
-            draw.line((cx + 4, cy + 10, cx + 12, cy), fill=ink, width=2)
-
-    # Shopping list header
-    shop_y = grid_y + (2 * (card_h + card_gap)) + int(theme["k_kitchen_section_gap"])
-    # left rule
-    draw.line((right_x + pad, shop_y, right_x + pad + 26, shop_y), fill=ink, width=2)
-    shop_title = "SHOPPING LIST"
-    shop_font = fonts.get(f_sans_bold, _font_px(theme["k_shop_header_size_rem"]))
-    stw, sth = text_size(draw, shop_title, shop_font)
-    draw.text((right_x + pad + 42, shop_y - sth // 2), shop_title, font=shop_font, fill=ink)
-    # right thin line
-    draw.line((right_x + pad + 42 + stw + 16, shop_y, w - pad, shop_y), fill=(220, 220, 220) if isinstance(card, tuple) else ink, width=1)
-
-    # Shopping items list
-    item_font = fonts.get(f_sans_medium, _font_px(theme["k_shop_item_size_rem"]))
-    row_h = int(theme["k_shop_item_h"])
-    y = shop_y + 18
-    for item in shop[:6]:
-        is_focus = (not state.ui.idle and focus_idx > 0 and _kitchen_focus_rid(state, focus_idx) == item.rid)
-        if is_focus:
-            draw.rectangle((right_x + 0, y, w, y + row_h), fill=ink)
-            fill = card
+            draw.rectangle((inner_x0 - 4, y - 2, inner_x1 + 2, y + inv_row_h - 2), fill=ink)
+            line_fill = card
+            text_fill = card
+            badge_fill = card
+            badge_text = ink
         else:
-            fill = ink
-        draw.line((right_x + pad, y + row_h, w - pad, y + row_h), fill=(235, 235, 235) if isinstance(card, tuple) else ink, width=1)
-        draw.text((right_x + 12, y + (row_h - text_size(draw, "Ag", item_font)[1]) // 2), item.title, font=item_font, fill=fill)
+            line_fill = subtle
+            text_fill = muted if item.completed else ink
+            if item.completed:
+                badge_fill = card
+                badge_text = muted
+            else:
+                badge_fill = ink
+                badge_text = card
+
+        title = truncate_text(draw, item.title, f_inv_item, max(80, (inner_x1 - inner_x0) - 120))
+        draw.text((inner_x0, y + 5), title, font=f_inv_item, fill=text_fill)
+
+        badge_text_raw = (item.right or ("OUT" if item.completed else "STOCKED")).upper()
+        bw, bh = text_size(draw, badge_text_raw, f_badge)
+        bx1 = inner_x1
+        bx0 = max(inner_x0 + 120, bx1 - (bw + int(t["b_badge_px"]) * 2))
+        by0 = y + 6
+        by1 = by0 + bh + int(t["b_badge_py"]) * 2
+        draw.rectangle((bx0, by0, bx1, by1), fill=badge_fill, outline=ink if item.completed and not is_focus else None, width=1)
+        draw.text((bx0 + int(t["b_badge_px"]), by0 + int(t["b_badge_py"]) - 1), badge_text_raw, font=f_badge, fill=badge_text)
+
+        if item.completed and not is_focus:
+            tw = text_size(draw, title, f_inv_item)[0]
+            sy = y + 16
+            draw.line((inner_x0, sy, inner_x0 + tw, sy), fill=muted, width=1)
+
+        draw.line((inner_x0, y + inv_row_h, inner_x1, y + inv_row_h), fill=line_fill, width=1)
+        y += inv_row_h
+
+        if y + inv_row_h > mid_y - 6:
+            break
+
+    # Shopping header
+    shop_title_y = mid_y + rp
+    draw.line((inner_x0, shop_title_y + 9, inner_x0 + 14, shop_title_y + 9), fill=ink, width=2)
+    draw.text((inner_x0 + 22, shop_title_y), "SHOPPING LIST", font=f_shop_title, fill=ink)
+
+    shop_row_h = int(t["b_shopping_row_h"])
+    y = shop_title_y + 28
+    for item in shop[:6]:
+        is_focus = (focus_rid == item.rid and not item.completed)
         if is_focus:
-            # check on right
-            cx = w - pad - 18
-            cy = y + row_h // 2 - 6
-            draw.rectangle((cx - 2, cy - 2, cx + 12, cy + 12), outline=card, width=2, fill=None)
-            draw.line((cx, cy + 6, cx + 4, cy + 10), fill=card, width=2)
-            draw.line((cx + 4, cy + 10, cx + 12, cy), fill=card, width=2)
-        y += row_h + int(theme["k_shop_item_gap"])
+            draw.rectangle((inner_x0 - 4, y - 2, inner_x1 + 2, y + shop_row_h - 2), fill=ink)
+            text_fill = card
+            box_outline = card
+            line_fill = card
+        else:
+            text_fill = muted if item.completed else ink
+            box_outline = muted if item.completed else ink
+            line_fill = subtle
+
+        # checkbox
+        cb = 11
+        cbx = inner_x0
+        cby = y + (shop_row_h - cb) // 2
+        draw.rectangle((cbx, cby, cbx + cb, cby + cb), outline=box_outline, width=1, fill=None)
+        if item.completed:
+            draw.line((cbx + 2, cby + 6, cbx + 5, cby + 9), fill=box_outline, width=1)
+            draw.line((cbx + 5, cby + 9, cbx + 10, cby + 2), fill=box_outline, width=1)
+
+        text_x = cbx + cb + 10
+        title = truncate_text(draw, item.title, f_shop_item, max(80, inner_x1 - text_x - 8))
+        draw.text((text_x, y + 6), title, font=f_shop_item, fill=text_fill)
+
+        if item.completed:
+            tw = text_size(draw, title, f_shop_item)[0]
+            sy = y + 16
+            draw.line((text_x, sy, text_x + tw, sy), fill=text_fill, width=1)
+
+        draw.line((inner_x0, y + shop_row_h, inner_x1, y + shop_row_h), fill=line_fill, width=1)
+        y += shop_row_h
+        if y > oy1 - 8:
+            break
+
 
 
 def _kitchen_focus_rid(state: AppState, focused_index: int) -> str:
