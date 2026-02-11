@@ -22,6 +22,13 @@ def _to_rgb(c):
     return c
 
 
+def _gray_like(value: int, ref):
+    g = max(0, min(255, int(value)))
+    if isinstance(ref, tuple):
+        return (g, g, g)
+    return g
+
+
 def _theme(theme: dict) -> dict:
     # Defaults copied from copy-of TSX ThemeContext DEFAULT_THEME.
     t = dict(theme or {})
@@ -38,10 +45,13 @@ def _theme(theme: dict) -> dict:
     t.setdefault("k_clock_size_rem", 10.0)
     t.setdefault("k_clock_weight", 400)
     t.setdefault("k_date_size_rem", 1.4)
+    t.setdefault("k_month_size_scale", 0.82)
 
     t.setdefault("k_mood_title_size_rem", 0.7)
     t.setdefault("k_mood_msg_size_rem", 2.0)
     t.setdefault("k_mood_msg_lh", 1.1)
+    t.setdefault("k_mood_quote_size_rem", 1.95)
+    t.setdefault("k_mood_quote_font", "inter_semibold")
 
     t.setdefault("k_mood_pad_top", 8)
     t.setdefault("k_clock_nudge_em", -0.20)
@@ -68,8 +78,12 @@ def _theme(theme: dict) -> dict:
     t.setdefault("k_kitchen_header_mb", 12)
     t.setdefault("k_micro_size_px", 11)
     t.setdefault("k_micro_bold_size_px", 12)
-    t.setdefault("k_weather_desc_size_px", 12)
+    t.setdefault("k_left_micro_size_px", 12)
+    t.setdefault("k_left_micro_bold_size_px", 13)
+    t.setdefault("k_weather_desc_size_px", 13)
     t.setdefault("k_weather_desc_gap_px", 3)
+    t.setdefault("k_author_size_px", 14)
+    t.setdefault("k_author_inactive_gray", 88)
     t.setdefault("k_inventory_header_size_px", 13)
     t.setdefault("k_inventory_header_offset_y", 2)
 
@@ -131,11 +145,13 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     # Compute sizes
     time_font = fonts.get(f_serif, _font_px(theme["k_clock_size_rem"]))
     weekday_font = fonts.get("inter_black", _font_px(theme["k_date_size_rem"]))
-    month_font = fonts.get(f_serif, _font_px(theme["k_date_size_rem"] * 0.9))
+    month_font = fonts.get("inter_semibold", _font_px(theme["k_date_size_rem"] * float(theme["k_month_size_scale"])))
     temp_font = fonts.get(f_sans_bold, 36)
     tiny_ui = fonts.get(f_sans_medium, int(theme["k_micro_size_px"]))
     tiny_ui_bold = fonts.get(f_sans_bold, int(theme["k_micro_bold_size_px"]))
-    weather_desc_font = fonts.get(f_sans_medium, int(theme["k_weather_desc_size_px"]))
+    left_micro_font = fonts.get("inter_medium", int(theme["k_left_micro_size_px"]))
+    left_micro_bold = fonts.get("inter_semibold", int(theme["k_left_micro_bold_size_px"]))
+    weather_desc_font = fonts.get("inter_semibold", int(theme["k_weather_desc_size_px"]))
 
     # Left panel focus ring (simple)
     focus_idx = int(state.ui.focused_index or 0)
@@ -211,11 +227,13 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     # Label (very light)
     label = "FAMILY BOARD"
-    label_w, label_h = text_size(draw, label, tiny_ui)
-    draw.text((pad, rule_y + 14), label, font=tiny_ui, fill=ink)
+    label_w, label_h = text_size(draw, label, left_micro_font)
+    draw.text((pad, rule_y + 14), label, font=left_micro_font, fill=ink)
 
     # Quote text
-    quote_font = fonts.get(f_serif, _font_px(theme["k_mood_msg_size_rem"]))
+    quote_font_key = str(theme.get("k_mood_quote_font") or "inter_semibold")
+    quote_size_rem = float(theme.get("k_mood_quote_size_rem", theme["k_mood_msg_size_rem"]))
+    quote_font = fonts.get(quote_font_key, _font_px(quote_size_rem))
     quote_y = rule_y + 86
     if memo:
         quote = f"\"{memo.text}\""
@@ -249,18 +267,19 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     ts_y = quote_y + min(4, len(lines)) * lh + 10
     draw.line((pad, ts_y, pad + 40, ts_y), fill=ink, width=1)
     if ts:
-        draw.text((pad + 50, ts_y - 6), ts.upper(), font=tiny_ui, fill=ink)
+        draw.text((pad + 50, ts_y - 6), ts.upper(), font=left_micro_font, fill=ink)
 
     # Author list (right side of mood area)
     if memos:
-        author_font = fonts.get(f_sans_medium, 12)
+        author_font = fonts.get("inter_bold", int(theme["k_author_size_px"]))
+        author_inactive = _gray_like(int(theme["k_author_inactive_gray"]), ink)
         ax0 = left_w - pad - 90
         # vertical separator
         draw.line((ax0 - 18, rule_y + 70, ax0 - 18, h - pad), fill=(230, 230, 230) if isinstance(card, tuple) else ink, width=2)
         ay = quote_y + 40
         for i, m in enumerate(memos[:6]):
             is_sel = i == memo_idx
-            fill = ink if is_sel else muted
+            fill = ink if is_sel else author_inactive
             num = f"{i+1}."
             draw.text((ax0, ay), num, font=author_font, fill=fill)
             draw.text((ax0 + 24, ay), m.author, font=author_font, fill=fill)
