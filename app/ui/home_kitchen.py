@@ -94,10 +94,11 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_posted_size_panel_min", 17)
     t.setdefault("b_log_compact_day_time", True)
     t.setdefault("b_log_datetime_format", "%a %H:%M")
-    t.setdefault("b_log_label_prefix", "LOG")
+    t.setdefault("b_posted_prefix", "-")
+    t.setdefault("b_posted_right_inset", 6)
     t.setdefault("b_left_bottom_pad", 22)
     t.setdefault("b_posted_rule_w", 0)
-    t.setdefault("b_posted_rule_gap", 3)
+    t.setdefault("b_posted_rule_gap", 0)
     t.setdefault("b_author_size", 9)
     t.setdefault("b_author_row_offset_y", 1)
     t.setdefault("b_author_max_tags", 4)
@@ -638,18 +639,13 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     posted_text_y = min(posted_max_y, posted_cap_y)
     if posted_text_y < posted_min_y:
         posted_text_y = min(posted_max_y, posted_min_y)
-    posted_rule_y = posted_text_y + posted_h + int(t["b_posted_rule_gap"])
-
-    posted_prefix = str(t.get("b_log_label_prefix") or "LOG").upper()
-    posted_label_raw = f"{posted_prefix}: {posted}" if posted else ""
-    posted_label = truncate_text(draw, posted_label_raw, f_posted, max(40, lx1 - lx0 - 4)) if posted_label_raw else ""
-    posted_w = text_size(draw, posted_label, f_posted)[0] if posted_label else 0
-    left_rule_w = int(t["b_posted_rule_w"]) if int(t["b_posted_rule_w"]) > 0 else posted_w + 12
-    draw.line((lx0, posted_rule_y, lx0 + left_rule_w, posted_rule_y), fill=ink, width=1)
-    if lx0 + left_rule_w + 12 < lx1:
-        draw.line((lx0 + left_rule_w + 8, posted_rule_y, lx1, posted_rule_y), fill=subtle, width=1)
-    if posted:
-        draw.text((lx0, posted_text_y), posted_label, font=f_posted, fill=ink)
+    posted_prefix = str(t.get("b_posted_prefix") or "-").strip() or "-"
+    posted_label_raw = f"{posted_prefix} {posted}" if posted else ""
+    posted_label = truncate_text(draw, posted_label_raw, f_posted, max(40, lx1 - lx0 - 12)) if posted_label_raw else ""
+    if posted_label:
+        posted_w = text_size(draw, posted_label, f_posted)[0]
+        posted_x = max(lx0, lx1 - int(t.get("b_posted_right_inset", 6)) - posted_w)
+        draw.text((posted_x, posted_text_y), posted_label, font=f_posted, fill=ink)
 
     # ---------------- Right Panel ----------------
     rx0 = split_x + 1
