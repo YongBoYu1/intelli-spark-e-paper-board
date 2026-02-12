@@ -37,10 +37,11 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_show_focus_ring", False)
 
     # Left block
-    t.setdefault("b_left_pad", 26)
+    t.setdefault("b_left_pad", 24)
     t.setdefault("b_time_size", 84)
     t.setdefault("b_time_min_size", 70)
     t.setdefault("b_time_weather_gap", 14)
+    t.setdefault("b_time_weekday_gap", 13)
     t.setdefault("b_weekday_size", 12)
     t.setdefault("b_weekday_spacing", 4)
     t.setdefault("b_weekday_date_gap", 9)
@@ -50,42 +51,44 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_weather_desc_size", 12)
     t.setdefault("b_weather_desc_spacing", 1)
     t.setdefault("b_weather_col_w", 120)
-    t.setdefault("b_weather_top", -6)
-    t.setdefault("b_weather_desc_gap", 15)
-    t.setdefault("b_weather_desc_offset_y", 3)
-    t.setdefault("b_weather_icon_gap", 14)
+    t.setdefault("b_weather_top", -2)
+    t.setdefault("b_weather_desc_gap", 18)
+    t.setdefault("b_weather_desc_offset_y", 5)
+    t.setdefault("b_weather_icon_gap", 15)
     t.setdefault("b_weather_icon_size", 20)
-    t.setdefault("b_header_gap", 31)
+    t.setdefault("b_header_gap", 28)
     t.setdefault("b_header_rule_w", 0)
-    t.setdefault("b_left_micro_size", 10)
+    t.setdefault("b_left_micro_size", 14)
     t.setdefault("b_left_micro_spacing", 3)
-    t.setdefault("b_family_name_size", 10)
-    t.setdefault("b_family_name_spacing", 2)
-    t.setdefault("b_family_name_gap", 16)
-    t.setdefault("b_family_row_gap", 2)
-    t.setdefault("b_family_rule_gap", 10)
+    t.setdefault("b_family_name_size", 12)
+    t.setdefault("b_family_name_spacing", 1)
+    t.setdefault("b_family_name_gap", 15)
+    t.setdefault("b_family_names_right_inset", 14)
+    t.setdefault("b_family_row_gap", 7)
+    t.setdefault("b_family_rule_gap", 8)
     t.setdefault("b_family_active_underline_gap", 3)
     t.setdefault("b_family_active_underline_w", 2)
     t.setdefault("b_quote_size", 27)
     t.setdefault("b_quote_min_size", 20)
     t.setdefault("b_quote_lh", 1.18)
-    t.setdefault("b_quote_top_gap", 18)
+    t.setdefault("b_quote_top_gap", 14)
     t.setdefault("b_quote_max_w_ratio", 0.76)
     t.setdefault("b_quote_short_wrap_factor", 0.74)
     t.setdefault("b_quote_display_wrap_factor", 0.84)
     t.setdefault("b_quote_target_lines", 2)
     t.setdefault("b_quote_balance_lines", 2)
-    t.setdefault("b_quote_balance_ratio", 0.34)
-    t.setdefault("b_quote_balance_max", 40)
+    t.setdefault("b_quote_balance_ratio", 0.20)
+    t.setdefault("b_quote_balance_max", 24)
     t.setdefault("b_quote_bottom_gap", 14)
-    t.setdefault("b_posted_after_quote_gap", 12)
+    t.setdefault("b_posted_after_quote_gap", 10)
     t.setdefault("b_posted_max_gap_from_quote", 44)
     t.setdefault("b_posted_size", 12)
+    t.setdefault("b_posted_size_panel_min", 13)
     t.setdefault("b_left_bottom_pad", 22)
     t.setdefault("b_posted_rule_w", 0)
     t.setdefault("b_posted_rule_gap", 3)
     t.setdefault("b_author_size", 9)
-    t.setdefault("b_author_row_offset_y", 0)
+    t.setdefault("b_author_row_offset_y", 1)
     t.setdefault("b_author_max_tags", 4)
 
     # Right block
@@ -208,11 +211,15 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     f_date = fonts.get("inter_semibold", _font_px(t["b_date_size"]))
     f_temp = fonts.get("inter_black", _font_px(t["b_temp_size"]))
     f_weather_desc = fonts.get("jet_bold", _font_px(t["b_weather_desc_size"]))
-    f_micro = fonts.get("inter_semibold", _font_px(t["b_left_micro_size"]))
-    f_family_name = fonts.get("inter_semibold", _font_px(t["b_family_name_size"]))
+    f_micro = fonts.get("jet_bold", _font_px(t["b_left_micro_size"]))
+    f_family_name = fonts.get("jet_bold", _font_px(t["b_family_name_size"]))
     # Use a slightly heavier serif to survive 1-bit panel quantization.
     f_quote = fonts.get("playfair_bold", _font_px(t["b_quote_size"]))
-    f_posted = fonts.get("jet_bold", _font_px(t["b_posted_size"]))
+    posted_size = int(t["b_posted_size"])
+    # Slightly boost the LOG stamp in panel-like (non-RGB) render paths.
+    if image.mode != "RGB":
+        posted_size = max(posted_size, int(t.get("b_posted_size_panel_min", 13)))
+    f_posted = fonts.get("jet_bold", _font_px(posted_size))
 
     f_inv_title = fonts.get("inter_semibold", _font_px(t["b_inventory_title_size"]))
     f_inv_item = fonts.get("inter_bold", _font_px(t["b_inventory_item_size"]))
@@ -250,7 +257,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     draw.text((lx0, top_y), time_str, font=f_time, fill=ink)
     time_box = draw.textbbox((lx0, top_y), time_str, font=f_time)
 
-    wy = time_box[3] + 8
+    wy = time_box[3] + int(t["b_time_weekday_gap"])
     w_spacing = int(t["b_weekday_spacing"])
     draw_text_spaced(draw, weekday, lx0, wy, f_weekday, spacing=w_spacing, fill=ink)
     ww = text_width_spaced(draw, weekday, f_weekday, spacing=w_spacing)
@@ -344,7 +351,10 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         labels.append((a, tw))
         row_total += extra
 
-    row_x = lx1 - row_total
+    row_x = lx1 - row_total - int(t.get("b_family_names_right_inset", 0))
+    min_row_x = lx0 + family_w + 14
+    if row_x < min_row_x:
+        row_x = min_row_x
     cx = row_x
     name_h = text_size(draw, "Ag", f_family_name)[1]
     for i, (a, tw) in enumerate(labels):
