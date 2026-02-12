@@ -6,7 +6,7 @@ import time
 from PIL import ImageDraw
 
 from app.core.state import AppState
-from app.shared.draw import draw_weather_icon, rounded_rect, text_size, truncate_text
+from app.shared.draw import draw_text_spaced, draw_weather_icon, rounded_rect, text_size, text_width_spaced, truncate_text
 
 
 def _to_rgb(c):
@@ -30,25 +30,45 @@ def _theme(theme: dict) -> dict:
     # Layout
     t.setdefault("b_margin", 18)
     t.setdefault("b_outer_radius", 12)
-    t.setdefault("b_outer_border", 3)
+    t.setdefault("b_outer_border", 0)
+    t.setdefault("b_show_outer_frame", False)
     t.setdefault("b_split_ratio", 0.60)
     t.setdefault("b_divider_w", 2)
     t.setdefault("b_show_focus_ring", False)
 
     # Left block
     t.setdefault("b_left_pad", 24)
-    t.setdefault("b_time_size", 92)
-    t.setdefault("b_weekday_size", 18)
+    t.setdefault("b_time_size", 86)
+    t.setdefault("b_time_min_size", 70)
+    t.setdefault("b_time_weather_gap", 14)
+    t.setdefault("b_weekday_size", 12)
+    t.setdefault("b_weekday_spacing", 4)
     t.setdefault("b_date_size", 13)
-    t.setdefault("b_temp_size", 52)
-    t.setdefault("b_weather_desc_size", 12)
-    t.setdefault("b_weather_icon_size", 28)
-    t.setdefault("b_header_gap", 16)
-    t.setdefault("b_left_micro_size", 12)
-    t.setdefault("b_quote_size", 23)
+    t.setdefault("b_date_gray", 95)
+    t.setdefault("b_temp_size", 56)
+    t.setdefault("b_weather_desc_size", 11)
+    t.setdefault("b_weather_desc_spacing", 0)
+    t.setdefault("b_weather_col_w", 112)
+    t.setdefault("b_weather_top", 2)
+    t.setdefault("b_weather_desc_gap", 8)
+    t.setdefault("b_weather_icon_gap", 13)
+    t.setdefault("b_weather_icon_size", 20)
+    t.setdefault("b_header_gap", 28)
+    t.setdefault("b_left_micro_size", 10)
+    t.setdefault("b_left_micro_spacing", 3)
+    t.setdefault("b_quote_size", 26)
     t.setdefault("b_quote_lh", 1.18)
-    t.setdefault("b_posted_size", 12)
-    t.setdefault("b_author_size", 12)
+    t.setdefault("b_quote_top_gap", 34)
+    t.setdefault("b_quote_max_w_ratio", 0.74)
+    t.setdefault("b_quote_bottom_gap", 20)
+    t.setdefault("b_posted_size", 11)
+    t.setdefault("b_left_bottom_pad", 24)
+    t.setdefault("b_posted_rule_w", 74)
+    t.setdefault("b_posted_rule_gap", 2)
+    t.setdefault("b_author_size", 8)
+    t.setdefault("b_author_tag_h", 16)
+    t.setdefault("b_author_tag_px", 6)
+    t.setdefault("b_author_tag_gap", 6)
 
     # Right block
     t.setdefault("b_right_pad", 22)
@@ -113,6 +133,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             ink = 0
 
     muted = _gray_like(int(t["b_muted_gray"]), ink)
+    date_muted = _gray_like(int(t["b_date_gray"]), ink)
     subtle = _gray_like(int(t["b_subtle_gray"]), ink)
 
     draw.rectangle((0, 0, w, h), fill=card)
@@ -120,14 +141,16 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     # Outer frame and split
     m = int(t["b_margin"])
     ox0, oy0, ox1, oy1 = m, m, w - m, h - m
-    rounded_rect(
-        draw,
-        (ox0, oy0, ox1, oy1),
-        radius=int(t["b_outer_radius"]),
-        outline=ink,
-        width=int(t["b_outer_border"]),
-        fill=card,
-    )
+    draw.rectangle((ox0, oy0, ox1, oy1), fill=card)
+    if bool(t.get("b_show_outer_frame")) and int(t.get("b_outer_border", 0)) > 0:
+        rounded_rect(
+            draw,
+            (ox0, oy0, ox1, oy1),
+            radius=int(t["b_outer_radius"]),
+            outline=ink,
+            width=int(t["b_outer_border"]),
+            fill=None,
+        )
 
     split_x = ox0 + int((ox1 - ox0) * float(t["b_split_ratio"]))
     draw.line((split_x, oy0, split_x, oy1), fill=ink, width=int(t["b_divider_w"]))
@@ -146,13 +169,13 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     # Fonts
     f_time = fonts.get("inter_black", _font_px(t["b_time_size"]))
-    f_weekday = fonts.get("inter_black", _font_px(t["b_weekday_size"]))
-    f_date = fonts.get("inter_medium", _font_px(t["b_date_size"]))
+    f_weekday = fonts.get("inter_semibold", _font_px(t["b_weekday_size"]))
+    f_date = fonts.get("inter_semibold", _font_px(t["b_date_size"]))
     f_temp = fonts.get("inter_black", _font_px(t["b_temp_size"]))
-    f_weather_desc = fonts.get("inter_semibold", _font_px(t["b_weather_desc_size"]))
-    f_micro = fonts.get("inter_medium", _font_px(t["b_left_micro_size"]))
-    f_quote = fonts.get("playfair_bold", _font_px(t["b_quote_size"]))
-    f_posted = fonts.get("inter_semibold", _font_px(t["b_posted_size"]))
+    f_weather_desc = fonts.get("inter_bold", _font_px(t["b_weather_desc_size"]))
+    f_micro = fonts.get("inter_semibold", _font_px(t["b_left_micro_size"]))
+    f_quote = fonts.get("playfair_italic", _font_px(t["b_quote_size"]))
+    f_posted = fonts.get("jet_bold", _font_px(t["b_posted_size"]))
     f_author = fonts.get("inter_bold", _font_px(t["b_author_size"]))
 
     f_inv_title = fonts.get("inter_semibold", _font_px(t["b_inventory_title_size"]))
@@ -168,17 +191,37 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     now = datetime.now()
     time_str = now.strftime("%H:%M")
     weekday = now.strftime("%A").upper()
-    month_day = now.strftime("%B %-d") if hasattr(now, "strftime") else now.strftime("%B %d")
+    try:
+        month_day = now.strftime("%B %-d, %Y")
+    except Exception:
+        month_day = now.strftime("%B %d, %Y")
+
+    weather_col_w = int(t["b_weather_col_w"])
+    weather_right = lx1 - 2
+    weather_left = weather_right - weather_col_w
+
+    # Keep clock clear of the weather stack on the right.
+    time_font_size = int(t["b_time_size"])
+    time_min_size = int(t["b_time_min_size"])
+    while time_font_size > time_min_size:
+        f_probe = fonts.get("inter_black", _font_px(time_font_size))
+        tw_probe, _ = text_size(draw, time_str, f_probe)
+        if tw_probe <= (weather_left - lx0 - int(t["b_time_weather_gap"])):
+            break
+        time_font_size -= 2
+    f_time = fonts.get("inter_black", _font_px(time_font_size))
 
     draw.text((lx0, top_y), time_str, font=f_time, fill=ink)
     time_box = draw.textbbox((lx0, top_y), time_str, font=f_time)
 
-    wy = time_box[3] + 6
-    draw.text((lx0, wy), weekday, font=f_weekday, fill=ink)
-    ww, wh = text_size(draw, weekday, f_weekday)
+    wy = time_box[3] + 8
+    w_spacing = int(t["b_weekday_spacing"])
+    draw_text_spaced(draw, weekday, lx0, wy, f_weekday, spacing=w_spacing, fill=ink)
+    ww = text_width_spaced(draw, weekday, f_weekday, spacing=w_spacing)
+    wh = text_size(draw, "Ag", f_weekday)[1]
 
     dy = wy + wh + 2
-    draw.text((lx0, dy), month_day, font=f_date, fill=ink)
+    draw.text((lx0, dy), month_day, font=f_date, fill=date_muted)
     _, dh = text_size(draw, month_day, f_date)
 
     weather_bottom = dy + dh
@@ -188,34 +231,73 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         temp_w, temp_h = text_size(draw, temp_str, f_temp)
         icon_size = int(t["b_weather_icon_size"])
 
-        icon_x = lx1 - icon_size
-        temp_x = icon_x - 16 - temp_w
-        temp_y = wy - 2
+        temp_x = weather_right - temp_w
+        temp_y = top_y + int(t["b_weather_top"])
         draw.text((temp_x, temp_y), temp_str, font=f_temp, fill=ink)
 
         desc = _weather_word(getattr(w0, "icon", "sun"))
-        dw, dh2 = text_size(draw, desc, f_weather_desc)
-        desc_y = temp_y + temp_h + 2
-        draw.text((temp_x + temp_w - dw, desc_y), desc, font=f_weather_desc, fill=ink)
+        dsw = text_width_spaced(draw, desc, f_weather_desc, spacing=int(t["b_weather_desc_spacing"]))
+        _, dh2 = text_size(draw, desc, f_weather_desc)
+        desc_y = temp_y + temp_h + int(t["b_weather_desc_gap"])
+        draw_text_spaced(
+            draw,
+            desc,
+            weather_right - dsw,
+            desc_y,
+            f_weather_desc,
+            spacing=int(t["b_weather_desc_spacing"]),
+            fill=ink,
+        )
 
-        draw_weather_icon(draw, w0.icon, icon_x, temp_y + 4, size=icon_size, ink=ink, stroke=2)
-        weather_bottom = max(weather_bottom, desc_y + dh2, temp_y + 4 + icon_size)
+        icon_y = desc_y + dh2 + int(t["b_weather_icon_gap"])
+        icon_x = weather_right - icon_size
+        draw_weather_icon(draw, w0.icon, icon_x, icon_y, size=icon_size, ink=ink, stroke=2)
+        weather_bottom = max(weather_bottom, desc_y + dh2, icon_y + icon_size)
 
     header_rule_y = weather_bottom + int(t["b_header_gap"])
     draw.line((lx0, header_rule_y, lx1, header_rule_y), fill=ink, width=3)
 
-    label_y = header_rule_y + 16
-    draw.text((lx0, label_y), "FAMILY BOARD", font=f_micro, fill=muted)
+    label_y = header_rule_y + 18
+    draw_text_spaced(
+        draw,
+        "FAMILY BOARD",
+        lx0,
+        label_y,
+        f_micro,
+        spacing=int(t["b_left_micro_spacing"]),
+        fill=muted,
+    )
 
     memos = state.model.memos or []
     memo_idx = int(state.ui.memo_index or 0)
     memo = memos[memo_idx % len(memos)] if memos else None
 
-    quote_y = label_y + 46
+    active_author = (memo.author if memo else "MOM").upper()
+    second_author = "DAD"
+    if len(memos) > 1:
+        second_author = memos[(memo_idx + 1) % len(memos)].author.upper()
+
+    def _tag_w(text: str) -> int:
+        tw, _ = text_size(draw, text, f_author)
+        return tw + int(t["b_author_tag_px"]) * 2
+
+    w2 = _tag_w(second_author)
+    w1 = _tag_w(active_author)
+    gap = int(t["b_author_tag_gap"])
+    tag_h = int(t["b_author_tag_h"])
+    x2 = lx1 - w2
+    x1 = x2 - gap - w1
+    tag_y = oy1 - int(t["b_left_bottom_pad"]) - tag_h
+
+    posted = time.strftime("%H:%M", time.localtime(memo.timestamp)) if memo else ""
+    posted_h = text_size(draw, "Ag", f_posted)[1]
+    posted_text_y = tag_y + max(0, (tag_h - posted_h) // 2)
+    posted_rule_y = posted_text_y + posted_h + int(t["b_posted_rule_gap"])
+
+    quote_y = label_y + int(t["b_quote_top_gap"])
     quote = f"\"{memo.text}\"" if memo else '"No messages."'
 
-    quote_right_guard = 120
-    max_quote_w = max(120, (lx1 - lx0) - quote_right_guard)
+    max_quote_w = max(150, int((lx1 - lx0) * float(t["b_quote_max_w_ratio"])))
     words = quote.split(" ")
     lines = []
     cur = ""
@@ -231,27 +313,20 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     qh = text_size(draw, "Ag", f_quote)[1]
     qlh = max(1, int(qh * float(t["b_quote_lh"])))
-    for i, ln in enumerate(lines[:4]):
+    quote_bottom = posted_text_y - int(t["b_quote_bottom_gap"])
+    max_quote_lines = max(1, (quote_bottom - quote_y) // max(1, qlh))
+    for i, ln in enumerate(lines[: max_quote_lines]):
         draw.text((lx0, quote_y + i * qlh), ln, font=f_quote, fill=ink)
 
-    posted_y = quote_y + min(4, len(lines)) * qlh + 8
-    draw.line((lx0, posted_y, lx0 + 44, posted_y), fill=ink, width=1)
-    posted = time.strftime("%I:%M %p", time.localtime(memo.timestamp)).lstrip("0") if memo else ""
+    draw.line((lx0, posted_rule_y, lx0 + int(t["b_posted_rule_w"]), posted_rule_y), fill=ink, width=1)
     if posted:
-        draw.text((lx0 + 54, posted_y - 7), posted.upper(), font=f_posted, fill=ink)
+        draw.text((lx0, posted_text_y), f"POSTED {posted}", font=f_posted, fill=ink)
 
-    # Author list
-    ax = lx1 - 88
-    ay = quote_y + 30
-    inactive = muted
-    for i, m_item in enumerate(memos[:3]):
-        sel = i == memo_idx
-        fill = ink if sel else inactive
-        draw.text((ax, ay), f"{i+1}.", font=f_author, fill=fill)
-        draw.text((ax + 22, ay), m_item.author, font=f_author, fill=fill)
-        if m_item.is_new:
-            draw.ellipse((ax + 84, ay + 5, ax + 92, ay + 13), fill=ink)
-        ay += 28
+    draw.rectangle((x1, tag_y, x1 + w1, tag_y + tag_h), fill=ink)
+    draw.text((x1 + int(t["b_author_tag_px"]), tag_y + 4), active_author, font=f_author, fill=card)
+
+    draw.rectangle((x2, tag_y, x2 + w2, tag_y + tag_h), outline=ink, width=1, fill=card)
+    draw.text((x2 + int(t["b_author_tag_px"]), tag_y + 4), second_author, font=f_author, fill=ink)
 
     # ---------------- Right Panel ----------------
     rx0 = split_x + 1
