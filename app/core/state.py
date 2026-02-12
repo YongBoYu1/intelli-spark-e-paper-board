@@ -44,6 +44,7 @@ class WeatherDay:
     icon: str
     hi: int
     lo: int
+    humidity: int | None = None
 
 
 @dataclass

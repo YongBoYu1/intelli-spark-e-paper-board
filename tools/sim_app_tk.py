@@ -127,6 +127,7 @@ def load_model(repo_root):
                     icon=str(w.get("icon", "sun")),
                     hi=int(w.get("hi", 0)),
                     lo=int(w.get("lo", 0)),
+                    humidity=int(w["humidity"]) if w.get("humidity") is not None else None,
                 )
             )
         except Exception:

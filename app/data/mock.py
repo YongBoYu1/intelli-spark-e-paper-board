@@ -22,10 +22,10 @@ def load_dashboard():
                 {"title": "Buy Milk"},
             ],
             "weather": [
-                {"dow": "MON", "icon": "sun", "hi": 22, "lo": 12},
-                {"dow": "TUE", "icon": "cloud", "hi": 20, "lo": 14},
-                {"dow": "WED", "icon": "rain", "hi": 18, "lo": 11},
-                {"dow": "THU", "icon": "storm", "hi": 19, "lo": 13},
+                {"dow": "MON", "icon": "sun", "hi": 22, "lo": 12, "humidity": 45},
+                {"dow": "TUE", "icon": "cloud", "hi": 20, "lo": 14, "humidity": 52},
+                {"dow": "WED", "icon": "rain", "hi": 18, "lo": 11, "humidity": 68},
+                {"dow": "THU", "icon": "storm", "hi": 19, "lo": 13, "humidity": 73},
             ],
         }
     with open(path, "r", encoding="utf-8") as f:
