@@ -37,38 +37,56 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_show_focus_ring", False)
 
     # Left block
-    t.setdefault("b_left_pad", 24)
-    t.setdefault("b_time_size", 86)
+    t.setdefault("b_left_pad", 26)
+    t.setdefault("b_time_size", 84)
     t.setdefault("b_time_min_size", 70)
     t.setdefault("b_time_weather_gap", 14)
     t.setdefault("b_weekday_size", 12)
     t.setdefault("b_weekday_spacing", 4)
+    t.setdefault("b_weekday_date_gap", 9)
     t.setdefault("b_date_size", 13)
     t.setdefault("b_date_gray", 95)
-    t.setdefault("b_temp_size", 56)
-    t.setdefault("b_weather_desc_size", 11)
-    t.setdefault("b_weather_desc_spacing", 0)
-    t.setdefault("b_weather_col_w", 112)
-    t.setdefault("b_weather_top", 2)
-    t.setdefault("b_weather_desc_gap", 8)
-    t.setdefault("b_weather_icon_gap", 13)
+    t.setdefault("b_temp_size", 54)
+    t.setdefault("b_weather_desc_size", 12)
+    t.setdefault("b_weather_desc_spacing", 1)
+    t.setdefault("b_weather_col_w", 120)
+    t.setdefault("b_weather_top", -6)
+    t.setdefault("b_weather_desc_gap", 15)
+    t.setdefault("b_weather_desc_offset_y", 3)
+    t.setdefault("b_weather_icon_gap", 14)
     t.setdefault("b_weather_icon_size", 20)
-    t.setdefault("b_header_gap", 28)
+    t.setdefault("b_header_gap", 31)
+    t.setdefault("b_header_rule_w", 0)
     t.setdefault("b_left_micro_size", 10)
     t.setdefault("b_left_micro_spacing", 3)
-    t.setdefault("b_quote_size", 26)
+    t.setdefault("b_family_name_size", 10)
+    t.setdefault("b_family_name_spacing", 2)
+    t.setdefault("b_family_name_gap", 16)
+    t.setdefault("b_family_row_gap", 2)
+    t.setdefault("b_family_rule_gap", 10)
+    t.setdefault("b_family_active_underline_gap", 3)
+    t.setdefault("b_family_active_underline_w", 2)
+    t.setdefault("b_quote_size", 27)
+    t.setdefault("b_quote_min_size", 20)
     t.setdefault("b_quote_lh", 1.18)
-    t.setdefault("b_quote_top_gap", 34)
-    t.setdefault("b_quote_max_w_ratio", 0.74)
-    t.setdefault("b_quote_bottom_gap", 20)
-    t.setdefault("b_posted_size", 11)
-    t.setdefault("b_left_bottom_pad", 24)
-    t.setdefault("b_posted_rule_w", 74)
-    t.setdefault("b_posted_rule_gap", 2)
-    t.setdefault("b_author_size", 8)
-    t.setdefault("b_author_tag_h", 16)
-    t.setdefault("b_author_tag_px", 6)
-    t.setdefault("b_author_tag_gap", 6)
+    t.setdefault("b_quote_top_gap", 18)
+    t.setdefault("b_quote_max_w_ratio", 0.76)
+    t.setdefault("b_quote_short_wrap_factor", 0.74)
+    t.setdefault("b_quote_display_wrap_factor", 0.84)
+    t.setdefault("b_quote_target_lines", 2)
+    t.setdefault("b_quote_balance_lines", 2)
+    t.setdefault("b_quote_balance_ratio", 0.34)
+    t.setdefault("b_quote_balance_max", 40)
+    t.setdefault("b_quote_bottom_gap", 14)
+    t.setdefault("b_posted_after_quote_gap", 12)
+    t.setdefault("b_posted_max_gap_from_quote", 44)
+    t.setdefault("b_posted_size", 12)
+    t.setdefault("b_left_bottom_pad", 22)
+    t.setdefault("b_posted_rule_w", 0)
+    t.setdefault("b_posted_rule_gap", 3)
+    t.setdefault("b_author_size", 9)
+    t.setdefault("b_author_row_offset_y", 0)
+    t.setdefault("b_author_max_tags", 4)
 
     # Right block
     t.setdefault("b_right_pad", 22)
@@ -98,12 +116,29 @@ def _font_px(v) -> int:
 
 def _weather_word(icon_name: str) -> str:
     icon = (icon_name or "sun").strip().lower().replace("-", "_")
-    parts = icon.split("_")
-    if not parts:
-        return "SUN"
-    if parts[0] == "partly" and len(parts) > 1:
+    mapping = {
+        "sun": "SUNNY",
+        "clear": "CLEAR",
+        "cloud": "CLOUDY",
+        "cloudy": "CLOUDY",
+        "overcast": "OVERCAST",
+        "rain": "RAINY",
+        "drizzle": "DRIZZLE",
+        "storm": "STORM",
+        "thunder": "STORM",
+        "snow": "SNOW",
+        "mist": "MIST",
+        "fog": "FOG",
+        "wind": "WINDY",
+    }
+    if icon in mapping:
+        return mapping[icon]
+    if icon.startswith("partly"):
         return "PARTLY"
-    return parts[0].upper()
+    parts = [p for p in icon.split("_") if p]
+    if not parts:
+        return "SUNNY"
+    return mapping.get(parts[0], parts[0].upper())
 
 
 def _group_tasks(state: AppState):
@@ -172,11 +207,12 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     f_weekday = fonts.get("inter_semibold", _font_px(t["b_weekday_size"]))
     f_date = fonts.get("inter_semibold", _font_px(t["b_date_size"]))
     f_temp = fonts.get("inter_black", _font_px(t["b_temp_size"]))
-    f_weather_desc = fonts.get("inter_bold", _font_px(t["b_weather_desc_size"]))
+    f_weather_desc = fonts.get("jet_bold", _font_px(t["b_weather_desc_size"]))
     f_micro = fonts.get("inter_semibold", _font_px(t["b_left_micro_size"]))
-    f_quote = fonts.get("playfair_italic", _font_px(t["b_quote_size"]))
+    f_family_name = fonts.get("inter_semibold", _font_px(t["b_family_name_size"]))
+    # Use a slightly heavier serif to survive 1-bit panel quantization.
+    f_quote = fonts.get("playfair_bold", _font_px(t["b_quote_size"]))
     f_posted = fonts.get("jet_bold", _font_px(t["b_posted_size"]))
-    f_author = fonts.get("inter_bold", _font_px(t["b_author_size"]))
 
     f_inv_title = fonts.get("inter_semibold", _font_px(t["b_inventory_title_size"]))
     f_inv_item = fonts.get("inter_bold", _font_px(t["b_inventory_item_size"]))
@@ -220,7 +256,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     ww = text_width_spaced(draw, weekday, f_weekday, spacing=w_spacing)
     wh = text_size(draw, "Ag", f_weekday)[1]
 
-    dy = wy + wh + 2
+    dy = wy + wh + int(t["b_weekday_date_gap"])
     draw.text((lx0, dy), month_day, font=f_date, fill=date_muted)
     _, dh = text_size(draw, month_day, f_date)
 
@@ -238,11 +274,12 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         desc = _weather_word(getattr(w0, "icon", "sun"))
         dsw = text_width_spaced(draw, desc, f_weather_desc, spacing=int(t["b_weather_desc_spacing"]))
         _, dh2 = text_size(draw, desc, f_weather_desc)
-        desc_y = temp_y + temp_h + int(t["b_weather_desc_gap"])
+        desc_y = temp_y + temp_h + int(t["b_weather_desc_gap"]) + int(t.get("b_weather_desc_offset_y", 0))
+        desc_x = weather_right - dsw
         draw_text_spaced(
             draw,
             desc,
-            weather_right - dsw,
+            desc_x,
             desc_y,
             f_weather_desc,
             spacing=int(t["b_weather_desc_spacing"]),
@@ -250,14 +287,18 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         )
 
         icon_y = desc_y + dh2 + int(t["b_weather_icon_gap"])
-        icon_x = weather_right - icon_size
+        icon_center_x = desc_x + dsw // 2
+        icon_x = int(icon_center_x - icon_size / 2)
+        icon_x = max(weather_left, min(weather_right - icon_size, icon_x))
         draw_weather_icon(draw, w0.icon, icon_x, icon_y, size=icon_size, ink=ink, stroke=2)
         weather_bottom = max(weather_bottom, desc_y + dh2, icon_y + icon_size)
 
     header_rule_y = weather_bottom + int(t["b_header_gap"])
-    draw.line((lx0, header_rule_y, lx1, header_rule_y), fill=ink, width=3)
+    header_rule_w = int(t["b_header_rule_w"])
+    if header_rule_w > 0:
+        draw.line((lx0, header_rule_y, lx1, header_rule_y), fill=ink, width=header_rule_w)
 
-    label_y = header_rule_y + 18
+    label_y = header_rule_y + int(t["b_family_row_gap"])
     draw_text_spaced(
         draw,
         "FAMILY BOARD",
@@ -272,61 +313,155 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     memo_idx = int(state.ui.memo_index or 0)
     memo = memos[memo_idx % len(memos)] if memos else None
 
+    # Family members on the same row as the section title.
     active_author = (memo.author if memo else "MOM").upper()
-    second_author = "DAD"
-    if len(memos) > 1:
-        second_author = memos[(memo_idx + 1) % len(memos)].author.upper()
+    authors = []
+    if active_author:
+        authors.append(active_author)
+    for m in memos:
+        a = (m.author or "").strip().upper()
+        if not a or a in authors:
+            continue
+        authors.append(a)
+    max_tags = max(1, int(t["b_author_max_tags"]))
+    authors = authors[:max_tags]
 
-    def _tag_w(text: str) -> int:
-        tw, _ = text_size(draw, text, f_author)
-        return tw + int(t["b_author_tag_px"]) * 2
+    row_y = label_y + int(t["b_author_row_offset_y"])
+    name_spacing = int(t["b_family_name_spacing"])
+    name_gap = int(t["b_family_name_gap"])
+    underline_gap = int(t["b_family_active_underline_gap"])
+    underline_w = int(t["b_family_active_underline_w"])
 
-    w2 = _tag_w(second_author)
-    w1 = _tag_w(active_author)
-    gap = int(t["b_author_tag_gap"])
-    tag_h = int(t["b_author_tag_h"])
-    x2 = lx1 - w2
-    x1 = x2 - gap - w1
-    tag_y = oy1 - int(t["b_left_bottom_pad"]) - tag_h
+    labels = []
+    row_total = 0
+    family_w = text_width_spaced(draw, "FAMILY BOARD", f_micro, spacing=int(t["b_left_micro_spacing"]))
+    max_row_w = max(64, lx1 - (lx0 + family_w + 22))
+    for a in authors:
+        tw = text_width_spaced(draw, a, f_family_name, spacing=name_spacing)
+        extra = (name_gap if labels else 0) + tw
+        if row_total + extra > max_row_w:
+            break
+        labels.append((a, tw))
+        row_total += extra
+
+    row_x = lx1 - row_total
+    cx = row_x
+    name_h = text_size(draw, "Ag", f_family_name)[1]
+    for i, (a, tw) in enumerate(labels):
+        is_active = i == 0
+        name_fill = ink
+        draw_text_spaced(draw, a, cx, row_y, f_family_name, spacing=name_spacing, fill=name_fill)
+        if is_active:
+            uy = row_y + name_h + underline_gap
+            draw.line((cx, uy, cx + tw, uy), fill=ink, width=underline_w)
+        cx += tw + name_gap
 
     posted = time.strftime("%H:%M", time.localtime(memo.timestamp)) if memo else ""
     posted_h = text_size(draw, "Ag", f_posted)[1]
-    posted_text_y = tag_y + max(0, (tag_h - posted_h) // 2)
+    posted_max_y = oy1 - int(t["b_left_bottom_pad"]) - posted_h
+
+    meta_row_bottom = label_y + text_size(draw, "Ag", f_micro)[1]
+    if labels:
+        meta_row_bottom = max(meta_row_bottom, row_y + name_h + underline_gap + underline_w)
+    family_rule_y = meta_row_bottom + int(t["b_family_rule_gap"])
+    draw.line((lx0, family_rule_y, lx1, family_rule_y), fill=ink, width=2)
+
+    quote_y_base = family_rule_y + int(t["b_quote_top_gap"])
+    quote = (memo.text.strip() if memo and memo.text else "No messages.")
+
+    def _wrap_lines(text: str, width: int, quote_font):
+        words = text.split(" ")
+        out = []
+        cur = ""
+        for wd in words:
+            nxt = (cur + " " + wd).strip()
+            if not cur or text_size(draw, nxt, quote_font)[0] <= width:
+                cur = nxt
+            else:
+                out.append(cur)
+                cur = wd
+        if cur:
+            out.append(cur)
+        return out
+
+    max_quote_w = max(140, int((lx1 - lx0) * float(t["b_quote_max_w_ratio"])))
+    quote_bottom = posted_max_y - int(t["b_quote_bottom_gap"])
+
+    quote_size = int(t["b_quote_size"])
+    quote_min_size = int(t.get("b_quote_min_size", 20))
+    target_lines = max(2, int(t.get("b_quote_target_lines", 3)))
+    quote_font = f_quote
+    rendered_lines = []
+    qlh = 1
+
+    while quote_size >= quote_min_size:
+        quote_font = fonts.get("playfair_bold", _font_px(quote_size))
+        qh = text_size(draw, "Ag", quote_font)[1]
+        qlh = max(1, int(qh * float(t["b_quote_lh"])))
+        max_quote_lines = max(1, (quote_bottom - quote_y_base) // max(1, qlh))
+
+        lines = _wrap_lines(quote, max_quote_w, quote_font)
+        # Short messages look too tiny/empty on panel; force a display-width wrap pass.
+        if len(lines) < target_lines and len(quote) >= 14:
+            lines_tight = _wrap_lines(
+                quote,
+                max(110, int(max_quote_w * float(t["b_quote_display_wrap_factor"]))),
+                quote_font,
+            )
+            if len(lines_tight) > len(lines):
+                lines = lines_tight
+            elif len(lines) == 1:
+                lines_short = _wrap_lines(
+                    quote,
+                    max(120, int(max_quote_w * float(t["b_quote_short_wrap_factor"]))),
+                    quote_font,
+                )
+                if len(lines_short) > len(lines):
+                    lines = lines_short
+
+        if len(lines) <= max_quote_lines:
+            rendered_lines = lines
+            break
+        quote_size -= 1
+
+    if not rendered_lines:
+        # Fallback to minimum readable state when text is very long.
+        quote_font = fonts.get("playfair_bold", _font_px(quote_min_size))
+        qh = text_size(draw, "Ag", quote_font)[1]
+        qlh = max(1, int(qh * float(t["b_quote_lh"])))
+        max_quote_lines = max(1, (quote_bottom - quote_y_base) // max(1, qlh))
+        rendered_lines = _wrap_lines(quote, max_quote_w, quote_font)[:max_quote_lines]
+
+    quote_h = len(rendered_lines) * qlh
+    quote_y = quote_y_base
+    if len(rendered_lines) <= int(t.get("b_quote_balance_lines", 2)):
+        nominal_gap = int(t.get("b_posted_after_quote_gap", 10))
+        spare = posted_max_y - (quote_y_base + quote_h + nominal_gap)
+        if spare > 0:
+            shift = int(spare * float(t.get("b_quote_balance_ratio", 0.5)))
+            shift = min(int(t.get("b_quote_balance_max", 64)), shift)
+            if shift > 0:
+                quote_y += shift
+
+    for i, ln in enumerate(rendered_lines):
+        draw.text((lx0, quote_y + i * qlh), ln, font=quote_font, fill=ink)
+
+    quote_end_y = quote_y + quote_h
+    posted_min_y = quote_end_y + int(t.get("b_posted_after_quote_gap", 10))
+    posted_cap_y = quote_end_y + int(t.get("b_posted_max_gap_from_quote", 60))
+    posted_text_y = min(posted_max_y, posted_cap_y)
+    if posted_text_y < posted_min_y:
+        posted_text_y = min(posted_max_y, posted_min_y)
     posted_rule_y = posted_text_y + posted_h + int(t["b_posted_rule_gap"])
 
-    quote_y = label_y + int(t["b_quote_top_gap"])
-    quote = f"\"{memo.text}\"" if memo else '"No messages."'
-
-    max_quote_w = max(150, int((lx1 - lx0) * float(t["b_quote_max_w_ratio"])))
-    words = quote.split(" ")
-    lines = []
-    cur = ""
-    for wd in words:
-        nxt = (cur + " " + wd).strip()
-        if not cur or text_size(draw, nxt, f_quote)[0] <= max_quote_w:
-            cur = nxt
-        else:
-            lines.append(cur)
-            cur = wd
-    if cur:
-        lines.append(cur)
-
-    qh = text_size(draw, "Ag", f_quote)[1]
-    qlh = max(1, int(qh * float(t["b_quote_lh"])))
-    quote_bottom = posted_text_y - int(t["b_quote_bottom_gap"])
-    max_quote_lines = max(1, (quote_bottom - quote_y) // max(1, qlh))
-    for i, ln in enumerate(lines[: max_quote_lines]):
-        draw.text((lx0, quote_y + i * qlh), ln, font=f_quote, fill=ink)
-
-    draw.line((lx0, posted_rule_y, lx0 + int(t["b_posted_rule_w"]), posted_rule_y), fill=ink, width=1)
+    posted_label = f"LOG: {posted}" if posted else ""
+    posted_w = text_size(draw, posted_label, f_posted)[0] if posted_label else 0
+    left_rule_w = int(t["b_posted_rule_w"]) if int(t["b_posted_rule_w"]) > 0 else posted_w + 12
+    draw.line((lx0, posted_rule_y, lx0 + left_rule_w, posted_rule_y), fill=ink, width=1)
+    if lx0 + left_rule_w + 12 < lx1:
+        draw.line((lx0 + left_rule_w + 8, posted_rule_y, lx1, posted_rule_y), fill=subtle, width=1)
     if posted:
-        draw.text((lx0, posted_text_y), f"POSTED {posted}", font=f_posted, fill=ink)
-
-    draw.rectangle((x1, tag_y, x1 + w1, tag_y + tag_h), fill=ink)
-    draw.text((x1 + int(t["b_author_tag_px"]), tag_y + 4), active_author, font=f_author, fill=card)
-
-    draw.rectangle((x2, tag_y, x2 + w2, tag_y + tag_h), outline=ink, width=1, fill=card)
-    draw.text((x2 + int(t["b_author_tag_px"]), tag_y + 4), second_author, font=f_author, fill=ink)
+        draw.text((lx0, posted_text_y), posted_label, font=f_posted, fill=ink)
 
     # ---------------- Right Panel ----------------
     rx0 = split_x + 1
