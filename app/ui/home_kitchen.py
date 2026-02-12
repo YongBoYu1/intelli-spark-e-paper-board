@@ -41,6 +41,9 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_left_pad", 24)
     t.setdefault("b_time_size", 84)
     t.setdefault("b_time_min_size", 70)
+    t.setdefault("b_time_display_scale", 1.30)
+    t.setdefault("b_time_display_x_offset", 0)
+    t.setdefault("b_time_display_y_offset", -24)
     t.setdefault("b_time_weather_gap", 14)
     t.setdefault("b_time_weekday_gap", 13)
     t.setdefault("b_weekday_size", 13)
@@ -382,10 +385,25 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         time_font_size -= 2
     f_time = fonts.get("inter_black", _font_px(time_font_size))
 
-    draw.text((lx0, top_y), time_str, font=f_time, fill=ink)
-    time_box = draw.textbbox((lx0, top_y), time_str, font=f_time)
+    # Keep downstream text anchors stable: weekday/date continue to flow from the
+    # legacy clock baseline, while the visible clock can be shifted and enlarged.
+    time_flow_box = draw.textbbox((lx0, top_y), time_str, font=f_time)
 
-    wy = time_box[3] + int(t["b_time_weekday_gap"])
+    clock_x = lx0 + int(t.get("b_time_display_x_offset", -10))
+    clock_y = top_y + int(t.get("b_time_display_y_offset", -12))
+    display_scale = max(1.0, float(t.get("b_time_display_scale", 1.18)))
+    display_size = max(time_font_size, int(round(time_font_size * display_scale)))
+    display_font = fonts.get("inter_black", _font_px(display_size))
+    while display_size > time_font_size:
+        dw, _ = text_size(draw, time_str, display_font)
+        if dw <= (weather_left - clock_x - int(t["b_time_weather_gap"])):
+            break
+        display_size -= 2
+        display_font = fonts.get("inter_black", _font_px(display_size))
+
+    draw.text((clock_x, clock_y), time_str, font=display_font, fill=ink)
+
+    wy = time_flow_box[3] + int(t["b_time_weekday_gap"])
     w_spacing = int(t["b_weekday_spacing"])
     draw_text_spaced(draw, weekday, lx0, wy, f_weekday, spacing=w_spacing, fill=ink)
     ww = text_width_spaced(draw, weekday, f_weekday, spacing=w_spacing)
