@@ -93,7 +93,7 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_posted_size", 16)
     t.setdefault("b_posted_size_panel_min", 17)
     t.setdefault("b_log_compact_day_time", True)
-    t.setdefault("b_log_datetime_format", "%-d, %a %H:%M")
+    t.setdefault("b_log_datetime_format", "%a %H:%M")
     t.setdefault("b_log_label_prefix", "LOG")
     t.setdefault("b_left_bottom_pad", 22)
     t.setdefault("b_posted_rule_w", 0)
@@ -536,13 +536,13 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         if bool(t.get("b_log_compact_day_time", True)):
             # Keep weekday abbreviation stable for e-paper labels across locales.
             dow = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[dt.weekday()]
-            posted = f"{int(dt.day)}, {dow} {dt.strftime('%H:%M')}"
+            posted = f"{dow} {dt.strftime('%H:%M')}"
         else:
-            fmt = str(t.get("b_log_datetime_format") or "%-d, %a %H:%M")
+            fmt = str(t.get("b_log_datetime_format") or "%a %H:%M")
             try:
                 posted = dt.strftime(fmt)
             except Exception:
-                posted = dt.strftime("%d, %a %H:%M")
+                posted = dt.strftime("%a %H:%M")
     posted_h = text_size(draw, "Ag", f_posted)[1]
     posted_max_y = oy1 - int(t["b_left_bottom_pad"]) - posted_h
 
