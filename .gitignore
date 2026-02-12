@@ -6,3 +6,24 @@ hardware_tests/last_frame.png
 hardware_tests/todo.txt
 hardware_tests/reminders.json
 hardware_tests/*.wav
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Generated preview/test images
+out*.png
+dashboard_render.png
+ui_tuner_export.png
+test_icon_*.png
+test_all_icons_grid.png
+
+# Fonts: keep repo lean (track only the few the app loads)
+assets/fonts/*
+!assets/fonts/Inter-Regular.ttf
+!assets/fonts/Inter-Medium.ttf
+!assets/fonts/Inter-SemiBold.ttf
+!assets/fonts/Inter-Bold.ttf
+!assets/fonts/Inter-Black.ttf
+!assets/fonts/JetBrainsMono-Bold.ttf
+!assets/fonts/JetBrainsMono-ExtraBold.ttf

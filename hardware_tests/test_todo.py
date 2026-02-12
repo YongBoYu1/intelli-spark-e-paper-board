@@ -8,9 +8,31 @@ import glob
 from PIL import Image, ImageDraw, ImageFont
 
 base_dir = os.path.dirname(os.path.realpath(__file__))
-default_root = os.path.dirname(base_dir)
+
+
+def _detect_repo_root(start_dir):
+    cur = start_dir
+    for _ in range(3):
+        if os.path.isdir(os.path.join(cur, "third_party", "waveshare_ePaper")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return os.path.dirname(start_dir)
+
+
+repo_root = _detect_repo_root(base_dir)
+default_root = repo_root
 picdir = os.path.join(default_root, 'pic')
 libdir = os.path.join(default_root, 'lib')
+local_submodule_root = os.path.join(
+    repo_root,
+    "third_party",
+    "waveshare_ePaper",
+    "RaspberryPi_JetsonNano",
+    "python",
+)
 
 # Auto-detect Waveshare repo paths on Raspberry Pi
 candidate_roots = []
@@ -19,6 +41,7 @@ if env_root:
     candidate_roots.append(env_root)
 candidate_roots.extend(
     [
+        local_submodule_root,
         default_root,
         "/e-Paper/RaspberryPi_JetsonNano/python",
         "/root/e-Paper/RaspberryPi_JetsonNano/python",

@@ -1,0 +1,19 @@
+{
+  "location": "New York",
+  "battery": 84,
+  "reminders": [
+    {"title": "Doctor Appointment", "time": "14:00"},
+    {"title": "Yoghurt Expires", "due": "2 Days"},
+    {"title": "Morning Yoga", "time": "08:00"},
+    {"title": "Buy Milk"},
+    {"title": "Trash Day", "due": "Tomorrow"},
+    {"title": "Pay Rent", "due": "Mar 1"},
+    {"title": "Call Mom", "due": "This week"}
+  ],
+  "weather": [
+    {"dow": "MON", "icon": "sun", "hi": 22, "lo": 12},
+    {"dow": "TUE", "icon": "cloud", "hi": 20, "lo": 14},
+    {"dow": "WED", "icon": "rain", "hi": 18, "lo": 11},
+    {"dow": "THU", "icon": "storm", "hi": 19, "lo": 13}
+  ]
+}
