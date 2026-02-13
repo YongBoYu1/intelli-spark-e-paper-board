@@ -184,6 +184,7 @@ class Simulator(tk.Tk):
         self.panel_muted = tk.IntVar(value=int(self.theme.get("panel_muted", 150)))
         self.panel_gamma = tk.DoubleVar(value=float(self.theme.get("panel_gamma", 1.0)))
         self.panel_dither = tk.BooleanVar(value=bool(self.theme.get("panel_dither", False)))
+        self.badge_style = tk.StringVar(value=str(self.theme.get("b_badge_style", "text")))
 
         self.controls = ttk.Frame(self)
         self.controls.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
@@ -202,6 +203,14 @@ class Simulator(tk.Tk):
         ttk.Label(self.controls, text="Gamma").grid(row=0, column=6, padx=(0, 6), sticky="w")
         ttk.Spinbox(self.controls, from_=0.1, to=4.0, increment=0.05, textvariable=self.panel_gamma, width=6).grid(row=0, column=7, padx=(0, 10), sticky="w")
         ttk.Checkbutton(self.controls, text="Dither", variable=self.panel_dither, command=self._render).grid(row=0, column=8, sticky="w")
+        ttk.Label(self.controls, text="Badge").grid(row=0, column=9, padx=(14, 6), sticky="w")
+        ttk.Combobox(
+            self.controls,
+            textvariable=self.badge_style,
+            values=("text", "text_focus_invert", "outline", "invert", "focus_invert"),
+            state="readonly",
+            width=16,
+        ).grid(row=0, column=10, padx=(0, 6), sticky="w")
 
         self.preview = ttk.Label(self)
         self.preview.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
@@ -235,7 +244,7 @@ class Simulator(tk.Tk):
         self.bind("<BackSpace>", lambda _e: self._dispatch(Back()))
         self.bind("q", lambda _e: self.destroy())
 
-        for v in (self.preview_mode, self.panel_threshold, self.panel_muted, self.panel_gamma):
+        for v in (self.preview_mode, self.panel_threshold, self.panel_muted, self.panel_gamma, self.badge_style):
             v.trace_add("write", lambda *_: self._render())
 
         self.after(100, self._tick)
@@ -252,6 +261,10 @@ class Simulator(tk.Tk):
 
     def _render(self):
         w, h = 800, 480
+        badge_style = str(self.badge_style.get() or "text").strip().lower()
+        if badge_style not in ("text", "text_focus_invert", "outline", "invert", "focus_invert"):
+            badge_style = "text"
+        self.theme["b_badge_style"] = badge_style
 
         bg = self.theme.get("bg", (229, 229, 229))
         color_img = Image.new("RGB", (w, h), bg if isinstance(bg, tuple) else (229, 229, 229))
@@ -286,7 +299,8 @@ class Simulator(tk.Tk):
             text=(
                 f"screen={ui.screen.value} focus={ui.focused_index} page={ui.page} idle={ui.idle} "
                 f"pending_reorder={ui.pending_reorder} mode={mode} th={threshold} muted={muted} "
-                f"gamma={gamma:.2f} dither={dither} fonts_ok={font_ok}"
+                f"gamma={gamma:.2f} dither={dither} badge_style={badge_style} "
+                f"focus_style={self.theme.get('b_right_focus_style', 'row_box')} fonts_ok={font_ok}"
             )
         )
 
