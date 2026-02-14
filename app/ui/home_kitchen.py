@@ -115,14 +115,21 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_badge_min_w", 44)
     t.setdefault("b_inventory_title_badge_gap", 10)
     t.setdefault("b_inventory_min_title_w", 104)
-    t.setdefault("b_inventory_max_rows", 4)
+    t.setdefault("b_inventory_max_rows", 3)
     t.setdefault("b_inventory_header_gap", 34)
     t.setdefault("b_mid_split_ratio", 0.50)
-    t.setdefault("b_shopping_title_size", 12)
-    t.setdefault("b_shopping_title_spacing", 3)
+    t.setdefault("b_shopping_title_size", 13)
+    t.setdefault("b_shopping_title_spacing", 1)
     t.setdefault("b_shopping_item_size", 17)
     t.setdefault("b_shopping_row_h", 36)
     t.setdefault("b_shopping_header_gap", 24)
+    t.setdefault("b_shop_section_rule_w", 1)
+    t.setdefault("b_shop_section_rule_left_gap", 0)
+    t.setdefault("b_shop_section_rule_right_gap", 16)
+    t.setdefault("b_shop_header_rule_gap", 6)
+    t.setdefault("b_shop_header_line_after_title_gap", 9)
+    t.setdefault("b_inv_shop_min_gap", 14)
+    t.setdefault("b_shop_text_left_pad", 2)
     t.setdefault("b_right_focus_style", "row_box")
     t.setdefault("b_right_focus_pad_x", 6)
     t.setdefault("b_right_focus_pad_y", 3)
@@ -330,7 +337,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     f_inv_item = fonts.get("inter_semibold", _font_px(t["b_inventory_item_size"]))
     f_inv_item_focus = fonts.get("inter_black", _font_px(t["b_inventory_item_size"]))
     f_badge = fonts.get("inter_bold", _font_px(t["b_badge_size"]))
-    f_shop_title = fonts.get("inter_semibold", _font_px(t["b_shopping_title_size"]))
+    f_shop_title = fonts.get("inter_bold", _font_px(t["b_shopping_title_size"]))
     f_shop_item = fonts.get("inter_semibold", _font_px(t["b_shopping_item_size"]))
     f_shop_item_focus = fonts.get("inter_bold", _font_px(t["b_shopping_item_size"]))
 
@@ -587,7 +594,6 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     inner_x1 = ox1 - rp
 
     mid_y = oy0 + int((oy1 - oy0) * float(t["b_mid_split_ratio"]))
-    draw.line((rx0, mid_y, ox1, mid_y), fill=ink, width=1)
 
     # Focus lookup by task id (incomplete order from reducer)
     focus_rid = _kitchen_focus_rid(state, focus_idx)
@@ -796,17 +802,39 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         y += inv_row_h
 
     # Shopping header
-    shop_title_y = mid_y + max(10, rp - 8)
-    
-    # [ARTISTIC] Header consistency
+    # Keep right-lower section aligned to the left panel section rhythm.
+    inv_bottom_y = y
     shop_title_spacing = int(t.get("b_shopping_title_spacing", 1))
-    draw_text_spaced(draw, "SHOPPING LIST", inner_x0, shop_title_y, f_shop_title, spacing=shop_title_spacing, fill=ink)
+    shop_label = "SHOPPING LIST"
+    shop_rule_gap = int(t.get("b_shop_header_rule_gap", 6))
+    shop_rule_w = max(1, int(t.get("b_shop_section_rule_w", 1)))
+    shop_rule_right_max = inner_x1 - int(t.get("b_shop_section_rule_right_gap", 18))
+    shop_rule_left = inner_x0 + int(t.get("b_shop_section_rule_left_gap", 0))
+    shop_title_h = text_size(draw, "Ag", f_shop_title)[1]
+    shop_line_gap = int(t.get("b_shop_header_line_after_title_gap", 9))
+    shop_rule_y_target = family_rule_y
+    shop_rule_y_min = inv_bottom_y + int(t.get("b_inv_shop_min_gap", 14))
+    shop_rule_y = max(shop_rule_y_target, shop_rule_y_min)
+    shop_title_y = shop_rule_y - shop_title_h - shop_line_gap
+    shop_label_w = text_width_spaced(draw, shop_label, f_shop_title, spacing=shop_title_spacing)
+
+    # Header: left-aligned title + right count on same baseline.
+    shop_title_x = inner_x0
+    draw_text_spaced(draw, shop_label, shop_title_x, shop_title_y, f_shop_title, spacing=shop_title_spacing, fill=ink)
+
     shop_cnt = str(len(shop))
-    shop_cnt_w = text_width_spaced(draw, shop_cnt, f_shop_title, spacing=shop_title_spacing)
-    draw_text_spaced(draw, shop_cnt, inner_x1 - shop_cnt_w, shop_title_y, f_shop_title, spacing=shop_title_spacing, fill=ink)
+    shop_cnt_spacing = max(0, shop_title_spacing - 1)
+    shop_cnt_w = text_width_spaced(draw, shop_cnt, f_shop_title, spacing=shop_cnt_spacing)
+    shop_cnt_x = inner_x1 - shop_cnt_w
+    draw_text_spaced(draw, shop_cnt, shop_cnt_x, shop_title_y, f_shop_title, spacing=shop_cnt_spacing, fill=ink)
+
+    # Support line under the header.
+    shop_rule_right = min(shop_rule_right_max, shop_cnt_x - shop_rule_gap)
+    if shop_rule_right > shop_rule_left:
+        draw.line((shop_rule_left, shop_rule_y, shop_rule_right, shop_rule_y), fill=ink, width=shop_rule_w)
     
-    shop_row_h = int(t["b_shopping_row_h"]) + 2
-    y = shop_title_y + int(t["b_shopping_header_gap"])
+    shop_row_h = int(t["b_shopping_row_h"]) + 4
+    y = max(shop_title_y + int(t["b_shopping_header_gap"]), shop_rule_y + 10)
     shop_bottom = oy1 - int(t["b_bottom_pad"])
 
     for item in shop[:6]:
@@ -867,7 +895,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             ]
             draw.line(points, fill=box_outline, width=2, joint="curve")
 
-        text_x = cbx + cb + 14
+        text_x = cbx + cb + 14 + int(t.get("b_shop_text_left_pad", 2))
         title = truncate_text(draw, item.title, f_shop_item, max(80, inner_x1 - text_x - 8))
 
         title_font = f_shop_item_focus if is_focus else f_shop_item
