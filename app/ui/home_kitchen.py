@@ -5,6 +5,7 @@ import time
 
 from PIL import ImageDraw
 
+from app.core.kitchen_queue import kitchen_queue_theme_key, kitchen_visible_task_indices
 from app.core.state import AppState
 from app.shared.draw import draw_text_spaced, draw_weather_icon, rounded_rect, text_size, text_width_spaced, truncate_text
 
@@ -121,6 +122,7 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_shopping_title_size", 13)
     t.setdefault("b_shopping_title_spacing", 1)
     t.setdefault("b_shopping_item_size", 17)
+    t.setdefault("b_shopping_max_rows", 5)
     t.setdefault("b_shopping_row_h", 36)
     t.setdefault("b_shopping_header_gap", 24)
     t.setdefault("b_shop_section_rule_w", 1)
@@ -596,7 +598,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     mid_y = oy0 + int((oy1 - oy0) * float(t["b_mid_split_ratio"]))
 
     # Focus lookup by task id (incomplete order from reducer)
-    focus_rid = _kitchen_focus_rid(state, focus_idx)
+    focus_rid = _kitchen_focus_rid(state, focus_idx, t)
+    rendered_focus_rids: list[str] = []
 
     fridge, shop = _group_tasks(state)
 
@@ -626,6 +629,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         if y + inv_row_h > mid_y - 8:
             break
         is_focus = (not state.ui.idle) and (focus_rid == item.rid and not item.completed)
+        if not item.completed:
+            rendered_focus_rids.append(item.rid)
 
         text_fill = ink 
         badge_text = ink
@@ -837,10 +842,13 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     y = max(shop_title_y + int(t["b_shopping_header_gap"]), shop_rule_y + 10)
     shop_bottom = oy1 - int(t["b_bottom_pad"])
 
-    for item in shop[:6]:
+    shop_max_rows = max(1, int(t.get("b_shopping_max_rows", 5)))
+    for item in shop[:shop_max_rows]:
         if y + shop_row_h > shop_bottom:
             break
         is_focus = (not state.ui.idle) and (focus_rid == item.rid and not item.completed)
+        if not item.completed:
+            rendered_focus_rids.append(item.rid)
         
         text_fill = ink
         box_outline = ink
@@ -908,19 +916,21 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             tw = text_size(draw, title, title_font)[0]
             sy = ty + th // 2 + 1
             draw.line((text_x, sy, text_x + tw, sy), fill=text_fill, width=2)
-        
+
         y += shop_row_h
 
+    # Sync reducer focus/click queue with the exact rows currently rendered.
+    state.ui.kitchen_visible_rids = rendered_focus_rids
+    state.ui.kitchen_visible_theme_key = kitchen_queue_theme_key(t)
 
 
-def _kitchen_focus_rid(state: AppState, focused_index: int) -> str:
+
+def _kitchen_focus_rid(state: AppState, focused_index: int, theme: dict | None = None) -> str:
     # focused_index: 0 is left panel; 1.. maps to visible tasks list
     if focused_index <= 0:
         return ""
-    fridge = [r for r in state.model.reminders if (r.category or "") == "fridge" and not r.completed]
-    shop = [r for r in state.model.reminders if (r.category or "") != "fridge" and not r.completed]
-    order = fridge + shop
+    visible_idxs = kitchen_visible_task_indices(state, theme)
     pos = focused_index - 1
-    if 0 <= pos < len(order):
-        return order[pos].rid
+    if 0 <= pos < len(visible_idxs):
+        return state.model.reminders[visible_idxs[pos]].rid
     return ""

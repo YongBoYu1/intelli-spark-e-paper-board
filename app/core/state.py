@@ -104,6 +104,10 @@ class UiState:
     # Mood panel memo selection + auto-rotation.
     memo_index: int = 0
     memo_last_rotated_at: float = field(default_factory=lambda: time.time())
+    # Last rendered focus queue for kitchen home (left panel excluded).
+    kitchen_visible_rids: list[str] = field(default_factory=list)
+    # Theme key used when the kitchen visible queue cache was produced.
+    kitchen_visible_theme_key: str = ""
 
     # Delayed reorder: after toggling completion, wait a bit before moving completed to the bottom.
     pending_reorder: bool = False
