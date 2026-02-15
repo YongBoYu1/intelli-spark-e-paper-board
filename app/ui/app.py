@@ -26,7 +26,10 @@ def _to_render_data(state: AppState) -> dict:
 
     weather = []
     for w in state.model.weather:
-        weather.append({"dow": w.dow, "icon": w.icon, "hi": w.hi, "lo": w.lo})
+        item = {"dow": w.dow, "icon": w.icon, "hi": w.hi, "lo": w.lo}
+        if getattr(w, "humidity", None) is not None:
+            item["humidity"] = w.humidity
+        weather.append(item)
 
     return {
         "location": state.model.location,

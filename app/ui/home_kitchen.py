@@ -25,6 +25,42 @@ def _gray_like(value: int, ref):
     return g
 
 
+def _format_memo_posted(timestamp, theme: dict) -> str:
+    """Format memo timestamp safely; invalid inputs should not break rendering."""
+    if timestamp is None:
+        return ""
+    try:
+        ts = float(timestamp)
+    except Exception:
+        return ""
+
+    # Guard against NaN/Inf.
+    if ts != ts or ts in (float("inf"), float("-inf")):
+        return ""
+
+    # Normalize common non-second epochs (ms/us/ns) to seconds.
+    for _ in range(3):
+        if abs(ts) <= 1e11:
+            break
+        ts /= 1000.0
+
+    try:
+        dt = datetime.fromtimestamp(ts)
+    except Exception:
+        return ""
+
+    if bool(theme.get("b_log_compact_day_time", True)):
+        # Keep weekday abbreviation stable for e-paper labels across locales.
+        dow = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[dt.weekday()]
+        return f"{dow} {dt.strftime('%H:%M')}"
+
+    fmt = str(theme.get("b_log_datetime_format") or "%a %H:%M")
+    try:
+        return dt.strftime(fmt)
+    except Exception:
+        return dt.strftime("%a %H:%M")
+
+
 def _theme(theme: dict) -> dict:
     t = dict(theme or {})
 
@@ -41,6 +77,9 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_left_pad", 24)
     t.setdefault("b_time_size", 84)
     t.setdefault("b_time_min_size", 70)
+    t.setdefault("b_time_display_scale", 1.30)
+    t.setdefault("b_time_display_x_offset", 0)
+    t.setdefault("b_time_display_y_offset", -24)
     t.setdefault("b_time_weather_gap", 14)
     t.setdefault("b_time_weekday_gap", 13)
     t.setdefault("b_weekday_size", 13)
@@ -48,15 +87,22 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_weekday_date_gap", 11)
     t.setdefault("b_date_size", 16)
     t.setdefault("b_date_gray", 80)
-    t.setdefault("b_temp_size", 54)
-    t.setdefault("b_weather_desc_size", 12)
+    t.setdefault("b_temp_size", 66)
+    t.setdefault("b_weather_desc_size", 15)
     t.setdefault("b_weather_desc_spacing", 1)
-    t.setdefault("b_weather_col_w", 120)
+    t.setdefault("b_weather_col_w", 142)
     t.setdefault("b_weather_top", -2)
-    t.setdefault("b_weather_desc_gap", 18)
+    t.setdefault("b_weather_desc_gap", 16)
     t.setdefault("b_weather_desc_offset_y", 5)
-    t.setdefault("b_weather_icon_gap", 15)
-    t.setdefault("b_weather_icon_size", 20)
+    t.setdefault("b_weather_icon_gap", 10)
+    t.setdefault("b_weather_icon_size", 34)
+    t.setdefault("b_weather_icon_stroke", 3)
+    t.setdefault("b_weather_humidity_size", 15)
+    t.setdefault("b_weather_humidity_spacing", 1)
+    t.setdefault("b_weather_humidity_gap", 8)
+    t.setdefault("b_weather_humidity_prefix", "HUM")
+    t.setdefault("b_show_weather_humidity", True)
+    t.setdefault("b_show_weather_humidity_placeholder", True)
     t.setdefault("b_header_gap", 28)
     t.setdefault("b_header_rule_w", 0)
     t.setdefault("b_left_micro_size", 16)
@@ -69,13 +115,13 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_family_rule_gap", 8)
     t.setdefault("b_family_active_underline_gap", 3)
     t.setdefault("b_family_active_underline_w", 2)
-    t.setdefault("b_quote_size", 29)
-    t.setdefault("b_quote_min_size", 21)
+    t.setdefault("b_quote_size", 34)
+    t.setdefault("b_quote_min_size", 25)
     t.setdefault("b_quote_lh", 1.18)
     t.setdefault("b_quote_top_gap", 14)
-    t.setdefault("b_quote_max_w_ratio", 0.76)
-    t.setdefault("b_quote_short_wrap_factor", 0.74)
-    t.setdefault("b_quote_display_wrap_factor", 0.84)
+    t.setdefault("b_quote_max_w_ratio", 0.92)
+    t.setdefault("b_quote_short_wrap_factor", 0.88)
+    t.setdefault("b_quote_display_wrap_factor", 0.92)
     t.setdefault("b_quote_target_lines", 2)
     t.setdefault("b_quote_balance_lines", 2)
     t.setdefault("b_quote_balance_ratio", 0.20)
@@ -83,11 +129,15 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_quote_bottom_gap", 14)
     t.setdefault("b_posted_after_quote_gap", 10)
     t.setdefault("b_posted_max_gap_from_quote", 44)
-    t.setdefault("b_posted_size", 14)
-    t.setdefault("b_posted_size_panel_min", 15)
+    t.setdefault("b_posted_size", 16)
+    t.setdefault("b_posted_size_panel_min", 17)
+    t.setdefault("b_log_compact_day_time", True)
+    t.setdefault("b_log_datetime_format", "%a %H:%M")
+    t.setdefault("b_posted_prefix", "-")
+    t.setdefault("b_posted_right_inset", 6)
     t.setdefault("b_left_bottom_pad", 22)
     t.setdefault("b_posted_rule_w", 0)
-    t.setdefault("b_posted_rule_gap", 3)
+    t.setdefault("b_posted_rule_gap", 0)
     t.setdefault("b_author_size", 9)
     t.setdefault("b_author_row_offset_y", 1)
     t.setdefault("b_author_max_tags", 4)
@@ -325,6 +375,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     f_date = fonts.get("inter_bold", _font_px(t["b_date_size"]))
     f_temp = fonts.get("inter_black", _font_px(t["b_temp_size"]))
     f_weather_desc = fonts.get("jet_bold", _font_px(t["b_weather_desc_size"]))
+    f_weather_humidity = fonts.get("jet_bold", _font_px(t["b_weather_humidity_size"]))
     f_micro = fonts.get("jet_extrabold", _font_px(t["b_left_micro_size"]))
     f_family_name = fonts.get("jet_bold", _font_px(t["b_family_name_size"]))
     # Use a slightly heavier serif to survive 1-bit panel quantization.
@@ -370,10 +421,25 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         time_font_size -= 2
     f_time = fonts.get("inter_black", _font_px(time_font_size))
 
-    draw.text((lx0, top_y), time_str, font=f_time, fill=ink)
-    time_box = draw.textbbox((lx0, top_y), time_str, font=f_time)
+    # Keep downstream text anchors stable: weekday/date continue to flow from the
+    # legacy clock baseline, while the visible clock can be shifted and enlarged.
+    time_flow_box = draw.textbbox((lx0, top_y), time_str, font=f_time)
 
-    wy = time_box[3] + int(t["b_time_weekday_gap"])
+    clock_x = lx0 + int(t.get("b_time_display_x_offset", -10))
+    clock_y = top_y + int(t.get("b_time_display_y_offset", -12))
+    display_scale = max(1.0, float(t.get("b_time_display_scale", 1.18)))
+    display_size = max(time_font_size, int(round(time_font_size * display_scale)))
+    display_font = fonts.get("inter_black", _font_px(display_size))
+    while display_size > time_font_size:
+        dw, _ = text_size(draw, time_str, display_font)
+        if dw <= (weather_left - clock_x - int(t["b_time_weather_gap"])):
+            break
+        display_size -= 2
+        display_font = fonts.get("inter_black", _font_px(display_size))
+
+    draw.text((clock_x, clock_y), time_str, font=display_font, fill=ink)
+
+    wy = time_flow_box[3] + int(t["b_time_weekday_gap"])
     w_spacing = int(t["b_weekday_spacing"])
     draw_text_spaced(draw, weekday, lx0, wy, f_weekday, spacing=w_spacing, fill=ink)
     ww = text_width_spaced(draw, weekday, f_weekday, spacing=w_spacing)
@@ -413,8 +479,45 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         icon_center_x = desc_x + dsw // 2
         icon_x = int(icon_center_x - icon_size / 2)
         icon_x = max(weather_left, min(weather_right - icon_size, icon_x))
-        draw_weather_icon(draw, w0.icon, icon_x, icon_y, size=icon_size, ink=ink, stroke=2)
-        weather_bottom = max(weather_bottom, desc_y + dh2, icon_y + icon_size)
+        draw_weather_icon(
+            draw,
+            w0.icon,
+            icon_x,
+            icon_y,
+            size=icon_size,
+            ink=ink,
+            stroke=int(t.get("b_weather_icon_stroke", 3)),
+        )
+
+        humidity = getattr(w0, "humidity", None)
+        humidity_text = ""
+        show_humidity = bool(t.get("b_show_weather_humidity", False))
+        if show_humidity and humidity is not None:
+            try:
+                humidity_text = f"{str(t['b_weather_humidity_prefix']).upper()} {int(humidity)}%"
+            except Exception:
+                humidity_text = ""
+        elif show_humidity and bool(t.get("b_show_weather_humidity_placeholder", False)):
+            humidity_text = f"{str(t['b_weather_humidity_prefix']).upper()} --%"
+
+        humidity_bottom = icon_y + icon_size
+        if humidity_text:
+            humidity_y = humidity_bottom + int(t["b_weather_humidity_gap"])
+            hsw = text_width_spaced(draw, humidity_text, f_weather_humidity, spacing=int(t["b_weather_humidity_spacing"]))
+            _, hsh = text_size(draw, humidity_text, f_weather_humidity)
+            humidity_x = weather_right - hsw
+            draw_text_spaced(
+                draw,
+                humidity_text,
+                humidity_x,
+                humidity_y,
+                f_weather_humidity,
+                spacing=int(t["b_weather_humidity_spacing"]),
+                fill=muted,
+            )
+            humidity_bottom = humidity_y + hsh
+
+        weather_bottom = max(weather_bottom, desc_y + dh2, humidity_bottom)
 
     header_rule_y = weather_bottom + int(t["b_header_gap"])
     header_rule_w = int(t["b_header_rule_w"])
@@ -482,7 +585,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             draw.line((cx, uy, cx + tw, uy), fill=ink, width=underline_w)
         cx += tw + name_gap
 
-    posted = time.strftime("%H:%M", time.localtime(memo.timestamp)) if memo else ""
+    posted = _format_memo_posted((memo.timestamp if memo else None), t)
     posted_h = text_size(draw, "Ag", f_posted)[1]
     posted_max_y = oy1 - int(t["b_left_bottom_pad"]) - posted_h
 
@@ -578,16 +681,13 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     posted_text_y = min(posted_max_y, posted_cap_y)
     if posted_text_y < posted_min_y:
         posted_text_y = min(posted_max_y, posted_min_y)
-    posted_rule_y = posted_text_y + posted_h + int(t["b_posted_rule_gap"])
-
-    posted_label = f"LOG: {posted}" if posted else ""
-    posted_w = text_size(draw, posted_label, f_posted)[0] if posted_label else 0
-    left_rule_w = int(t["b_posted_rule_w"]) if int(t["b_posted_rule_w"]) > 0 else posted_w + 12
-    draw.line((lx0, posted_rule_y, lx0 + left_rule_w, posted_rule_y), fill=ink, width=1)
-    if lx0 + left_rule_w + 12 < lx1:
-        draw.line((lx0 + left_rule_w + 8, posted_rule_y, lx1, posted_rule_y), fill=subtle, width=1)
-    if posted:
-        draw.text((lx0, posted_text_y), posted_label, font=f_posted, fill=ink)
+    posted_prefix = str(t.get("b_posted_prefix") or "-").strip() or "-"
+    posted_label_raw = f"{posted_prefix} {posted}" if posted else ""
+    posted_label = truncate_text(draw, posted_label_raw, f_posted, max(40, lx1 - lx0 - 12)) if posted_label_raw else ""
+    if posted_label:
+        posted_w = text_size(draw, posted_label, f_posted)[0]
+        posted_x = max(lx0, lx1 - int(t.get("b_posted_right_inset", 6)) - posted_w)
+        draw.text((posted_x, posted_text_y), posted_label, font=f_posted, fill=ink)
 
     # ---------------- Right Panel ----------------
     rx0 = split_x + 1
