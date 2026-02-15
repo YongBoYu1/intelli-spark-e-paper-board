@@ -922,6 +922,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     # Sync reducer focus/click queue with the exact rows currently rendered.
     state.ui.kitchen_visible_rids = rendered_focus_rids
     state.ui.kitchen_visible_theme_key = kitchen_queue_theme_key(t)
+    state.ui.kitchen_visible_reminders_version = int(state.ui.reminders_version or 0)
 
 
 

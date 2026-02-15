@@ -109,6 +109,7 @@ def _toggle_task_completed(state: AppState, items_per_page: int) -> None:
 
     r = state.model.reminders[idx]
     state.model.reminders[idx] = replace(r, completed=not r.completed)
+    state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
 
     # Schedule reorder rather than doing it immediately (better UX + better for partial refresh later).
     state.ui.pending_reorder = True
@@ -120,6 +121,7 @@ def _toggle_task_completed_by_index(state: AppState, idx: int) -> None:
         return
     r = state.model.reminders[idx]
     state.model.reminders[idx] = replace(r, completed=not r.completed)
+    state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
 
     # Keep the same UX as home: reorder later.
     state.ui.pending_reorder = True
@@ -130,6 +132,7 @@ def _apply_reorder(state: AppState) -> None:
     # Stable sort: incomplete first, then completed, preserve order within groups.
     before = list(state.model.reminders)
     state.model.reminders = sorted(before, key=lambda r: (r.completed, ))
+    state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
     state.ui.pending_reorder = False
 
 

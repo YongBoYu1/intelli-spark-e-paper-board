@@ -23,7 +23,13 @@ def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> 
     # Prefer the exact render-time queue when available.
     cached_rids = [str(rid) for rid in getattr(state.ui, "kitchen_visible_rids", []) if rid]
     cached_theme_key = str(getattr(state.ui, "kitchen_visible_theme_key", "") or "")
-    if cached_rids and cached_theme_key == kitchen_queue_theme_key(theme):
+    cached_reminders_version = int(getattr(state.ui, "kitchen_visible_reminders_version", -1))
+    current_reminders_version = int(getattr(state.ui, "reminders_version", 0))
+    if (
+        cached_rids
+        and cached_theme_key == kitchen_queue_theme_key(theme)
+        and cached_reminders_version == current_reminders_version
+    ):
         rid_to_idx = {r.rid: i for i, r in enumerate(state.model.reminders)}
         cached_idxs: list[int] = []
         for rid in cached_rids:
