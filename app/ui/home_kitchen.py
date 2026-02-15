@@ -25,6 +25,42 @@ def _gray_like(value: int, ref):
     return g
 
 
+def _format_memo_posted(timestamp, theme: dict) -> str:
+    """Format memo timestamp safely; invalid inputs should not break rendering."""
+    if timestamp is None:
+        return ""
+    try:
+        ts = float(timestamp)
+    except Exception:
+        return ""
+
+    # Guard against NaN/Inf.
+    if ts != ts or ts in (float("inf"), float("-inf")):
+        return ""
+
+    # Normalize common non-second epochs (ms/us/ns) to seconds.
+    for _ in range(3):
+        if abs(ts) <= 1e11:
+            break
+        ts /= 1000.0
+
+    try:
+        dt = datetime.fromtimestamp(ts)
+    except Exception:
+        return ""
+
+    if bool(theme.get("b_log_compact_day_time", True)):
+        # Keep weekday abbreviation stable for e-paper labels across locales.
+        dow = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[dt.weekday()]
+        return f"{dow} {dt.strftime('%H:%M')}"
+
+    fmt = str(theme.get("b_log_datetime_format") or "%a %H:%M")
+    try:
+        return dt.strftime(fmt)
+    except Exception:
+        return dt.strftime("%a %H:%M")
+
+
 def _theme(theme: dict) -> dict:
     t = dict(theme or {})
 
@@ -549,19 +585,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             draw.line((cx, uy, cx + tw, uy), fill=ink, width=underline_w)
         cx += tw + name_gap
 
-    posted = ""
-    if memo:
-        dt = datetime.fromtimestamp(float(memo.timestamp))
-        if bool(t.get("b_log_compact_day_time", True)):
-            # Keep weekday abbreviation stable for e-paper labels across locales.
-            dow = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[dt.weekday()]
-            posted = f"{dow} {dt.strftime('%H:%M')}"
-        else:
-            fmt = str(t.get("b_log_datetime_format") or "%a %H:%M")
-            try:
-                posted = dt.strftime(fmt)
-            except Exception:
-                posted = dt.strftime("%a %H:%M")
+    posted = _format_memo_posted((memo.timestamp if memo else None), t)
     posted_h = text_size(draw, "Ag", f_posted)[1]
     posted_max_y = oy1 - int(t["b_left_bottom_pad"]) - posted_h
 
