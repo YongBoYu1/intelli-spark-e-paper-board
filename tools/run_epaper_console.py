@@ -84,6 +84,21 @@ def _build_fonts(repo_root: str) -> FontBook:
     )
 
 
+def _parse_optional_humidity(raw) -> int | None:
+    if raw is None:
+        return None
+    try:
+        if isinstance(raw, str):
+            # Accept common API/text forms like "45%" or "45.0".
+            txt = raw.strip().rstrip("%").strip()
+            if not txt:
+                return None
+            return int(float(txt))
+        return int(raw)
+    except Exception:
+        return None
+
+
 def _load_model(repo_root: str) -> DashboardModel:
     path = os.path.join(repo_root, "data", "dashboard.json")
     if os.path.exists(path):
@@ -130,7 +145,7 @@ def _load_model(repo_root: str) -> DashboardModel:
                     icon=str(w.get("icon", "sun")),
                     hi=int(w.get("hi", 0)),
                     lo=int(w.get("lo", 0)),
-                    humidity=int(w["humidity"]) if w.get("humidity") is not None else None,
+                    humidity=_parse_optional_humidity(w.get("humidity")),
                 )
             )
         except Exception:
