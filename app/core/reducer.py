@@ -4,6 +4,7 @@ from dataclasses import replace
 import time
 from typing import Optional
 
+from app.core.kitchen_queue import kitchen_visible_task_indices
 from app.core.state import AppState, Screen, Reminder, MenuItemId, WidgetMode
 
 
@@ -53,20 +54,8 @@ def _home_variant(theme: dict) -> str:
     return str(theme.get("home_variant") or "kitchen").strip().lower()
 
 
-def _kitchen_visible_task_indices(state: AppState) -> list[int]:
-    # TSX: fridge first (incomplete), then everything else (incomplete).
-    idxs = []
-    for i, r in enumerate(state.model.reminders):
-        if r.completed:
-            continue
-        if (r.category or "") == "fridge":
-            idxs.append(i)
-    for i, r in enumerate(state.model.reminders):
-        if r.completed:
-            continue
-        if (r.category or "") != "fridge":
-            idxs.append(i)
-    return idxs
+def _kitchen_visible_task_indices(state: AppState, theme: Optional[dict] = None) -> list[int]:
+    return kitchen_visible_task_indices(state, theme)
 
 
 def _items_per_page_for_layout(theme: dict) -> int:
@@ -100,9 +89,9 @@ def _clamp_focus_home(state: AppState, items_per_page: int) -> None:
         state.ui.page = 1
 
 
-def _clamp_focus_kitchen(state: AppState) -> None:
+def _clamp_focus_kitchen(state: AppState, theme: Optional[dict] = None) -> None:
     # Focus queue: [LEFT_PANEL, TASK_0..] where tasks are visible+sorted by category.
-    idxs = _kitchen_visible_task_indices(state)
+    idxs = _kitchen_visible_task_indices(state, theme)
     n = 1 + len(idxs)
     if n <= 0:
         state.ui.focused_index = 0
@@ -120,6 +109,7 @@ def _toggle_task_completed(state: AppState, items_per_page: int) -> None:
 
     r = state.model.reminders[idx]
     state.model.reminders[idx] = replace(r, completed=not r.completed)
+    state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
 
     # Schedule reorder rather than doing it immediately (better UX + better for partial refresh later).
     state.ui.pending_reorder = True
@@ -131,6 +121,7 @@ def _toggle_task_completed_by_index(state: AppState, idx: int) -> None:
         return
     r = state.model.reminders[idx]
     state.model.reminders[idx] = replace(r, completed=not r.completed)
+    state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
 
     # Keep the same UX as home: reorder later.
     state.ui.pending_reorder = True
@@ -141,6 +132,7 @@ def _apply_reorder(state: AppState) -> None:
     # Stable sort: incomplete first, then completed, preserve order within groups.
     before = list(state.model.reminders)
     state.model.reminders = sorted(before, key=lambda r: (r.completed, ))
+    state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
     state.ui.pending_reorder = False
 
 
@@ -179,13 +171,16 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         # Delayed reorder
         if state.ui.pending_reorder and now >= state.ui.reorder_due_at:
             _apply_reorder(state)
-            _clamp_focus_home(state, items_per_page)
+            if state.ui.screen == Screen.HOME and variant == "kitchen":
+                _clamp_focus_kitchen(state, theme)
+            else:
+                _clamp_focus_home(state, items_per_page)
 
         # Voice overlay timeout (stub)
         if state.ui.voice_active and now >= state.ui.voice_due_at:
             state.ui.voice_active = False
             if state.ui.screen == Screen.HOME and variant == "kitchen":
-                _clamp_focus_kitchen(state)
+                _clamp_focus_kitchen(state, theme)
             else:
                 _clamp_focus_home(state, items_per_page)
 
@@ -218,7 +213,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         elif state.ui.screen == Screen.HOME:
             state.ui.focused_index += event.delta
             if variant == "kitchen":
-                _clamp_focus_kitchen(state)
+                _clamp_focus_kitchen(state, theme)
             else:
                 _clamp_focus_home(state, items_per_page)
         elif state.ui.screen == Screen.WEATHER:
@@ -262,10 +257,16 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 state.ui.timer_last_tick_at = now
                 state.ui.screen = Screen.HOME
                 state.ui.focused_index = 0  # focus clock
-                _clamp_focus_home(state, items_per_page)
+                if variant == "kitchen":
+                    _clamp_focus_kitchen(state, theme)
+                else:
+                    _clamp_focus_home(state, items_per_page)
             elif picked == MenuItemId.LIST:
                 state.ui.screen = Screen.HOME
-                _clamp_focus_home(state, items_per_page)
+                if variant == "kitchen":
+                    _clamp_focus_kitchen(state, theme)
+                else:
+                    _clamp_focus_home(state, items_per_page)
             else:
                 state.ui.screen = Screen.PLACEHOLDER
             return state
@@ -280,11 +281,11 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                         state.ui.screen = Screen.WEATHER
                         state.ui.weather_day_index = 0
                 else:
-                    idxs = _kitchen_visible_task_indices(state)
+                    idxs = _kitchen_visible_task_indices(state, theme)
                     pos = int(state.ui.focused_index) - 1
                     if 0 <= pos < len(idxs):
                         _toggle_task_completed_by_index(state, idxs[pos])
-                        _clamp_focus_kitchen(state)
+                        _clamp_focus_kitchen(state, theme)
                 return state
 
             # classic home
@@ -347,7 +348,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         if state.ui.screen != Screen.HOME:
             state.ui.screen = Screen.HOME
             if variant == "kitchen":
-                _clamp_focus_kitchen(state)
+                _clamp_focus_kitchen(state, theme)
             else:
                 _clamp_focus_home(state, items_per_page)
         return state

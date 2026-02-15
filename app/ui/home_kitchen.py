@@ -5,6 +5,7 @@ import time
 
 from PIL import ImageDraw
 
+from app.core.kitchen_queue import kitchen_queue_theme_key, kitchen_visible_task_indices
 from app.core.state import AppState
 from app.shared.draw import draw_text_spaced, draw_weather_icon, rounded_rect, text_size, text_width_spaced, truncate_text
 
@@ -93,18 +94,57 @@ def _theme(theme: dict) -> dict:
 
     # Right block
     t.setdefault("b_right_pad", 22)
-    t.setdefault("b_inventory_title_size", 12)
+    t.setdefault("b_inventory_title_size", 13)
+    t.setdefault("b_inventory_title_spacing", 2)
     t.setdefault("b_inventory_item_size", 17)
     t.setdefault("b_inventory_row_h", 36)
-    t.setdefault("b_badge_size", 10)
-    t.setdefault("b_badge_px", 8)
+    t.setdefault("b_badge_size", 11)
+    t.setdefault("b_badge_px", 6)
     t.setdefault("b_badge_py", 2)
+    t.setdefault("b_badge_style", "text")
+    t.setdefault("b_badge_text_px", 0)
+    t.setdefault("b_badge_text_py", 0)
+    t.setdefault("b_badge_text_spacing", 0)
+    t.setdefault("b_badge_text_min_w", 20)
+    t.setdefault("b_badge_focus_px", 4)
+    t.setdefault("b_badge_focus_py", 1)
+    t.setdefault("b_badge_focus_radius", 2)
+    t.setdefault("b_badge_radius", 3)
+    t.setdefault("b_badge_border_w", 1)
     t.setdefault("b_badge_max_w", 126)
-    t.setdefault("b_mid_split_ratio", 0.53)
-    t.setdefault("b_shopping_title_size", 12)
+    t.setdefault("b_badge_min_size", 9)
+    t.setdefault("b_badge_min_w", 44)
+    t.setdefault("b_inventory_title_badge_gap", 10)
+    t.setdefault("b_inventory_min_title_w", 104)
+    t.setdefault("b_inventory_max_rows", 3)
+    t.setdefault("b_inventory_header_gap", 34)
+    t.setdefault("b_mid_split_ratio", 0.50)
+    t.setdefault("b_shopping_title_size", 13)
+    t.setdefault("b_shopping_title_spacing", 1)
     t.setdefault("b_shopping_item_size", 17)
+    t.setdefault("b_shopping_max_rows", 5)
     t.setdefault("b_shopping_row_h", 36)
-    t.setdefault("b_bottom_pad", 14)
+    t.setdefault("b_shopping_header_gap", 24)
+    t.setdefault("b_shop_section_rule_w", 1)
+    t.setdefault("b_shop_section_rule_left_gap", 0)
+    t.setdefault("b_shop_section_rule_right_gap", 16)
+    t.setdefault("b_shop_header_rule_gap", 6)
+    t.setdefault("b_shop_header_line_after_title_gap", 9)
+    t.setdefault("b_inv_shop_min_gap", 14)
+    t.setdefault("b_shop_text_left_pad", 2)
+    t.setdefault("b_right_focus_style", "row_box")
+    t.setdefault("b_right_focus_pad_x", 6)
+    t.setdefault("b_right_focus_pad_y", 3)
+    t.setdefault("b_right_focus_right_trim", 2)
+    t.setdefault("b_right_focus_radius", 5)
+    t.setdefault("b_right_focus_w", 1)
+    t.setdefault("b_right_focus_rail_w", 3)
+    t.setdefault("b_right_focus_rail_gap", 6)
+    t.setdefault("b_right_focus_rail_vpad", 5)
+    t.setdefault("b_shop_checkbox_size", 14)
+    t.setdefault("b_shop_checkbox_radius", 3)
+    t.setdefault("b_shop_checkbox_w", 2)
+    t.setdefault("b_bottom_pad", 12)
 
     # Shared color tone in RGB mode (ignored in 1-bit)
     t.setdefault("b_muted_gray", 110)
@@ -152,6 +192,80 @@ def _group_tasks(state: AppState):
     fridge = sorted(fridge, key=lambda r: (r.completed,))
     shop = sorted(shop, key=lambda r: (r.completed,))
     return fridge, shop
+
+
+def _badge_variants(text: str) -> list[str]:
+    raw = (text or "").strip().upper()
+    if not raw:
+        return [""]
+    variants = [raw]
+
+    normalized = raw.replace(":", " ").replace("-", " ")
+    normalized = " ".join(normalized.split())
+    if normalized and normalized != raw:
+        variants.append(normalized)
+
+    compact_words = normalized
+    compact_replacements = (
+        ("EXPIRES", "EXP"),
+        ("EXPIRY", "EXP"),
+        ("EXP", "EXP"),
+        ("DAYS", "D"),
+        ("DAY", "D"),
+        ("ADDED", "ADDED"),
+        ("YESTERDAY", "YDAY"),
+        ("TONIGHT", "TNITE"),
+        ("TODAY", "TDY"),
+    )
+    for old, new in compact_replacements:
+        compact_words = compact_words.replace(old, new)
+    compact_words = " ".join(compact_words.split())
+    if compact_words and compact_words not in variants:
+        variants.append(compact_words)
+
+    # Aggressive short forms for very tight widths on panel.
+    short = compact_words.replace("ADDED ", "ADD ").replace("ADDED", "ADD")
+    short = short.replace("YESTERDAY", "YDAY")
+    short = short.replace("TONIGHT", "TNITE")
+    short = short.replace("TODAY", "TDY")
+    short = " ".join(short.split())
+    if short and short not in variants:
+        variants.append(short)
+
+    compact = raw
+    replacements = (
+        ("ADDED", "ADD"),
+        ("YESTERDAY", "YDAY"),
+        ("EXP:", "EXP"),
+        (" DAYS", "D"),
+        (" DAY", "D"),
+        ("TODAY", "TDY"),
+        ("TONIGHT", "TNITE"),
+    )
+    for old, new in replacements:
+        compact = compact.replace(old, new)
+    if compact != raw:
+        variants.append(compact)
+
+    # De-dup while preserving order.
+    uniq = []
+    seen = set()
+    for v in variants:
+        if v not in seen:
+            seen.add(v)
+            uniq.append(v)
+    return uniq
+
+
+def _fit_badge_text(draw, fonts, text: str, max_text_w: int, base_size: int, min_size: int):
+    variants = _badge_variants(text)
+    for size in range(base_size, min_size - 1, -1):
+        f = fonts.get("inter_bold", _font_px(size))
+        for candidate in variants:
+            if text_size(draw, candidate, f)[0] <= max_text_w:
+                return candidate, f
+    f_min = fonts.get("inter_bold", _font_px(min_size))
+    return truncate_text(draw, variants[-1], f_min, max_text_w), f_min
 
 
 def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
@@ -221,11 +335,13 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         posted_size = max(posted_size, int(t.get("b_posted_size_panel_min", 13)))
     f_posted = fonts.get("jet_extrabold", _font_px(posted_size))
 
-    f_inv_title = fonts.get("inter_semibold", _font_px(t["b_inventory_title_size"]))
-    f_inv_item = fonts.get("inter_bold", _font_px(t["b_inventory_item_size"]))
+    f_inv_title = fonts.get("inter_bold", _font_px(t["b_inventory_title_size"]))
+    f_inv_item = fonts.get("inter_semibold", _font_px(t["b_inventory_item_size"]))
+    f_inv_item_focus = fonts.get("inter_black", _font_px(t["b_inventory_item_size"]))
     f_badge = fonts.get("inter_bold", _font_px(t["b_badge_size"]))
-    f_shop_title = fonts.get("inter_semibold", _font_px(t["b_shopping_title_size"]))
-    f_shop_item = fonts.get("inter_medium", _font_px(t["b_shopping_item_size"]))
+    f_shop_title = fonts.get("inter_bold", _font_px(t["b_shopping_title_size"]))
+    f_shop_item = fonts.get("inter_semibold", _font_px(t["b_shopping_item_size"]))
+    f_shop_item_focus = fonts.get("inter_bold", _font_px(t["b_shopping_item_size"]))
 
     # ---------------- Left Panel ----------------
     lx0, lx1 = ox0 + int(t["b_left_pad"]), split_x - int(t["b_left_pad"])
@@ -480,128 +596,342 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     inner_x1 = ox1 - rp
 
     mid_y = oy0 + int((oy1 - oy0) * float(t["b_mid_split_ratio"]))
-    draw.line((rx0, mid_y, ox1, mid_y), fill=ink, width=1)
 
     # Focus lookup by task id (incomplete order from reducer)
-    focus_rid = _kitchen_focus_rid(state, focus_idx)
+    focus_rid = _kitchen_focus_rid(state, focus_idx, t)
+    rendered_focus_rids: list[str] = []
 
     fridge, shop = _group_tasks(state)
 
-    # Inventory header
-    inv_y = oy0 + rp
-    draw.text((inner_x0, inv_y), "INVENTORY & ALERTS", font=f_inv_title, fill=ink)
-    fridge_due = sum(1 for r in fridge if not r.completed)
-    cnt = str(fridge_due)
-    cw, _ = text_size(draw, cnt, f_inv_title)
-    draw.text((inner_x1 - cw, inv_y), cnt, font=f_inv_title, fill=ink)
+    # [ARTISTIC POLISH] Inventory Header
+    inv_y = oy0 + max(8, rp - 6)
 
-    inv_row_h = int(t["b_inventory_row_h"])
-    y = inv_y + 30
-    for item in fridge[:5]:
-        # Keep rows strictly inside the inventory area.
+    inv_title_spacing = int(t.get("b_inventory_title_spacing", 1))
+    draw_text_spaced(draw, "INVENTORY", inner_x0, inv_y, f_inv_title, spacing=inv_title_spacing, fill=ink)
+
+    fridge_due = sum(1 for r in fridge if not r.completed)
+    if fridge_due > 0:
+        cnt = str(fridge_due)
+        cw = text_width_spaced(draw, cnt, f_inv_title, spacing=inv_title_spacing)
+        draw_text_spaced(draw, cnt, inner_x1 - cw, inv_y, f_inv_title, spacing=inv_title_spacing, fill=ink)
+
+    inv_row_h = int(t["b_inventory_row_h"]) + 4
+    y = inv_y + int(t["b_inventory_header_gap"])
+    right_focus_style = str(t.get("b_right_focus_style", "row_box")).strip().lower()
+    focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
+    focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
+    focus_right_trim = int(t.get("b_right_focus_right_trim", 2))
+    focus_radius = int(t.get("b_right_focus_radius", 5))
+    focus_w = max(1, int(t.get("b_right_focus_w", 1)))
+
+    inv_max_rows = max(1, int(t.get("b_inventory_max_rows", 4)))
+    for item in fridge[:inv_max_rows]:
         if y + inv_row_h > mid_y - 8:
             break
-        is_focus = (focus_rid == item.rid and not item.completed)
+        is_focus = (not state.ui.idle) and (focus_rid == item.rid and not item.completed)
+        if not item.completed:
+            rendered_focus_rids.append(item.rid)
+
+        text_fill = ink 
+        badge_text = ink
+        badge_fill = card
+        badge_outline = ink
 
         if is_focus:
-            draw.rectangle((inner_x0 - 4, y - 2, inner_x1 + 2, y + inv_row_h - 2), fill=ink)
-            line_fill = card
-            text_fill = card
-            badge_fill = card
-            badge_text = ink
-        else:
-            line_fill = subtle
-            text_fill = muted if item.completed else ink
-            if item.completed:
-                badge_fill = card
-                badge_text = muted
+            if right_focus_style == "rail":
+                rail_w = int(t.get("b_right_focus_rail_w", 3))
+                rail_gap = int(t.get("b_right_focus_rail_gap", 6))
+                rail_vpad = int(t.get("b_right_focus_rail_vpad", 5))
+                rx1 = inner_x0 - rail_gap
+                rx0 = rx1 - rail_w
+                ry0 = y + rail_vpad
+                ry1 = y + inv_row_h - rail_vpad
+                if ry1 > ry0:
+                    draw.rectangle((rx0, ry0, rx1, ry1), fill=ink)
             else:
-                badge_fill = ink
-                badge_text = card
+                fx0 = inner_x0 - focus_pad_x
+                fx1 = inner_x1 + focus_pad_x - focus_right_trim
+                fy0 = y + focus_pad_y
+                fy1 = y + inv_row_h - focus_pad_y
+                if fy1 > fy0 and fx1 > fx0:
+                    rounded_rect(
+                        draw,
+                        (fx0, fy0, fx1, fy1),
+                        radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                        outline=ink,
+                        width=focus_w,
+                        fill=None,
+                    )
 
         badge_text_raw = (item.right or ("OUT" if item.completed else "STOCKED")).upper()
-        max_badge_w = min(int(t["b_badge_max_w"]), max(72, (inner_x1 - inner_x0) - 84))
-        badge_text_fit = truncate_text(
-            draw,
-            badge_text_raw,
-            f_badge,
-            max(20, max_badge_w - int(t["b_badge_px"]) * 2),
+        badge_style = str(t.get("b_badge_style", "text")).strip().lower()
+        text_style = badge_style in ("text", "text_focus_invert")
+        badge_px = int(t["b_badge_px"]) if not text_style else int(t.get("b_badge_text_px", 0))
+        badge_py = int(t["b_badge_py"]) if not text_style else int(t.get("b_badge_text_py", 0))
+        badge_text_spacing = int(t.get("b_badge_text_spacing", -1))
+        row_w = inner_x1 - inner_x0
+        title_gap = int(t.get("b_inventory_title_badge_gap", 10))
+        min_title_w = int(t.get("b_inventory_min_title_w", 104))
+        badge_min_w = int(t.get("b_badge_min_w", 44))
+        if text_style:
+            badge_min_w = int(t.get("b_badge_text_min_w", 20))
+        max_badge_w = min(int(t["b_badge_max_w"]), max(badge_min_w, row_w - 72))
+
+        # Dynamic budget: protect minimum title width first, then allocate badge.
+        badge_budget_w = max(
+            badge_min_w,
+            min(max_badge_w, row_w - title_gap - min_title_w),
         )
-        bw, bh = text_size(draw, badge_text_fit, f_badge)
+        badge_text_fit, f_badge_fit = _fit_badge_text(
+            draw,
+            fonts,
+            badge_text_raw,
+            max(20, badge_budget_w - badge_px * 2),
+            int(t["b_badge_size"]),
+            int(t.get("b_badge_min_size", 9)),
+        )
+        bw = int(round(text_width_spaced(draw, badge_text_fit, f_badge_fit, spacing=badge_text_spacing)))
+        bh = text_size(draw, badge_text_fit, f_badge_fit)[1]
         bx1 = inner_x1
-        bx0 = max(inner_x0 + 84, bx1 - (bw + int(t["b_badge_px"]) * 2))
-        by0 = y + 6
-        by1 = by0 + bh + int(t["b_badge_py"]) * 2
+        bx0 = bx1 - (bw + badge_px * 2)
+        min_bx0 = inner_x0 + (badge_min_w if not text_style else 0)
+        if bx0 < min_bx0:
+            bx0 = min_bx0
 
-        title_max_w = max(40, (bx0 - 10) - inner_x0)
+        by0 = y + (inv_row_h - (bh + badge_py * 2)) // 2
+        by1 = by0 + bh + badge_py * 2
+
+        title_max_w = max(56, (bx0 - title_gap) - inner_x0)
+        if title_max_w < min_title_w:
+            # Re-fit badge tighter to preserve minimum title readability.
+            rebudget_w = max(badge_min_w, row_w - title_gap - min_title_w)
+            badge_text_fit, f_badge_fit = _fit_badge_text(
+                draw,
+                fonts,
+                badge_text_raw,
+                max(20, rebudget_w - badge_px * 2),
+                int(t["b_badge_size"]),
+                int(t.get("b_badge_min_size", 9)),
+            )
+            bw = int(round(text_width_spaced(draw, badge_text_fit, f_badge_fit, spacing=badge_text_spacing)))
+            bh = text_size(draw, badge_text_fit, f_badge_fit)[1]
+            bx0 = bx1 - (bw + badge_px * 2)
+            if bx0 < min_bx0:
+                bx0 = min_bx0
+            by0 = y + (inv_row_h - (bh + badge_py * 2)) // 2
+            by1 = by0 + bh + badge_py * 2
+            title_max_w = max(56, (bx0 - title_gap) - inner_x0)
+
         title = truncate_text(draw, item.title, f_inv_item, title_max_w)
-        draw.text((inner_x0, y + 5), title, font=f_inv_item, fill=text_fill)
+        
+        title_font = f_inv_item_focus if is_focus else f_inv_item
+        th = text_size(draw, "Ag", title_font)[1]
+        ty = y + (inv_row_h - th) // 2
+        draw.text((inner_x0, ty), title, font=title_font, fill=text_fill)
 
-        draw.rectangle((bx0, by0, bx1, by1), fill=badge_fill, outline=ink if item.completed and not is_focus else None, width=1)
-        draw.text((bx0 + int(t["b_badge_px"]), by0 + int(t["b_badge_py"]) - 1), badge_text_fit, font=f_badge, fill=badge_text)
+        if text_style:
+            # Default e-ink style: status is plain text (no persistent box).
+            # Optional focus treatment only on selected row.
+            if badge_style == "text_focus_invert" and is_focus:
+                fx = max(1, int(t.get("b_badge_focus_px", 4)))
+                fy = max(0, int(t.get("b_badge_focus_py", 1)))
+                fbx0, fby0 = bx0 - fx, by0 - fy
+                fbx1, fby1 = bx1 + fx, by1 + fy
+                fr = max(0, int(t.get("b_badge_focus_radius", 2)))
+                fr = min(fr, max(0, (fby1 - fby0) // 2))
+                rounded_rect(
+                    draw,
+                    (fbx0, fby0, fbx1, fby1),
+                    radius=fr,
+                    outline=ink,
+                    width=1,
+                    fill=ink,
+                )
+                draw_text_spaced(
+                    draw,
+                    badge_text_fit,
+                    bx0,
+                    by0,
+                    f_badge_fit,
+                    spacing=badge_text_spacing,
+                    fill=card,
+                )
+            else:
+                draw_text_spaced(
+                    draw,
+                    badge_text_fit,
+                    bx0,
+                    by0,
+                    f_badge_fit,
+                    spacing=badge_text_spacing,
+                    fill=ink,
+                )
+        else:
+            # Legacy chip styles for A/B compare.
+            if badge_style == "invert":
+                badge_fill = ink
+                badge_text = card
+                badge_outline = ink
+            elif badge_style == "focus_invert" and is_focus:
+                badge_fill = ink
+                badge_text = card
+                badge_outline = ink
 
-        if item.completed and not is_focus:
-            tw = text_size(draw, title, f_inv_item)[0]
-            sy = y + 16
-            draw.line((inner_x0, sy, inner_x0 + tw, sy), fill=muted, width=1)
+            badge_radius = max(0, int(t.get("b_badge_radius", 3)))
+            badge_radius = min(badge_radius, max(0, (by1 - by0) // 2))
+            rounded_rect(
+                draw,
+                (bx0, by0, bx1, by1),
+                radius=badge_radius,
+                outline=badge_outline,
+                width=max(1, int(t.get("b_badge_border_w", 1))),
+                fill=badge_fill,
+            )
 
-        draw.line((inner_x0, y + inv_row_h, inner_x1, y + inv_row_h), fill=line_fill, width=1)
+            draw_text_spaced(
+                draw,
+                badge_text_fit,
+                bx0 + badge_px,
+                by0 + badge_py,
+                f_badge_fit,
+                spacing=badge_text_spacing,
+                fill=badge_text,
+            )
+
+        if item.completed:
+            # [E-INK] Strikethrough
+            tw = text_size(draw, title, title_font)[0]
+            sy = ty + th // 2 + 1
+            draw.line((inner_x0, sy, inner_x0 + tw, sy), fill=ink, width=2) 
+
         y += inv_row_h
 
     # Shopping header
-    shop_title_y = mid_y + rp
-    draw.line((inner_x0, shop_title_y + 9, inner_x0 + 14, shop_title_y + 9), fill=ink, width=2)
-    draw.text((inner_x0 + 22, shop_title_y), "SHOPPING LIST", font=f_shop_title, fill=ink)
+    # Keep right-lower section aligned to the left panel section rhythm.
+    inv_bottom_y = y
+    shop_title_spacing = int(t.get("b_shopping_title_spacing", 1))
+    shop_label = "SHOPPING LIST"
+    shop_rule_gap = int(t.get("b_shop_header_rule_gap", 6))
+    shop_rule_w = max(1, int(t.get("b_shop_section_rule_w", 1)))
+    shop_rule_right_max = inner_x1 - int(t.get("b_shop_section_rule_right_gap", 18))
+    shop_rule_left = inner_x0 + int(t.get("b_shop_section_rule_left_gap", 0))
+    shop_title_h = text_size(draw, "Ag", f_shop_title)[1]
+    shop_line_gap = int(t.get("b_shop_header_line_after_title_gap", 9))
+    shop_rule_y_target = family_rule_y
+    shop_rule_y_min = inv_bottom_y + int(t.get("b_inv_shop_min_gap", 14))
+    shop_rule_y = max(shop_rule_y_target, shop_rule_y_min)
+    shop_title_y = shop_rule_y - shop_title_h - shop_line_gap
+    shop_label_w = text_width_spaced(draw, shop_label, f_shop_title, spacing=shop_title_spacing)
 
-    shop_row_h = int(t["b_shopping_row_h"])
-    y = shop_title_y + 28
+    # Header: left-aligned title + right count on same baseline.
+    shop_title_x = inner_x0
+    draw_text_spaced(draw, shop_label, shop_title_x, shop_title_y, f_shop_title, spacing=shop_title_spacing, fill=ink)
+
+    shop_cnt = str(len(shop))
+    shop_cnt_spacing = max(0, shop_title_spacing - 1)
+    shop_cnt_w = text_width_spaced(draw, shop_cnt, f_shop_title, spacing=shop_cnt_spacing)
+    shop_cnt_x = inner_x1 - shop_cnt_w
+    draw_text_spaced(draw, shop_cnt, shop_cnt_x, shop_title_y, f_shop_title, spacing=shop_cnt_spacing, fill=ink)
+
+    # Support line under the header.
+    shop_rule_right = min(shop_rule_right_max, shop_cnt_x - shop_rule_gap)
+    if shop_rule_right > shop_rule_left:
+        draw.line((shop_rule_left, shop_rule_y, shop_rule_right, shop_rule_y), fill=ink, width=shop_rule_w)
+    
+    shop_row_h = int(t["b_shopping_row_h"]) + 4
+    y = max(shop_title_y + int(t["b_shopping_header_gap"]), shop_rule_y + 10)
     shop_bottom = oy1 - int(t["b_bottom_pad"])
-    for item in shop[:6]:
-        # Prevent list rows from spilling outside the outer border.
+
+    shop_max_rows = max(1, int(t.get("b_shopping_max_rows", 5)))
+    for item in shop[:shop_max_rows]:
         if y + shop_row_h > shop_bottom:
             break
-        is_focus = (focus_rid == item.rid and not item.completed)
+        is_focus = (not state.ui.idle) and (focus_rid == item.rid and not item.completed)
+        if not item.completed:
+            rendered_focus_rids.append(item.rid)
+        
+        text_fill = ink
+        box_outline = ink
+
         if is_focus:
-            draw.rectangle((inner_x0 - 4, y - 2, inner_x1 + 2, y + shop_row_h - 2), fill=ink)
-            text_fill = card
-            box_outline = card
-            line_fill = card
-        else:
-            text_fill = muted if item.completed else ink
-            box_outline = muted if item.completed else ink
-            line_fill = subtle
+            if right_focus_style == "rail":
+                rail_w = int(t.get("b_right_focus_rail_w", 3))
+                rail_gap = int(t.get("b_right_focus_rail_gap", 6))
+                rail_vpad = int(t.get("b_right_focus_rail_vpad", 5))
+                rx1 = inner_x0 - rail_gap
+                rx0 = rx1 - rail_w
+                ry0 = y + rail_vpad
+                ry1 = y + shop_row_h - rail_vpad
+                if ry1 > ry0:
+                    draw.rectangle((rx0, ry0, rx1, ry1), fill=ink)
+            else:
+                fx0 = inner_x0 - focus_pad_x
+                fx1 = inner_x1 + focus_pad_x - focus_right_trim
+                fy0 = y + focus_pad_y
+                fy1 = y + shop_row_h - focus_pad_y
+                if fy1 > fy0 and fx1 > fx0:
+                    rounded_rect(
+                        draw,
+                        (fx0, fy0, fx1, fy1),
+                        radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                        outline=ink,
+                        width=focus_w,
+                        fill=None,
+                    )
 
         # checkbox
-        cb = 11
+        cb = int(t["b_shop_checkbox_size"])
         cbx = inner_x0
         cby = y + (shop_row_h - cb) // 2
-        draw.rectangle((cbx, cby, cbx + cb, cby + cb), outline=box_outline, width=1, fill=None)
-        if item.completed:
-            draw.line((cbx + 2, cby + 6, cbx + 5, cby + 9), fill=box_outline, width=1)
-            draw.line((cbx + 5, cby + 9, cbx + 10, cby + 2), fill=box_outline, width=1)
 
-        text_x = cbx + cb + 10
+        rounded_rect(
+            draw,
+            (cbx, cby, cbx + cb, cby + cb),
+            radius=int(t["b_shop_checkbox_radius"]),
+            outline=box_outline,
+            width=int(t["b_shop_checkbox_w"]),
+            fill=None,
+        )
+        
+        if item.completed:
+            # Checkmark
+            cx, cy = cbx + cb // 2, cby + cb // 2
+            points = [
+                (cbx + 3, cy),
+                (cbx + 5, cy + 3),
+                (cbx + 10, cby + 3)
+            ]
+            draw.line(points, fill=box_outline, width=2, joint="curve")
+
+        text_x = cbx + cb + 14 + int(t.get("b_shop_text_left_pad", 2))
         title = truncate_text(draw, item.title, f_shop_item, max(80, inner_x1 - text_x - 8))
-        draw.text((text_x, y + 6), title, font=f_shop_item, fill=text_fill)
+
+        title_font = f_shop_item_focus if is_focus else f_shop_item
+        th = text_size(draw, "Ag", title_font)[1]
+        ty = y + (shop_row_h - th) // 2
+        draw.text((text_x, ty), title, font=title_font, fill=text_fill)
 
         if item.completed:
-            tw = text_size(draw, title, f_shop_item)[0]
-            sy = y + 16
-            draw.line((text_x, sy, text_x + tw, sy), fill=text_fill, width=1)
+            # [E-INK] Strikethrough
+            tw = text_size(draw, title, title_font)[0]
+            sy = ty + th // 2 + 1
+            draw.line((text_x, sy, text_x + tw, sy), fill=text_fill, width=2)
 
-        draw.line((inner_x0, y + shop_row_h, inner_x1, y + shop_row_h), fill=line_fill, width=1)
         y += shop_row_h
 
+    # Sync reducer focus/click queue with the exact rows currently rendered.
+    state.ui.kitchen_visible_rids = rendered_focus_rids
+    state.ui.kitchen_visible_theme_key = kitchen_queue_theme_key(t)
+    state.ui.kitchen_visible_reminders_version = int(state.ui.reminders_version or 0)
 
 
-def _kitchen_focus_rid(state: AppState, focused_index: int) -> str:
+
+def _kitchen_focus_rid(state: AppState, focused_index: int, theme: dict | None = None) -> str:
     # focused_index: 0 is left panel; 1.. maps to visible tasks list
     if focused_index <= 0:
         return ""
-    fridge = [r for r in state.model.reminders if (r.category or "") == "fridge" and not r.completed]
-    shop = [r for r in state.model.reminders if (r.category or "") != "fridge" and not r.completed]
-    order = fridge + shop
+    visible_idxs = kitchen_visible_task_indices(state, theme)
     pos = focused_index - 1
-    if 0 <= pos < len(order):
-        return order[pos].rid
+    if 0 <= pos < len(visible_idxs):
+        return state.model.reminders[visible_idxs[pos]].rid
     return ""
