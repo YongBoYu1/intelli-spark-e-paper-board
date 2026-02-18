@@ -66,5 +66,6 @@
     "weather_lo_size": 10,
     "weather_hi_offset_y": -19,
     "weather_lo_offset_y": -13,
-    "items_per_page": 5
+    "items_per_page": 5,
+    "panel_font_template": "eink_balanced_v1"
 }
