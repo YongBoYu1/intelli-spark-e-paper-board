@@ -205,13 +205,14 @@ def _theme(theme: dict) -> dict:
     # Panel-only typography overrides (applied when theme["panel_mode"] is true).
     t.setdefault("b_panel_inventory_item_font", "inter_medium")
     t.setdefault("b_panel_inventory_item_focus_font", "inter_bold")
-    t.setdefault("b_panel_inventory_item_size", 17)
+    t.setdefault("b_panel_inventory_item_size", 18)
     t.setdefault("b_panel_badge_font", "jet_bold")
-    t.setdefault("b_panel_badge_size", 12)
-    t.setdefault("b_panel_badge_spacing", 1)
+    t.setdefault("b_panel_badge_size", 13)
+    t.setdefault("b_panel_badge_spacing", 0)
+    t.setdefault("b_panel_badge_force_compact", True)
     t.setdefault("b_panel_shopping_item_font", "inter_medium")
     t.setdefault("b_panel_shopping_item_focus_font", "inter_bold")
-    t.setdefault("b_panel_shopping_item_size", 17)
+    t.setdefault("b_panel_shopping_item_size", 18)
     t.setdefault("b_panel_right_item_double_pass", False)
     t.setdefault("b_panel_right_item_double_pass_shift", 1)
 
@@ -331,6 +332,14 @@ def _fit_badge_text(draw, fonts, text: str, max_text_w: int, base_size: int, min
                 return candidate, f
     f_min = fonts.get(font_key, _font_px(min_size))
     return truncate_text(draw, variants[-1], f_min, max_text_w), f_min
+
+
+def _compact_badge_text(text: str) -> str:
+    variants = [v for v in _badge_variants(text) if v]
+    if not variants:
+        return (text or "").strip().upper()
+    # Prefer shortest readable badge on panel to reduce right-column crowding.
+    return min(variants, key=lambda v: (len(v.replace(" ", "")), len(v)))
 
 
 def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
@@ -805,6 +814,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
                     )
 
         badge_text_raw = (item.right or ("OUT" if item.completed else "STOCKED")).upper()
+        if panel_mode and bool(t.get("b_panel_badge_force_compact", True)):
+            badge_text_raw = _compact_badge_text(badge_text_raw)
         badge_style = str(t.get("b_badge_style", "text")).strip().lower()
         text_style = badge_style in ("text", "text_focus_invert")
         badge_px = int(t["b_badge_px"]) if not text_style else int(t.get("b_badge_text_px", 0))
