@@ -643,7 +643,9 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     if labels:
         meta_row_bottom = max(meta_row_bottom, row_y + name_h + underline_gap + underline_w)
     family_rule_y = meta_row_bottom + int(t["b_family_rule_gap"])
-    draw.line((lx0, family_rule_y, lx1, family_rule_y), fill=ink, width=2)
+    # Keep left/right section rules visually consistent.
+    section_rule_w = max(1, int(t.get("b_shop_section_rule_w", 1)))
+    draw.line((lx0, family_rule_y, lx1, family_rule_y), fill=ink, width=section_rule_w)
 
     quote_y_base = family_rule_y + int(t["b_quote_top_gap"])
     quote = (memo.text.strip() if memo and memo.text else "No messages.")
@@ -970,7 +972,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     shop_title_spacing = int(t.get("b_shopping_title_spacing", 1))
     shop_label = "SHOPPING LIST"
     shop_rule_gap = int(t.get("b_shop_header_rule_gap", 6))
-    shop_rule_w = max(1, int(t.get("b_shop_section_rule_w", 1)))
+    shop_rule_w = section_rule_w
     shop_rule_right_max = inner_x1 - int(t.get("b_shop_section_rule_right_gap", 18))
     shop_rule_left = inner_x0 + int(t.get("b_shop_section_rule_left_gap", 0))
     shop_title_h = text_size(draw, "Ag", f_shop_title)[1]
