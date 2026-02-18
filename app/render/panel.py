@@ -53,6 +53,7 @@ def build_panel_theme(theme: dict | None, *, muted_gray: int = 150) -> dict:
     t["card"] = (255, 255, 255)
     t["bg"] = (255, 255, 255)
     t["muted"] = (muted, muted, muted)
+    t["panel_mode"] = True
     return t
 
 

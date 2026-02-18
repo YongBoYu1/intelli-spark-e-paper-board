@@ -202,6 +202,17 @@ def _theme(theme: dict) -> dict:
     # Render text with 1-bit font mode by default to avoid anti-aliased
     # weight wobble after panel quantization.
     t.setdefault("b_text_antialias", False)
+    # Panel-only typography overrides (applied when theme["panel_mode"] is true).
+    t.setdefault("b_panel_inventory_item_font", "inter_bold")
+    t.setdefault("b_panel_inventory_item_focus_font", "inter_black")
+    t.setdefault("b_panel_inventory_item_size", 16)
+    t.setdefault("b_panel_badge_font", "inter_bold")
+    t.setdefault("b_panel_badge_size", 11)
+    t.setdefault("b_panel_shopping_item_font", "inter_bold")
+    t.setdefault("b_panel_shopping_item_focus_font", "inter_black")
+    t.setdefault("b_panel_shopping_item_size", 16)
+    t.setdefault("b_panel_right_item_double_pass", True)
+    t.setdefault("b_panel_right_item_double_pass_shift", 1)
 
     return t
 
@@ -310,14 +321,14 @@ def _badge_variants(text: str) -> list[str]:
     return uniq
 
 
-def _fit_badge_text(draw, fonts, text: str, max_text_w: int, base_size: int, min_size: int):
+def _fit_badge_text(draw, fonts, text: str, max_text_w: int, base_size: int, min_size: int, font_key: str = "inter_bold"):
     variants = _badge_variants(text)
     for size in range(base_size, min_size - 1, -1):
-        f = fonts.get("inter_bold", _font_px(size))
+        f = fonts.get(font_key, _font_px(size))
         for candidate in variants:
             if text_size(draw, candidate, f)[0] <= max_text_w:
                 return candidate, f
-    f_min = fonts.get("inter_bold", _font_px(min_size))
+    f_min = fonts.get(font_key, _font_px(min_size))
     return truncate_text(draw, variants[-1], f_min, max_text_w), f_min
 
 
@@ -378,6 +389,9 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         )
 
     # Fonts
+    panel_mode = bool(theme.get("panel_mode", False))
+    panel_item_double_pass = panel_mode and bool(t.get("b_panel_right_item_double_pass", True))
+    panel_item_shift = max(1, int(t.get("b_panel_right_item_double_pass_shift", 1)))
     f_time = fonts.get("inter_black", _font_px(t["b_time_size"]))
     f_weekday = fonts.get("inter_semibold", _font_px(t["b_weekday_size"]))
     f_date = fonts.get("inter_bold", _font_px(t["b_date_size"]))
@@ -395,12 +409,30 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     f_posted = fonts.get("jet_extrabold", _font_px(posted_size))
 
     f_inv_title = fonts.get("inter_bold", _font_px(t["b_inventory_title_size"]))
-    f_inv_item = fonts.get("inter_semibold", _font_px(t["b_inventory_item_size"]))
-    f_inv_item_focus = fonts.get("inter_black", _font_px(t["b_inventory_item_size"]))
-    f_badge = fonts.get("inter_bold", _font_px(t["b_badge_size"]))
+    inv_item_key = "inter_semibold"
+    inv_item_focus_key = "inter_black"
+    badge_key = "inter_bold"
+    inv_item_size = int(t["b_inventory_item_size"])
+    badge_size = int(t["b_badge_size"])
+    if panel_mode:
+        inv_item_key = str(t.get("b_panel_inventory_item_font") or inv_item_key)
+        inv_item_focus_key = str(t.get("b_panel_inventory_item_focus_font") or inv_item_focus_key)
+        badge_key = str(t.get("b_panel_badge_font") or badge_key)
+        inv_item_size = int(t.get("b_panel_inventory_item_size", inv_item_size))
+        badge_size = int(t.get("b_panel_badge_size", badge_size))
+    f_inv_item = fonts.get(inv_item_key, _font_px(inv_item_size))
+    f_inv_item_focus = fonts.get(inv_item_focus_key, _font_px(inv_item_size))
+    f_badge = fonts.get(badge_key, _font_px(badge_size))
     f_shop_title = fonts.get("inter_bold", _font_px(t["b_shopping_title_size"]))
-    f_shop_item = fonts.get("inter_semibold", _font_px(t["b_shopping_item_size"]))
-    f_shop_item_focus = fonts.get("inter_bold", _font_px(t["b_shopping_item_size"]))
+    shop_item_key = "inter_semibold"
+    shop_item_focus_key = "inter_bold"
+    shop_item_size = int(t["b_shopping_item_size"])
+    if panel_mode:
+        shop_item_key = str(t.get("b_panel_shopping_item_font") or shop_item_key)
+        shop_item_focus_key = str(t.get("b_panel_shopping_item_focus_font") or shop_item_focus_key)
+        shop_item_size = int(t.get("b_panel_shopping_item_size", shop_item_size))
+    f_shop_item = fonts.get(shop_item_key, _font_px(shop_item_size))
+    f_shop_item_focus = fonts.get(shop_item_focus_key, _font_px(shop_item_size))
 
     # ---------------- Left Panel ----------------
     lx0, lx1 = ox0 + int(t["b_left_pad"]), split_x - int(t["b_left_pad"])
@@ -795,8 +827,9 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             fonts,
             badge_text_raw,
             max(20, badge_budget_w - badge_px * 2),
-            int(t["b_badge_size"]),
+            badge_size,
             int(t.get("b_badge_min_size", 9)),
+            font_key=badge_key,
         )
         bw = int(round(text_width_spaced(draw, badge_text_fit, f_badge_fit, spacing=badge_text_spacing)))
         bh = text_size(draw, badge_text_fit, f_badge_fit)[1]
@@ -818,8 +851,9 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
                 fonts,
                 badge_text_raw,
                 max(20, rebudget_w - badge_px * 2),
-                int(t["b_badge_size"]),
+                badge_size,
                 int(t.get("b_badge_min_size", 9)),
+                font_key=badge_key,
             )
             bw = int(round(text_width_spaced(draw, badge_text_fit, f_badge_fit, spacing=badge_text_spacing)))
             bh = text_size(draw, badge_text_fit, f_badge_fit)[1]
@@ -836,6 +870,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         th = text_size(draw, "Ag", title_font)[1]
         ty = y + (inv_row_h - th) // 2
         draw.text((inner_x0, ty), title, font=title_font, fill=text_fill)
+        if panel_item_double_pass:
+            draw.text((inner_x0 + panel_item_shift, ty), title, font=title_font, fill=text_fill)
 
         if text_style:
             # Default e-ink style: status is plain text (no persistent box).
@@ -1018,6 +1054,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         th = text_size(draw, "Ag", title_font)[1]
         ty = y + (shop_row_h - th) // 2
         draw.text((text_x, ty), title, font=title_font, fill=text_fill)
+        if panel_item_double_pass:
+            draw.text((text_x + panel_item_shift, ty), title, font=title_font, fill=text_fill)
 
         if item.completed:
             # [E-INK] Strikethrough
