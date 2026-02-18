@@ -199,6 +199,9 @@ def _theme(theme: dict) -> dict:
     # Shared color tone in RGB mode (ignored in 1-bit)
     t.setdefault("b_muted_gray", 110)
     t.setdefault("b_subtle_gray", 205)
+    # Render text with 1-bit font mode by default to avoid anti-aliased
+    # weight wobble after panel quantization.
+    t.setdefault("b_text_antialias", False)
 
     return t
 
@@ -321,6 +324,11 @@ def _fit_badge_text(draw, fonts, text: str, max_text_w: int, base_size: int, min
 def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     t = _theme(theme)
     draw = ImageDraw.Draw(image)
+    if not bool(t.get("b_text_antialias", False)):
+        try:
+            draw.fontmode = "1"
+        except Exception:
+            pass
     w, h = image.size
 
     card = theme.get("card", (252, 252, 252))
