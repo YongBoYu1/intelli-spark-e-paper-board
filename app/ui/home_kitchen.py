@@ -203,15 +203,16 @@ def _theme(theme: dict) -> dict:
     # weight wobble after panel quantization.
     t.setdefault("b_text_antialias", False)
     # Panel-only typography overrides (applied when theme["panel_mode"] is true).
-    t.setdefault("b_panel_inventory_item_font", "inter_bold")
-    t.setdefault("b_panel_inventory_item_focus_font", "inter_black")
-    t.setdefault("b_panel_inventory_item_size", 16)
-    t.setdefault("b_panel_badge_font", "inter_bold")
-    t.setdefault("b_panel_badge_size", 11)
-    t.setdefault("b_panel_shopping_item_font", "inter_bold")
-    t.setdefault("b_panel_shopping_item_focus_font", "inter_black")
-    t.setdefault("b_panel_shopping_item_size", 16)
-    t.setdefault("b_panel_right_item_double_pass", True)
+    t.setdefault("b_panel_inventory_item_font", "inter_medium")
+    t.setdefault("b_panel_inventory_item_focus_font", "inter_bold")
+    t.setdefault("b_panel_inventory_item_size", 17)
+    t.setdefault("b_panel_badge_font", "jet_bold")
+    t.setdefault("b_panel_badge_size", 12)
+    t.setdefault("b_panel_badge_spacing", 1)
+    t.setdefault("b_panel_shopping_item_font", "inter_medium")
+    t.setdefault("b_panel_shopping_item_focus_font", "inter_bold")
+    t.setdefault("b_panel_shopping_item_size", 17)
+    t.setdefault("b_panel_right_item_double_pass", False)
     t.setdefault("b_panel_right_item_double_pass_shift", 1)
 
     return t
@@ -809,6 +810,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         badge_px = int(t["b_badge_px"]) if not text_style else int(t.get("b_badge_text_px", 0))
         badge_py = int(t["b_badge_py"]) if not text_style else int(t.get("b_badge_text_py", 0))
         badge_text_spacing = int(t.get("b_badge_text_spacing", -1))
+        if panel_mode:
+            badge_text_spacing = int(t.get("b_panel_badge_spacing", badge_text_spacing))
         row_w = inner_x1 - inner_x0
         title_gap = int(t.get("b_inventory_title_badge_gap", 10))
         min_title_w = int(t.get("b_inventory_min_title_w", 104))
