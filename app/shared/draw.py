@@ -1,6 +1,21 @@
 from PIL import ImageDraw
 
 
+def _snap_px(value) -> int:
+    try:
+        return int(round(float(value)))
+    except Exception:
+        return 0
+
+
+def _glyph_advance(draw, ch, font) -> int:
+    try:
+        adv = draw.textlength(ch, font=font)
+    except Exception:
+        adv = text_size(draw, ch, font)[0]
+    return max(0, _snap_px(adv))
+
+
 def text_size(draw, text, font):
     bbox = draw.textbbox((0, 0), text, font=font)
     return (bbox[2] - bbox[0], bbox[3] - bbox[1])
@@ -17,35 +32,32 @@ def center_text(draw, text, font, box, fill=0):
 def text_width_spaced(draw, text, font, spacing=1):
     if not text:
         return 0
+    step = _snap_px(spacing)
     width = 0
     for idx, ch in enumerate(text):
-        try:
-            ch_w = draw.textlength(ch, font=font)
-        except Exception:
-            ch_w = text_size(draw, ch, font)[0]
+        ch_w = _glyph_advance(draw, ch, font)
         width += ch_w
         if idx < len(text) - 1:
-            width += spacing
+            width += step
     return width
 
 
 def draw_text_spaced(draw, text, x, y, font, spacing=1, fill=0):
-    cur_x = x
+    cur_x = _snap_px(x)
+    y = _snap_px(y)
+    step = _snap_px(spacing)
     for idx, ch in enumerate(text):
         draw.text((cur_x, y), ch, font=font, fill=fill)
-        try:
-            ch_w = draw.textlength(ch, font=font)
-        except Exception:
-            ch_w = text_size(draw, ch, font)[0]
-        cur_x += ch_w + (spacing if idx < len(text) - 1 else 0)
+        ch_w = _glyph_advance(draw, ch, font)
+        cur_x += ch_w + (step if idx < len(text) - 1 else 0)
 
 
 def center_text_spaced(draw, text, font, box, spacing=1, fill=0):
     x0, y0, x1, y1 = box
     w = text_width_spaced(draw, text, font, spacing=spacing)
     h = text_size(draw, text, font)[1]
-    x = x0 + (x1 - x0 - w) // 2
-    y = y0 + (y1 - y0 - h) // 2
+    x = _snap_px(x0 + (x1 - x0 - w) / 2)
+    y = _snap_px(y0 + (y1 - y0 - h) / 2)
     draw_text_spaced(draw, text, x, y, font, spacing=spacing, fill=fill)
 
 
@@ -55,7 +67,7 @@ def draw_text_centered(draw, text, cx, cy, font, fill=0):
     h = bbox[3] - bbox[1]
     x = cx - w / 2 - bbox[0]
     y = cy - h / 2 - bbox[1]
-    draw.text((x, y), text, font=font, fill=fill)
+    draw.text((_snap_px(x), _snap_px(y)), text, font=font, fill=fill)
 
 
 def draw_text_centered_clamped(draw, text, cx, cy, font, xmin, xmax, fill=0):
@@ -70,7 +82,7 @@ def draw_text_centered_clamped(draw, text, cx, cy, font, xmin, xmax, fill=0):
     elif right > xmax:
         x -= right - xmax
     y = cy - h / 2 - bbox[1]
-    draw.text((x, y), text, font=font, fill=fill)
+    draw.text((_snap_px(x), _snap_px(y)), text, font=font, fill=fill)
 
 
 def truncate_text(draw, text, font, max_width):

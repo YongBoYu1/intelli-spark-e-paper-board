@@ -57,6 +57,10 @@ Use it as the source of truth for current scope and priorities.
   - Playfair Display
 - Font fallback logic is in `app/shared/fonts.py`.
 - Missing font files will cause visual mismatch and should be treated as a blocking setup issue for hardware validation.
+- Shared e-ink font template:
+  - Runtime defaults: `app/shared/panel_font_templates.py`
+  - JSON preset: `assets/themes/panel_font_template_eink_balanced_v1.json`
+  - Build path: `app/render/panel.py` auto-applies `panel_font_template` (default `eink_balanced_v1`).
 
 ## 6) Input/Navigation Model (Current)
 
