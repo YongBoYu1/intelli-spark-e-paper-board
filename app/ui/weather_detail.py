@@ -5,7 +5,7 @@ import time
 from PIL import ImageDraw
 
 from app.core.state import AppState
-from app.shared.draw import draw_weather_icon, rounded_rect, text_size, truncate_text
+from app.shared.draw import draw_weather_icon, text_size, truncate_text
 
 
 def _parse_number(raw) -> float | None:
@@ -96,11 +96,11 @@ def _select_days(state: AppState):
 
 
 def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
-    """Render a simplified, high-readability weather detail layout."""
+    """Render weather detail for e-paper with strict non-overlapping layout."""
     draw = ImageDraw.Draw(image)
     w, h = image.size
 
-    if bool(theme.get("panel_mode", False)):
+    if bool(theme.get("panel_mode", False)) or not bool(theme.get("panel_text_antialias", False)):
         try:
             draw.fontmode = "1"
         except Exception:
@@ -110,25 +110,30 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     card = theme.get("card", 255)
     muted = theme.get("muted", ink)
 
-    draw.rectangle((0, 0, w, h), fill=card)
-    pad = int(theme.get("weather_detail_pad", 10) or 10)
-    border_w = int(theme.get("detail_border_width", 3) or 3)
-    radius = int(theme.get("card_radius", 12) or 12)
-    rounded_rect(draw, (pad, pad, w - pad - 1, h - pad - 1), radius=radius, outline=ink, width=border_w, fill=card)
+    body_focus_key = str(theme.get("panel_font_body_focus_key") or "inter_bold")
+    meta_key = str(theme.get("panel_font_meta_key") or "jet_bold")
+    body_base = max(12, int(theme.get("panel_font_body_size", 18) or 18))
+    meta_base = max(10, int(theme.get("panel_font_meta_size", 13) or 13))
 
-    cx0 = pad + 14
-    cy0 = pad + 12
-    cx1 = w - pad - 15
-    cy1 = h - pad - 13
+    draw.rectangle((0, 0, w, h), fill=card)
+
+    pad_x = int(theme.get("weather_detail_pad_x", 22) or 22)
+    pad_y = int(theme.get("weather_detail_pad_y", 16) or 16)
+    cx0 = pad_x
+    cy0 = pad_y
+    cx1 = w - pad_x - 1
+    cy1 = h - pad_y - 1
 
     content_h = max(120, cy1 - cy0 + 1)
-    header_h = min(68, max(56, int(content_h * 0.16)))
-    hero_h = min(170, max(146, int(content_h * 0.37)))
-    details_h = min(86, max(72, int(content_h * 0.18)))
+    header_h = min(72, max(62, int(content_h * 0.16)))
+    hero_h = min(168, max(146, int(content_h * 0.36)))
+    details_h = min(86, max(76, int(content_h * 0.18)))
     footer_h = content_h - header_h - hero_h - details_h
-    if footer_h < 110:
-        shrink = 110 - footer_h
-        hero_h = max(128, hero_h - shrink)
+    if footer_h < 98:
+        hero_h = max(124, hero_h - (98 - footer_h))
+        footer_h = content_h - header_h - hero_h - details_h
+    if footer_h < 88:
+        details_h = max(68, details_h - (88 - footer_h))
         footer_h = content_h - header_h - hero_h - details_h
 
     header_y0 = cy0
@@ -165,12 +170,12 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     )
 
     # 1) Header: location + update time + simple status.
-    location_font = fonts.get("inter_black", max(20, int(header_h * 0.43)))
-    meta_font = fonts.get("jet_bold", max(11, int(header_h * 0.24)))
-    status_font = fonts.get("jet_bold", max(12, int(header_h * 0.28)))
+    meta_font = fonts.get(meta_key, max(meta_base + 1, 12))
+    status_font = fonts.get(meta_key, max(meta_base + 4, 15))
+    update_txt = str(theme.get("weather_last_update") or time.strftime("Updated %H:%M"))
 
     status_txt = str(theme.get("weather_status_text") or ("ONLINE" if has_data else "OFFLINE")).upper()
-    sw, sh = text_size(draw, status_txt, status_font)
+    sw, _ = text_size(draw, status_txt, status_font)
     status_x = cx1 - sw - 18
     status_y = header_y0 + 8
     dot = 8
@@ -178,36 +183,66 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     draw.text((status_x, status_y), status_txt, font=status_font, fill=ink)
 
     location_txt = str(state.model.location or "Unknown").strip() or "Unknown"
-    max_loc_w = max(80, status_x - cx0 - 24)
-    location_txt = truncate_text(draw, location_txt, location_font, max_loc_w)
+    max_loc_w = max(120, status_x - cx0 - 24)
+    update_h = text_size(draw, update_txt, meta_font)[1]
+    loc_size = max(22, int(body_base * 1.95))
+    loc_min = max(18, int(body_base * 1.35))
+    location_font = fonts.get(body_focus_key, loc_size)
+    while True:
+        location_font = fonts.get(body_focus_key, loc_size)
+        loc_fit = truncate_text(draw, location_txt, location_font, max_loc_w)
+        _, loc_h = text_size(draw, loc_fit, location_font)
+        if (loc_h + 2 + update_h) <= (header_h - 8) or loc_size <= loc_min:
+            location_txt = loc_fit
+            break
+        loc_size -= 2
+
     loc_y = header_y0 + 2
     draw.text((cx0, loc_y), location_txt, font=location_font, fill=ink)
 
-    update_txt = str(theme.get("weather_last_update") or time.strftime("Updated %H:%M"))
     _, loc_h = text_size(draw, location_txt, location_font)
-    _, mh = text_size(draw, update_txt, meta_font)
-    update_y = min(header_y1 - mh - 6, loc_y + loc_h + 2)
+    update_y = min(header_y1 - update_h - 6, loc_y + loc_h + 2)
     draw.text((cx0, update_y), update_txt, font=meta_font, fill=muted)
 
     # 2) Hero: icon + current temp + meta lines (fixed vertical flow, no overlap).
     hero_h = max(120, hero_y1 - hero_y0)
-    icon_size = max(84, min(116, int(hero_h * 0.62)))
+    icon_size = max(82, min(112, int(hero_h * 0.58)))
     icon_x = cx0 + 16
     icon_y = hero_y0 + max(8, (hero_h - icon_size) // 2)
     draw_weather_icon(draw, icon, icon_x, icon_y, size=icon_size, ink=ink, stroke=2)
 
-    temp_font = fonts.get("inter_bold", max(56, min(92, int(hero_h * 0.52))))
-    hero_meta_font = fonts.get("inter_semibold", max(16, min(24, int(hero_h * 0.16))))
-    hero_sub_font = fonts.get("jet_bold", max(13, min(18, int(hero_h * 0.13))))
-
     temp_txt = _format_temp(hi_raw)
-    _, th = text_size(draw, temp_txt, temp_font)
+    condition_txt = _weather_word(icon)
+    feels_txt = f"Feels {_format_temp(feels_val)}  |  H {_format_temp(hi_raw)}  L {_format_temp(lo_raw)}"
+
     text_x = icon_x + icon_size + 34
-    temp_y = hero_y0 + 14
+    max_text_w = max(100, cx1 - text_x - 2)
+    temp_size = max(48, int(body_base * 4.1))
+    cond_size = max(16, int(body_base * 1.35))
+    sub_size = max(13, int(meta_base * 1.30))
+
+    while True:
+        temp_font = fonts.get(body_focus_key, temp_size)
+        hero_meta_font = fonts.get(body_focus_key, cond_size)
+        hero_sub_font = fonts.get(meta_key, sub_size)
+        clipped_feels = truncate_text(draw, feels_txt, hero_sub_font, max_text_w)
+        _, temp_h = text_size(draw, temp_txt, temp_font)
+        _, cond_h = text_size(draw, condition_txt, hero_meta_font)
+        _, sub_h = text_size(draw, clipped_feels, hero_sub_font)
+        total_h = temp_h + 6 + cond_h + 6 + sub_h
+        if total_h <= (hero_h - 12) or temp_size <= max(42, int(body_base * 3.0)):
+            feels_txt = clipped_feels
+            break
+        temp_size -= 2
+        if cond_size > max(15, int(body_base * 1.1)):
+            cond_size -= 1
+        if sub_size > max(12, meta_base):
+            sub_size -= 1
+
+    _, th = text_size(draw, temp_txt, temp_font)
+    temp_y = hero_y0 + max(8, (hero_h - total_h) // 2)
     draw.text((text_x, temp_y), temp_txt, font=temp_font, fill=ink)
 
-    feels_txt = f"Feels {_format_temp(feels_val)}  |  H {_format_temp(hi_raw)}  L {_format_temp(lo_raw)}"
-    condition_txt = _weather_word(icon)
     condition_y = temp_y + th + 8
     draw.text((text_x, condition_y), condition_txt, font=hero_meta_font, fill=ink)
     _, cond_h = text_size(draw, condition_txt, hero_meta_font)
@@ -215,26 +250,22 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
 
     # 3) Detail strip: humidity / wind / precip.
     details = [("Humidity", humidity), ("Wind", wind), ("Precip", precip)]
-    label_font = fonts.get("inter_semibold", max(12, int(details_h * 0.20)))
-    value_font = fonts.get("jet_bold", max(20, int(details_h * 0.36)))
+    label_font = fonts.get(meta_key, max(meta_base + 1, 12))
+    value_font = fonts.get(body_focus_key, max(22, int(body_base * 1.8)))
     strip_w = cx1 - cx0 + 1
     col_w = max(1, strip_w // 3)
     for i, (label, value) in enumerate(details):
         x0 = cx0 + i * col_w
         x1 = cx1 if i == 2 else (x0 + col_w)
-        if i > 0:
-            draw.line((x0, details_y0 + 8, x0, details_y1 - 8), fill=ink, width=1)
-
         lw, _ = text_size(draw, label, label_font)
-        vw, vh = text_size(draw, value, value_font)
+        vw, _ = text_size(draw, value, value_font)
         draw.text((x0 + (x1 - x0 - lw) // 2, details_y0 + 8), label, font=label_font, fill=muted)
-        draw.text((x0 + (x1 - x0 - vw) // 2, details_y1 - vh - 8), value, font=value_font, fill=ink)
+        draw.text((x0 + (x1 - x0 - vw) // 2, details_y0 + 8 + 26), value, font=value_font, fill=ink)
 
     # 4) Short forecast footer: selected day + next two days.
-    day_font = fonts.get("inter_black", 15)
-    hi_font = fonts.get("inter_bold", 24)
-    lo_font = fonts.get("jet_bold", 13)
-    icon_size = max(28, min(42, int((footer_y1 - footer_y0) * 0.32)))
+    day_font = fonts.get(meta_key, max(meta_base + 4, 15))
+    temp_font = fonts.get(body_focus_key, max(body_base + 8, 24))
+    icon_size = max(24, min(38, int((footer_y1 - footer_y0) * 0.30)))
     f_w = cx1 - cx0 + 1
     f_col_w = max(1, f_w // 3)
     indices = []
@@ -245,8 +276,6 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     for col in range(3):
         x0 = cx0 + col * f_col_w
         x1 = cx1 if col == 2 else (x0 + f_col_w)
-        if col > 0:
-            draw.line((x0, footer_y0 + 6, x0, footer_y1 - 6), fill=ink, width=1)
 
         if col >= len(indices):
             placeholder = "--"
@@ -256,18 +285,16 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
 
         d = days[indices[col]]
         dow = str(getattr(d, "dow", "--")).upper()[:3] or "--"
-        hi_txt = _format_temp(getattr(d, "hi", None))
-        lo_txt = _format_temp(getattr(d, "lo", None))
+        range_txt = f"{_format_temp(getattr(d, 'hi', None))} / {_format_temp(getattr(d, 'lo', None))}"
 
         dw, _ = text_size(draw, dow, day_font)
-        draw.text((x0 + (x1 - x0 - dw) // 2, footer_y0 + 8), dow, font=day_font, fill=muted)
+        day_fill = ink if col == 0 else muted
+        draw.text((x0 + (x1 - x0 - dw) // 2, footer_y0 + 8), dow, font=day_font, fill=day_fill)
 
         icon_x = x0 + (x1 - x0 - icon_size) // 2
         icon_y = footer_y0 + 34
         draw_weather_icon(draw, getattr(d, "icon", "sun"), icon_x, icon_y, size=icon_size, ink=ink, stroke=2)
 
-        htw, hth = text_size(draw, hi_txt, hi_font)
-        _, lth = text_size(draw, lo_txt, lo_font)
-        temp_y = footer_y1 - max(hth, lth) - 10
-        draw.text((x0 + (x1 - x0) // 2 - htw, temp_y), hi_txt, font=hi_font, fill=ink)
-        draw.text((x0 + (x1 - x0) // 2 + 4, temp_y + 7), lo_txt, font=lo_font, fill=muted)
+        rw, rh = text_size(draw, range_txt, temp_font)
+        temp_y = footer_y1 - rh - 8
+        draw.text((x0 + (x1 - x0 - rw) // 2, temp_y), range_txt, font=temp_font, fill=ink)
