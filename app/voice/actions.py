@@ -344,10 +344,11 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
                 completed=False,
                 created_at=time.time(),
             )
+            updated_title = state.model.reminders[idx].title
             removed_titles = _remove_matching_shopping_items(state, item_key=key) if policy.remove_matching_shopping else []
             state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
             _enforce_inventory_slots(state)
-            msg = f"Updated inventory: {state.model.reminders[idx].title}"
+            msg = f"Updated inventory: {updated_title}"
             if removed_titles:
                 msg += f"; removed from shopping: {', '.join(removed_titles[:2])}"
             return VoiceApplyResult(changed=True, status="done", message=msg)

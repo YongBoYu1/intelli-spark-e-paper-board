@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.core.state import AppState, DashboardModel, Reminder, WidgetMode
+from app.core.reducer import Back, reduce
 from app.voice.actions import (
     VoiceAction,
     apply_voice_action,
@@ -187,6 +188,23 @@ class VoiceActionTests(unittest.TestCase):
         titles = [r.title.lower() for r in self.state.model.reminders]
         self.assertNotIn("buy milk", titles)
 
+    def test_restocked_inventory_message_uses_correct_title_when_shopping_removed_before_fridge(self) -> None:
+        now = 1771616000.0
+        self.state.model.reminders = [
+            Reminder(rid="g1", title="Buy Milk", right="", category="general", created_at=now),
+            Reminder(rid="f1", title="Fresh Milk", right="EXP: 3 DAYS", category="fridge", created_at=now),
+            Reminder(rid="f2", title="Leftover Pizza", right="ADDED YESTERDAY", category="fridge", created_at=now - 86400),
+            Reminder(rid="f3", title="Marinated Chicken", right="USE TONIGHT", category="fridge", created_at=now - 43200),
+        ]
+        action = VoiceAction(
+            tool="inventory_log_event",
+            args={"item_name": "milk", "event_type": "added", "effective_date": "2026-02-20"},
+        )
+        result = apply_voice_action(self.state, action)
+        self.assertTrue(result.changed)
+        self.assertIn("updated inventory: fresh milk", result.message.lower())
+        self.assertNotIn("updated inventory: leftover pizza", result.message.lower())
+
     def test_inventory_add_eviction_removes_oldest(self) -> None:
         action = VoiceAction(
             tool="inventory_log_event",
@@ -247,6 +265,23 @@ class VoiceActionTests(unittest.TestCase):
         self.assertFalse(result.changed)
         self.assertEqual(result.status, "done")
         self.assertGreater(len(self.state.model.reminders), 0)
+
+    def test_reducer_back_cancels_pending_voice_confirmation(self) -> None:
+        self.state.ui.voice_active = True
+        self.state.ui.voice_phase = "confirm"
+        self.state.ui.voice_message = "Press click once within 4s..."
+        self.state.ui.voice_confirm_tool = "shopping_clear_all"
+        self.state.ui.voice_confirm_payload_json = "{}"
+        self.state.ui.voice_confirm_due_at = 1771617000.0
+
+        reduce(self.state, Back())
+
+        self.assertFalse(self.state.ui.voice_active)
+        self.assertEqual(self.state.ui.voice_phase, "idle")
+        self.assertEqual(self.state.ui.voice_message, "")
+        self.assertEqual(self.state.ui.voice_confirm_tool, "")
+        self.assertEqual(self.state.ui.voice_confirm_payload_json, "")
+        self.assertEqual(self.state.ui.voice_confirm_due_at, 0.0)
 
 
 if __name__ == "__main__":
