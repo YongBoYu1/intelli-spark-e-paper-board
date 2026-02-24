@@ -112,6 +112,29 @@ def _parse_optional_humidity(raw):
         return None
 
 
+def _parse_optional_number(raw):
+    if raw is None:
+        return None
+    try:
+        if isinstance(raw, str):
+            txt = raw.strip()
+            if not txt:
+                return None
+            cleaned = []
+            for ch in txt:
+                if ch.isdigit() or ch in (".", "-"):
+                    cleaned.append(ch)
+                else:
+                    cleaned.append(" ")
+            tokens = "".join(cleaned).split()
+            if not tokens:
+                return None
+            return float(tokens[0])
+        return float(raw)
+    except Exception:
+        return None
+
+
 def load_model(repo_root):
     path = os.path.join(repo_root, "data", "dashboard.json")
     if os.path.exists(path):
@@ -159,6 +182,13 @@ def load_model(repo_root):
                     hi=int(w.get("hi", 0)),
                     lo=int(w.get("lo", 0)),
                     humidity=_parse_optional_humidity(w.get("humidity")),
+                    feels_like=_parse_optional_number(
+                        w.get("feels_like") or w.get("feelsLike") or w.get("feels") or w.get("apparent_temp")
+                    ),
+                    wind_kmh=_parse_optional_number(
+                        w.get("wind_kmh") or w.get("windKmh") or w.get("wind_speed") or w.get("wind")
+                    ),
+                    uv_index=_parse_optional_number(w.get("uv_index") or w.get("uv") or w.get("uvi")),
                 )
             )
         except Exception:

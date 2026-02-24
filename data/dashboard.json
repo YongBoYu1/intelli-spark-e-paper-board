@@ -11,9 +11,9 @@
     {"title": "Call Mom", "due": "This week"}
   ],
   "weather": [
-    {"dow": "MON", "icon": "sun", "hi": 22, "lo": 12, "humidity": 45},
-    {"dow": "TUE", "icon": "cloud", "hi": 20, "lo": 14, "humidity": 52},
-    {"dow": "WED", "icon": "rain", "hi": 18, "lo": 11, "humidity": 68},
-    {"dow": "THU", "icon": "storm", "hi": 19, "lo": 13, "humidity": 73}
+    {"dow": "MON", "icon": "sun", "hi": 22, "lo": 12, "humidity": 45, "feels_like": 25, "wind_kmh": 12, "uv_index": 7},
+    {"dow": "TUE", "icon": "cloud", "hi": 20, "lo": 14, "humidity": 52, "feels_like": 21, "wind_kmh": 10, "uv_index": 4},
+    {"dow": "WED", "icon": "rain", "hi": 18, "lo": 11, "humidity": 68, "feels_like": 17, "wind_kmh": 14, "uv_index": 3},
+    {"dow": "THU", "icon": "storm", "hi": 19, "lo": 13, "humidity": 73, "feels_like": 18, "wind_kmh": 16, "uv_index": 5}
   ]
 }
