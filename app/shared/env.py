@@ -19,7 +19,9 @@ def load_repo_dotenv(start_dir: str | None = None, *, override: bool = False) ->
         path = os.path.join(repo_root, name)
         if not os.path.exists(path):
             continue
-        load_dotenv(path, override=override)
+        # .env.local should override repo-default .env values for local machine config.
+        file_override = True if name == ".env.local" else override
+        load_dotenv(path, override=file_override)
         loaded_path = path
 
     return loaded_path

@@ -391,7 +391,11 @@ def _run_voice_flow(
             f"Action: {describe_voice_action(action)}\n"
             f"Result: {result.message}"
         )
-        _set_voice_overlay(state, result.status, shown, hold_s=2.2)
+        hold_s = 2.2
+        if str(result.status or "") == "confirm":
+            remaining_confirm_s = max(0.0, float(state.ui.voice_confirm_due_at or 0.0) - time.time())
+            hold_s = max(hold_s, remaining_confirm_s + 0.2)
+        _set_voice_overlay(state, result.status, shown, hold_s=hold_s)
         _render_to_epd(
             epd,
             state,
