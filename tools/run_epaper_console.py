@@ -28,7 +28,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from app.core.reducer import reduce, Rotate, Click, LongPress, Back, Tick
-from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem
+from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
 from app.render.epd import init_epd, display_image
 from app.render.panel import build_panel_theme, quantize_for_panel
 from app.shared.fonts import FontBook
@@ -268,7 +268,7 @@ def main() -> int:
     old = termios.tcgetattr(fd)
     tty.setraw(fd)
     try:
-        print("Controls: Left/Right rotate, Enter click, Space long press, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, W weather, Space long press, B/Esc back, Q quit")
         last_render_sig = None
         next_tick = time.time()
         while True:
@@ -286,6 +286,10 @@ def main() -> int:
                 ev = LongPress()
             elif key in ("b", "B", "\x7f", "\x1b"):  # backspace / esc
                 ev = Back()
+            elif key in ("w", "W"):
+                if state.ui.screen == Screen.HOME:
+                    state.ui.screen = Screen.WEATHER
+                    state.ui.weather_day_index = 0
             elif key in ("q", "Q"):
                 return 0
 

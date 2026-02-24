@@ -103,15 +103,6 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_weather_humidity_prefix", "HUM")
     t.setdefault("b_show_weather_humidity", True)
     t.setdefault("b_show_weather_humidity_placeholder", True)
-    t.setdefault("b_show_weather_entry", True)
-    t.setdefault("b_weather_entry_text", "WEATHER >")
-    t.setdefault("b_weather_entry_size", 12)
-    t.setdefault("b_weather_entry_spacing", 1)
-    t.setdefault("b_weather_entry_gap", 10)
-    t.setdefault("b_weather_entry_px", 8)
-    t.setdefault("b_weather_entry_py", 4)
-    t.setdefault("b_weather_entry_radius", 5)
-    t.setdefault("b_weather_entry_outline_w", 1)
     t.setdefault("b_header_gap", 28)
     t.setdefault("b_header_rule_w", 0)
     t.setdefault("b_left_micro_size", 16)
@@ -417,7 +408,6 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     f_temp = fonts.get("inter_black", _font_px(t["b_temp_size"]))
     f_weather_desc = fonts.get("jet_bold", _font_px(t["b_weather_desc_size"]))
     f_weather_humidity = fonts.get("jet_bold", _font_px(t["b_weather_humidity_size"]))
-    f_weather_entry = fonts.get("jet_bold", _font_px(t["b_weather_entry_size"]))
     f_micro = fonts.get("jet_extrabold", _font_px(t["b_left_micro_size"]))
     f_family_name = fonts.get("jet_bold", _font_px(t["b_family_name_size"]))
     # Use a slightly heavier serif to survive 1-bit panel quantization.
@@ -578,46 +568,6 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             humidity_bottom = humidity_y + hsh
 
         weather_bottom = max(weather_bottom, desc_y + dh2, humidity_bottom)
-
-    if bool(t.get("b_show_weather_entry", True)):
-        entry_text = str(t.get("b_weather_entry_text") or "WEATHER >").strip().upper()
-        entry_spacing = int(t.get("b_weather_entry_spacing", 1))
-        entry_px = int(t.get("b_weather_entry_px", 8))
-        entry_py = int(t.get("b_weather_entry_py", 4))
-        entry_gap = int(t.get("b_weather_entry_gap", 10))
-        entry_radius = int(t.get("b_weather_entry_radius", 5))
-        entry_outline_w = max(1, int(t.get("b_weather_entry_outline_w", 1)))
-
-        text_w = text_width_spaced(draw, entry_text, f_weather_entry, spacing=entry_spacing)
-        _, text_h = text_size(draw, entry_text, f_weather_entry)
-        box_w = text_w + entry_px * 2
-        box_h = text_h + entry_py * 2
-        box_x1 = weather_right
-        box_x0 = max(lx0, box_x1 - box_w)
-        box_y0 = weather_bottom + entry_gap
-        box_y1 = box_y0 + box_h
-
-        is_left_focus = (focus_idx == 0) and (not state.ui.idle)
-        entry_fill = ink if is_left_focus else None
-        entry_text_fill = card if is_left_focus else ink
-        rounded_rect(
-            draw,
-            (box_x0, box_y0, box_x1, box_y1),
-            radius=entry_radius,
-            outline=ink,
-            width=entry_outline_w,
-            fill=entry_fill,
-        )
-        draw_text_spaced(
-            draw,
-            entry_text,
-            box_x0 + entry_px,
-            box_y0 + entry_py,
-            f_weather_entry,
-            spacing=entry_spacing,
-            fill=entry_text_fill,
-        )
-        weather_bottom = max(weather_bottom, box_y1)
 
     header_rule_y = weather_bottom + int(t["b_header_gap"])
     header_rule_w = int(t["b_header_rule_w"])
