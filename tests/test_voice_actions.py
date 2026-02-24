@@ -249,6 +249,29 @@ class VoiceActionTests(unittest.TestCase):
         titles = [r.title.lower() for r in self.state.model.reminders if r.category == "fridge"]
         self.assertIn("leftover curry", titles)
 
+    def test_shopping_add_eggplant_does_not_dedupe_as_eggs(self) -> None:
+        result = apply_voice_action(self.state, VoiceAction(tool="shopping_add_item", args={"item_name": "eggplant"}))
+        self.assertTrue(result.changed)
+        self.assertIn("added to shopping", result.message.lower())
+        self.assertNotIn("already in shopping", result.message.lower())
+        titles = [r.title.lower() for r in self.state.model.reminders if r.category != "fridge"]
+        self.assertIn("eggplant", titles)
+        self.assertEqual(sum(1 for t in titles if t == "eggs"), 1)
+
+    def test_inventory_event_veggie_soup_does_not_remove_eggs_by_substring(self) -> None:
+        before_titles = [r.title for r in self.state.model.reminders]
+        result = apply_voice_action(
+            self.state,
+            VoiceAction(
+                tool="inventory_log_event",
+                args={"item_name": "veggie soup", "event_type": "consumed", "effective_date": "2026-02-20"},
+            ),
+        )
+        self.assertFalse(result.changed)
+        self.assertIn("skipped", result.message.lower())
+        after_titles = [r.title for r in self.state.model.reminders]
+        self.assertEqual(after_titles, before_titles)
+
     def test_clear_shopping_requires_confirm_and_then_clears(self) -> None:
         first = apply_voice_action(self.state, VoiceAction(tool="shopping_clear_all", args={}))
         self.assertFalse(first.changed)

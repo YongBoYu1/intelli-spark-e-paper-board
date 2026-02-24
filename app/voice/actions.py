@@ -515,9 +515,18 @@ def _canonical_item_key(value: str) -> str:
     txt = " ".join(txt.split())
     if txt in _ITEM_CANONICAL:
         return _ITEM_CANONICAL[txt]
-    for raw, canonical in _ITEM_CANONICAL.items():
-        if raw and raw in txt:
-            return canonical
+    txt_tokens = [p for p in txt.split(" ") if p]
+    if txt_tokens:
+        for raw, canonical in _ITEM_CANONICAL.items():
+            raw_norm = str(raw or "").strip().lower()
+            if not raw_norm:
+                continue
+            raw_tokens = [p for p in raw_norm.split(" ") if p]
+            if not raw_tokens or len(raw_tokens) > len(txt_tokens):
+                continue
+            for i in range(0, len(txt_tokens) - len(raw_tokens) + 1):
+                if txt_tokens[i : i + len(raw_tokens)] == raw_tokens:
+                    return canonical
     parts = [p for p in txt.split(" ") if p and p not in _NOISE_WORDS]
     if not parts:
         return txt
