@@ -11,6 +11,7 @@ import signal
 import tkinter as tk
 from tkinter import ttk
 import re
+from datetime import datetime
 
 from PIL import Image, ImageTk
 
@@ -71,6 +72,20 @@ def _safe_float(var, default):
 
 def _debug_now_str():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+
+def _local_timezone_name():
+    tz_env = str(os.environ.get("TZ") or "").strip()
+    if tz_env:
+        return tz_env
+    try:
+        tzinfo = datetime.now().astimezone().tzinfo
+        key = str(getattr(tzinfo, "key", "") or "").strip()
+        if key:
+            return key
+    except Exception:
+        pass
+    return "UTC"
 
 
 def _debug_action_tool_args(action):
@@ -997,7 +1012,7 @@ class Simulator(tk.Tk):
 
     def _voice_worker(self, api_url: str, timeout_s: float, audio_path: str) -> None:
         try:
-            meta = build_request_meta(locale="zh-CN", tz_name="UTC")
+            meta = build_request_meta(locale="zh-CN", tz_name=_local_timezone_name())
             payload = interpret_audio_via_backend(
                 api_url=api_url,
                 audio_path=audio_path,

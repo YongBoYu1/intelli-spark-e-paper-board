@@ -34,6 +34,7 @@ class VoiceInterpretResponse(BaseModel):
 app = FastAPI(title="Voice Interpret API", version="0.1.0")
 _cache_lock = threading.Lock()
 _idempotency_cache: dict[str, dict[str, Any]] = {}
+_inflight_requests: dict[str, dict[str, Any]] = {}
 _IDEMPOTENCY_CACHE_TTL_S = float(os.environ.get("VOICE_API_IDEMPOTENCY_TTL_S", "900") or 900.0)
 _IDEMPOTENCY_CACHE_MAX_SIZE = int(os.environ.get("VOICE_API_IDEMPOTENCY_MAX_SIZE", "4096") or 4096)
 _log = logging.getLogger("voice_api")
@@ -55,11 +56,19 @@ def health() -> dict[str, str]:
 def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
     req_dict = req.model_dump()
     req_id = str(req_dict.get("request_id") or "").strip()
+    inflight_entry: dict[str, Any] | None = None
+    is_leader = False
 
     if req_id:
         with _cache_lock:
             _prune_idempotency_cache_locked(now_ts=time.time())
             cached = _idempotency_cache.get(req_id)
+            if cached is None:
+                inflight_entry = _inflight_requests.get(req_id)
+                if inflight_entry is None:
+                    inflight_entry = {"event": threading.Event(), "action": None, "transcript": "", "error": None}
+                    _inflight_requests[req_id] = inflight_entry
+                    is_leader = True
         if cached is not None:
             _log.info(
                 "voice_interpret cached request_id=%s action=%s transcript=%s",
@@ -71,15 +80,44 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
                 action=dict(cached.get("action") or {}),
                 transcript=str(cached.get("transcript") or ""),
             )
+        if inflight_entry is not None and not is_leader:
+            _log.info("voice_interpret waiting request_id=%s inflight=true", req_id)
+            inflight_entry["event"].wait()
+            err = inflight_entry.get("error")
+            if err is not None:
+                raise err
+            action = dict(inflight_entry.get("action") or {})
+            transcript = str(inflight_entry.get("transcript") or "")
+            _log.info(
+                "voice_interpret inflight-reuse request_id=%s action=%s transcript=%s",
+                req_id,
+                _summarize_action(action),
+                _clip_log_text(transcript),
+            )
+            return VoiceInterpretResponse(action=action, transcript=transcript)
 
-    result = interpret_request_with_debug(req_dict)
-    action = dict(result.get("action") or {})
-    transcript = str(result.get("transcript") or "")
+    try:
+        result = interpret_request_with_debug(req_dict)
+        action = dict(result.get("action") or {})
+        transcript = str(result.get("transcript") or "")
+    except Exception as e:
+        if req_id and is_leader and inflight_entry is not None:
+            with _cache_lock:
+                _inflight_requests.pop(req_id, None)
+                inflight_entry["error"] = e
+                inflight_entry["event"].set()
+        raise
 
     if req_id:
         with _cache_lock:
             _idempotency_cache[req_id] = {"action": action, "transcript": transcript, "_cached_at": time.time()}
             _prune_idempotency_cache_locked(now_ts=time.time())
+            if is_leader and inflight_entry is not None:
+                _inflight_requests.pop(req_id, None)
+                inflight_entry["action"] = action
+                inflight_entry["transcript"] = transcript
+                inflight_entry["error"] = None
+                inflight_entry["event"].set()
 
     _log.info(
         "voice_interpret request_id=%s action=%s transcript=%s",
