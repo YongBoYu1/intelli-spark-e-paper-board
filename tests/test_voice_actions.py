@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import unittest
 
 from app.core.state import AppState, DashboardModel, Reminder, WidgetMode
@@ -7,6 +8,7 @@ from app.core.reducer import Back, reduce
 from app.voice.actions import (
     VoiceAction,
     apply_voice_action,
+    build_request_meta,
     confirm_pending_voice_action,
     parse_voice_action,
 )
@@ -283,6 +285,12 @@ class VoiceActionTests(unittest.TestCase):
         self.assertFalse(result.changed)
         self.assertEqual(result.status, "done")
         self.assertGreater(len(self.state.model.reminders), 0)
+
+    def test_build_request_meta_uses_caller_timezone_for_request_time(self) -> None:
+        meta = build_request_meta(locale="en-US", tz_name="Asia/Shanghai")
+        self.assertEqual(meta.timezone, "Asia/Shanghai")
+        dt = datetime.fromisoformat(meta.request_time)
+        self.assertEqual(dt.utcoffset(), timedelta(hours=8))
 
     def test_reducer_back_cancels_pending_voice_confirmation(self) -> None:
         self.state.ui.voice_active = True

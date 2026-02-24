@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from dataclasses import replace
 from typing import Any
 import time
+from zoneinfo import ZoneInfo
 
 from app.core.state import AppState, MemoItem, Reminder, WidgetMode
 from app.voice.policy import decide_voice_policy
@@ -207,11 +208,25 @@ def parse_voice_action(payload: dict[str, Any] | None) -> VoiceAction:
 
 
 def build_request_meta(*, locale: str = "zh-CN", tz_name: str = "UTC") -> VoiceRequestMeta:
-    now = datetime.now(timezone.utc)
+    tz_text = str(tz_name or "UTC").strip() or "UTC"
+    tz_label = tz_text
+    tz_obj = timezone.utc
+    try:
+        if tz_text.upper() == "UTC":
+            tz_label = "UTC"
+            tz_obj = timezone.utc
+        else:
+            tz_obj = ZoneInfo(tz_text)
+    except Exception:
+        # Fallback to UTC if caller passes an invalid/unsupported timezone name.
+        tz_label = "UTC"
+        tz_obj = timezone.utc
+
+    now = datetime.now(tz_obj)
     return VoiceRequestMeta(
         request_id=f"voice-{int(time.time() * 1000)}",
         request_time=now.isoformat(),
-        timezone=str(tz_name or "UTC"),
+        timezone=tz_label,
         locale=str(locale or "zh-CN"),
     )
 

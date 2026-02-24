@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import threading
+import time
 from typing import Any
 
 from fastapi import FastAPI
@@ -33,6 +34,8 @@ class VoiceInterpretResponse(BaseModel):
 app = FastAPI(title="Voice Interpret API", version="0.1.0")
 _cache_lock = threading.Lock()
 _idempotency_cache: dict[str, dict[str, Any]] = {}
+_IDEMPOTENCY_CACHE_TTL_S = float(os.environ.get("VOICE_API_IDEMPOTENCY_TTL_S", "900") or 900.0)
+_IDEMPOTENCY_CACHE_MAX_SIZE = int(os.environ.get("VOICE_API_IDEMPOTENCY_MAX_SIZE", "4096") or 4096)
 _log = logging.getLogger("voice_api")
 if not _log.handlers:
     logging.basicConfig(level=logging.INFO)
@@ -55,6 +58,7 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
 
     if req_id:
         with _cache_lock:
+            _prune_idempotency_cache_locked(now_ts=time.time())
             cached = _idempotency_cache.get(req_id)
         if cached is not None:
             _log.info(
@@ -74,7 +78,8 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
 
     if req_id:
         with _cache_lock:
-            _idempotency_cache[req_id] = {"action": action, "transcript": transcript}
+            _idempotency_cache[req_id] = {"action": action, "transcript": transcript, "_cached_at": time.time()}
+            _prune_idempotency_cache_locked(now_ts=time.time())
 
     _log.info(
         "voice_interpret request_id=%s action=%s transcript=%s",
@@ -84,6 +89,31 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
     )
 
     return VoiceInterpretResponse(action=action, transcript=transcript)
+
+
+def _prune_idempotency_cache_locked(*, now_ts: float | None = None) -> None:
+    """Bound in-memory idempotency cache growth (TTL + size cap). Caller must hold _cache_lock."""
+    if not _idempotency_cache:
+        return
+
+    now_v = float(time.time() if now_ts is None else now_ts)
+    ttl_s = float(_IDEMPOTENCY_CACHE_TTL_S or 0.0)
+    if ttl_s > 0:
+        expired_keys = [
+            k
+            for k, v in list(_idempotency_cache.items())
+            if (now_v - float((v or {}).get("_cached_at") or 0.0)) > ttl_s
+        ]
+        for k in expired_keys:
+            _idempotency_cache.pop(k, None)
+
+    max_size = int(_IDEMPOTENCY_CACHE_MAX_SIZE or 0)
+    if max_size > 0:
+        while len(_idempotency_cache) > max_size:
+            oldest_key = next(iter(_idempotency_cache), None)
+            if oldest_key is None:
+                break
+            _idempotency_cache.pop(oldest_key, None)
 
 
 def _clip_log_text(text: str, max_len: int = 180) -> str:
