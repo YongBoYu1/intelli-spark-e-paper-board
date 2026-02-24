@@ -2,8 +2,15 @@ import os
 import sys
 import json
 import time
+import threading
+import logging
+import shutil
+import subprocess
+import tempfile
+import signal
 import tkinter as tk
 from tkinter import ttk
+import re
 
 from PIL import Image, ImageTk
 
@@ -12,11 +19,28 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem
-from app.core.reducer import reduce, Rotate, Click, LongPress, Back, Tick, MemoDelta
+from app.core.reducer import reduce, Rotate, Click, Back, Tick, MemoDelta
 from app.render.panel import build_panel_theme, quantize_for_panel
+from app.shared.env import load_repo_dotenv
 from app.shared.fonts import FontBook
 from app.shared.paths import find_repo_root
 from app.ui.app import render_app
+from app.voice import (
+    VoiceClientError,
+    apply_voice_action,
+    build_board_context,
+    build_request_meta,
+    confirm_pending_voice_action,
+    describe_voice_action,
+    expire_pending_voice_confirmation,
+    interpret_audio_via_backend,
+    parse_voice_action,
+)
+
+load_repo_dotenv(os.path.dirname(__file__))
+
+logging.basicConfig(level=logging.INFO)
+_log = logging.getLogger("sim_voice")
 
 
 def _hex_to_rgb(value):
@@ -43,6 +67,266 @@ def _safe_float(var, default):
         return float(var.get())
     except Exception:
         return float(default)
+
+
+def _debug_now_str():
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+
+def _debug_action_tool_args(action):
+    tool = str(getattr(action, "tool", "") or "").strip()
+    args = getattr(action, "args", None)
+    if not isinstance(args, dict):
+        args = {}
+    return tool, dict(args)
+
+
+def _debug_shopping_items(state):
+    items = []
+    for r in list(getattr(state.model, "reminders", []) or []):
+        if str(getattr(r, "category", "") or "") == "fridge":
+            continue
+        items.append(str(getattr(r, "title", "") or ""))
+    return items
+
+
+def _debug_inventory_items(state):
+    items = []
+    for r in list(getattr(state.model, "reminders", []) or []):
+        if str(getattr(r, "category", "") or "") != "fridge":
+            continue
+        items.append(
+            {
+                "title": str(getattr(r, "title", "") or ""),
+                "right": str(getattr(r, "right", "") or ""),
+            }
+        )
+    return items
+
+
+def _debug_inventory_lookup(items, item_name):
+    needle = str(item_name or "").strip().lower()
+    if not needle:
+        return None
+    for row in items:
+        title = str((row or {}).get("title") or "").lower()
+        if needle and needle in title:
+            return dict(row)
+    return None
+
+
+def _debug_snapshot_for_action(state, action):
+    tool, args = _debug_action_tool_args(action)
+    snap = {}
+    if tool in ("shopping_add_item", "shopping_remove_item", "shopping_clear_all"):
+        shopping_items = _debug_shopping_items(state)
+        snap["shopping_list"] = {
+            "count": len(shopping_items),
+            "items": shopping_items[:12],
+        }
+    if tool in ("inventory_log_event", "inventory_set_expiry", "inventory_clear_all"):
+        inventory_items = _debug_inventory_items(state)
+        snap["inventory"] = {
+            "count": len(inventory_items),
+            "items": inventory_items[:10],
+        }
+        target_item = str(args.get("item_name") or "").strip()
+        if target_item:
+            snap["inventory_target"] = {
+                "item_name": target_item,
+                "row": _debug_inventory_lookup(inventory_items, target_item),
+            }
+    if tool == "timer_set":
+        snap["timer"] = {
+            "mode": str(getattr(state.ui, "widget_mode", "")),
+            "seconds": int(getattr(state.ui, "timer_seconds", 0) or 0),
+            "running": bool(getattr(state.ui, "timer_running", False)),
+        }
+    if tool == "memo_add":
+        memos = list(getattr(state.model, "memos", []) or [])
+        top = []
+        for m in memos[:3]:
+            top.append(
+                {
+                    "author": str(getattr(m, "author", "") or ""),
+                    "text": str(getattr(m, "text", "") or ""),
+                }
+            )
+        snap["memos"] = {"count": len(memos), "top": top}
+    if not snap:
+        # Generic fallback so debug still prints useful state for no_action/unknown.
+        snap["shopping_list"] = {"count": len(_debug_shopping_items(state)), "items": _debug_shopping_items(state)[:12]}
+        snap["inventory"] = {"count": len(_debug_inventory_items(state)), "items": _debug_inventory_items(state)[:10]}
+    return snap
+
+
+def _debug_fmt_inline_list(items):
+    vals = list(items or [])
+    rendered = []
+    for v in vals:
+        if isinstance(v, dict):
+            title = str(v.get("title") or "")
+            right = str(v.get("right") or "")
+            rendered.append(f"{title} ({right})" if right else title)
+        else:
+            rendered.append(str(v))
+    return "[" + ", ".join(rendered) + "]"
+
+
+def _debug_snapshot_lines(label, snap):
+    lines = [f"{label}:"]
+    if not isinstance(snap, dict):
+        lines.append("  <none>")
+        return lines
+    if "shopping_list" in snap:
+        block = dict(snap.get("shopping_list") or {})
+        lines.append(f"  shopping_list.count = {int(block.get('count', 0) or 0)}")
+        lines.append(f"  shopping_list.items = {_debug_fmt_inline_list(block.get('items') or [])}")
+    if "inventory" in snap:
+        block = dict(snap.get("inventory") or {})
+        lines.append(f"  inventory.count = {int(block.get('count', 0) or 0)}")
+        lines.append(f"  inventory.items = {_debug_fmt_inline_list(block.get('items') or [])}")
+    if "inventory_target" in snap:
+        block = dict(snap.get("inventory_target") or {})
+        target = str(block.get("item_name") or "")
+        row = block.get("row")
+        if isinstance(row, dict):
+            lines.append(f"  inventory.target[{target}] = {row.get('title', '')} ({row.get('right', '')})")
+        else:
+            lines.append(f"  inventory.target[{target}] = <none>")
+    if "timer" in snap:
+        block = dict(snap.get("timer") or {})
+        lines.append(
+            "  timer = {mode="
+            + str(block.get("mode") or "")
+            + f", seconds={int(block.get('seconds', 0) or 0)}, running={bool(block.get('running', False))}"
+            + "}"
+        )
+    if "memos" in snap:
+        block = dict(snap.get("memos") or {})
+        lines.append(f"  memos.count = {int(block.get('count', 0) or 0)}")
+        lines.append(f"  memos.top = {_debug_fmt_inline_list(block.get('top') or [])}")
+    return lines
+
+
+def _debug_diff_lines(before, after, *, action_tool="", decision="", pending_note=""):
+    if decision == "confirm_required":
+        return [f"  none ({pending_note or 'pending physical confirm'})"]
+
+    lines = []
+    if "shopping_list" in before or "shopping_list" in after:
+        b = dict(before.get("shopping_list") or {})
+        a = dict(after.get("shopping_list") or {})
+        b_items = list(b.get("items") or [])
+        a_items = list(a.get("items") or [])
+        removed = [x for x in b_items if x not in a_items]
+        added = [x for x in a_items if x not in b_items]
+        if removed:
+            lines.append(f"  shopping_list.removed = {removed}")
+        if added:
+            lines.append(f"  shopping_list.added = {added}")
+    if "inventory" in before or "inventory" in after:
+        b = dict(before.get("inventory") or {})
+        a = dict(after.get("inventory") or {})
+        b_rows = list(b.get("items") or [])
+        a_rows = list(a.get("items") or [])
+        b_titles = [str((x or {}).get("title") if isinstance(x, dict) else x) for x in b_rows]
+        a_titles = [str((x or {}).get("title") if isinstance(x, dict) else x) for x in a_rows]
+        removed = [x for x in b_titles if x not in a_titles]
+        added = [x for x in a_titles if x not in b_titles]
+        if removed:
+            lines.append(f"  inventory.removed = {removed}")
+        if added:
+            lines.append(f"  inventory.added = {added}")
+        b_map = {}
+        a_map = {}
+        for row in b_rows:
+            if isinstance(row, dict):
+                b_map[str(row.get("title") or "")] = str(row.get("right") or "")
+        for row in a_rows:
+            if isinstance(row, dict):
+                a_map[str(row.get("title") or "")] = str(row.get("right") or "")
+        for title in sorted(set(b_map.keys()) & set(a_map.keys())):
+            if b_map.get(title) != a_map.get(title):
+                lines.append(f'  inventory.badge_changed = "{title}": "{b_map.get(title)}" -> "{a_map.get(title)}"')
+    if "timer" in before or "timer" in after:
+        b = dict(before.get("timer") or {})
+        a = dict(after.get("timer") or {})
+        if b != a:
+            lines.append(f"  timer = {b} -> {a}")
+    if "memos" in before or "memos" in after:
+        b = dict(before.get("memos") or {})
+        a = dict(after.get("memos") or {})
+        if b.get("count") != a.get("count"):
+            lines.append(f"  memos.count = {b.get('count', 0)} -> {a.get('count', 0)}")
+        b_top = list(b.get("top") or [])
+        a_top = list(a.get("top") or [])
+        if b_top != a_top:
+            lines.append(f"  memos.top = {b_top} -> {a_top}")
+    if not lines:
+        lines.append("  none")
+    return lines
+
+
+def _debug_decision_from_result(action_tool, result):
+    status = str(getattr(result, "status", "") or "").strip().lower()
+    changed = bool(getattr(result, "changed", False))
+    if status == "confirm":
+        return "confirm_required"
+    if status == "error":
+        return "error"
+    if str(action_tool or "") == "no_action":
+        return "no_action"
+    if changed:
+        return "executed"
+    return "skipped"
+
+
+def _debug_log_voice_apply_block(*, request_id, heard, action_text, action_tool, result, before_snap, after_snap):
+    decision = _debug_decision_from_result(action_tool, result)
+    lines = [
+        f"[{_debug_now_str()}] VOICE_APPLY",
+        f"request_id: {request_id or '<unknown>'}",
+        f"heard: {heard or '-'}",
+        f"action: {action_text or '-'}",
+        f"decision: {decision}",
+        f"result: {str(getattr(result, 'message', '') or '')}",
+        "",
+    ]
+    lines.extend(_debug_snapshot_lines("before", before_snap))
+    lines.append("")
+    lines.extend(_debug_snapshot_lines("after", after_snap))
+    lines.append("")
+    lines.append("diff:")
+    lines.extend(
+        _debug_diff_lines(
+            before_snap,
+            after_snap,
+            action_tool=action_tool,
+            decision=decision,
+            pending_note="pending physical confirm",
+        )
+    )
+    _log.info("\n%s", "\n".join(lines))
+
+
+def _debug_log_voice_confirm_block(*, source, pending_action, result, before_snap, after_snap):
+    decision = _debug_decision_from_result("confirm", result)
+    lines = [
+        f"[{_debug_now_str()}] VOICE_CONFIRM",
+        f"source: {source}",
+        f"pending_action: {pending_action}",
+        f"decision: {decision}",
+        f"result: {str(getattr(result, 'message', '') or '')}",
+        "",
+    ]
+    lines.extend(_debug_snapshot_lines("before", before_snap))
+    lines.append("")
+    lines.extend(_debug_snapshot_lines("after", after_snap))
+    lines.append("")
+    lines.append("diff:")
+    lines.extend(_debug_diff_lines(before_snap, after_snap, decision=decision))
+    _log.info("\n%s", "\n".join(lines))
 
 
 def load_theme(path):
@@ -201,6 +485,28 @@ class Simulator(tk.Tk):
         self.panel_gamma = tk.DoubleVar(value=float(self.theme.get("panel_gamma", 1.0)))
         self.panel_dither = tk.BooleanVar(value=bool(self.theme.get("panel_dither", False)))
         self.badge_style = tk.StringVar(value=str(self.theme.get("b_badge_style", "text")))
+        self.voice_api_url = tk.StringVar(value=os.environ.get("VOICE_SIM_API_URL", os.environ.get("VOICE_API_URL", "")))
+        self.voice_timeout_s = tk.DoubleVar(value=float(os.environ.get("VOICE_TIMEOUT_S", "12")))
+        self.voice_audio_max_sec = tk.IntVar(value=max(1, int(os.environ.get("VOICE_MAX_SEC", "6"))))
+        self.voice_audio_device = tk.StringVar(value=os.environ.get("VOICE_AUDIO_DEVICE", "default"))
+        self.voice_busy = False
+        self.voice_recording = False
+        self.voice_recording_proc = None
+        self.voice_recording_path = ""
+        self.voice_recording_started_at = 0.0
+        self.voice_recording_auto_stop_id = None
+        self.voice_request_api_url = ""
+        self.voice_request_timeout_s = 12.0
+        self._space_pressed = False
+        self._space_release_job = None
+        self.audio_recorder = self._detect_audio_recorder()
+        self.ffmpeg_audio_devices = self._list_ffmpeg_audio_devices() if self.audio_recorder == "ffmpeg" else []
+        ffmpeg_input_env = os.environ.get("VOICE_FFMPEG_INPUT", "").strip()
+        default_ffmpeg_input = ffmpeg_input_env if ffmpeg_input_env else self._detect_ffmpeg_input_default()
+        self.voice_ffmpeg_input = tk.StringVar(value=default_ffmpeg_input)
+        self.voice_ffmpeg_device_label = tk.StringVar(value=self._label_for_ffmpeg_input(default_ffmpeg_input))
+        self.last_heard = ""
+        self.last_tool = ""
 
         self.controls = ttk.Frame(self)
         self.controls.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
@@ -227,6 +533,24 @@ class Simulator(tk.Tk):
             state="readonly",
             width=16,
         ).grid(row=0, column=10, padx=(0, 6), sticky="w")
+        ttk.Label(self.controls, text="Voice API").grid(row=1, column=0, padx=(0, 6), pady=(8, 0), sticky="w")
+        ttk.Entry(self.controls, textvariable=self.voice_api_url, width=42).grid(row=1, column=1, columnspan=5, pady=(8, 0), sticky="ew")
+        ttk.Label(self.controls, text="Max").grid(row=1, column=6, padx=(6, 4), pady=(8, 0), sticky="w")
+        ttk.Spinbox(self.controls, from_=1, to=20, textvariable=self.voice_audio_max_sec, width=4).grid(row=1, column=7, pady=(8, 0), sticky="w")
+        ttk.Label(self.controls, text="Timeout").grid(row=1, column=8, padx=(10, 6), pady=(8, 0), sticky="w")
+        ttk.Spinbox(self.controls, from_=1.0, to=60.0, increment=0.5, textvariable=self.voice_timeout_s, width=6).grid(row=1, column=9, pady=(8, 0), sticky="w")
+        ttk.Button(self.controls, text="Record/Stop", command=self._toggle_record_button).grid(row=1, column=10, pady=(8, 0), sticky="w")
+        ttk.Label(self.controls, text="Mic Input").grid(row=2, column=0, padx=(0, 6), pady=(8, 0), sticky="w")
+        self.mic_combo = ttk.Combobox(
+            self.controls,
+            textvariable=self.voice_ffmpeg_device_label,
+            values=self._ffmpeg_device_labels(),
+            state="readonly",
+            width=30,
+        )
+        self.mic_combo.grid(row=2, column=1, columnspan=3, padx=(0, 8), pady=(8, 0), sticky="w")
+        self.mic_combo.bind("<<ComboboxSelected>>", self._on_mic_selected)
+        ttk.Button(self.controls, text="Refresh Mic", command=self._refresh_ffmpeg_devices).grid(row=2, column=4, pady=(8, 0), sticky="w")
 
         self.preview = ttk.Label(self)
         self.preview.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
@@ -240,7 +564,7 @@ class Simulator(tk.Tk):
             "Keys: \n"
             "  ←/→ = Rotate (move focus / auto page)\n"
             "  Enter = Click (open detail / toggle task / select menu)\n"
-            "  Space = Long press (voice overlay stub)\n"
+            "  Hold Space = Record, Release Space = Send to Voice API\n"
             "  B / Esc / Backspace = Back (dashboard -> menu, detail/menu -> dashboard)\n"
             "  ↑/↓ = Memo (when left panel focused)\n"
             "  Q = Quit"
@@ -252,13 +576,16 @@ class Simulator(tk.Tk):
         self.bind("<Right>", lambda _e: self._dispatch(Rotate(+1)))
         self.bind("<Up>", lambda _e: self._dispatch(MemoDelta(-1)))
         self.bind("<Down>", lambda _e: self._dispatch(MemoDelta(+1)))
-        self.bind("<Return>", lambda _e: self._dispatch(Click()))
-        self.bind("<space>", lambda _e: self._dispatch(LongPress()))
+        self.bind_all("<KeyPress-Return>", self._on_enter_press)
+        self.bind_all("<KeyPress-KP_Enter>", self._on_enter_press)
         self.bind("b", lambda _e: self._dispatch(Back()))
         self.bind("B", lambda _e: self._dispatch(Back()))
         self.bind("<Escape>", lambda _e: self._dispatch(Back()))
         self.bind("<BackSpace>", lambda _e: self._dispatch(Back()))
         self.bind("q", lambda _e: self.destroy())
+        # Global hotkeys so hold/release works even when focus is on control widgets.
+        self.bind_all("<KeyPress-space>", self._on_space_press)
+        self.bind_all("<KeyRelease-space>", self._on_space_release)
 
         for v in (self.preview_mode, self.panel_threshold, self.panel_muted, self.panel_gamma, self.badge_style):
             v.trace_add("write", lambda *_: self._render())
@@ -267,13 +594,479 @@ class Simulator(tk.Tk):
         self._render()
 
     def _tick(self):
+        expire_pending_voice_confirmation(self.state)
         self.state = reduce(self.state, Tick(), theme=self.theme)
         self._render()
         self.after(100, self._tick)
 
     def _dispatch(self, ev):
+        if isinstance(ev, Click):
+            pending_tool = str(self.state.ui.voice_confirm_tool or "").strip()
+            if pending_tool:
+                _log.info("voice_confirm input=click pending_tool=%s", pending_tool)
+            before_snap = None
+            if pending_tool:
+                pending_action_for_debug = type("PendingAction", (), {"tool": pending_tool, "args": {}})()
+                before_snap = _debug_snapshot_for_action(self.state, pending_action_for_debug)
+            confirmed = confirm_pending_voice_action(self.state)
+            if confirmed is not None:
+                _log.info(
+                    "voice_confirm applied tool=%s status=%s changed=%s message=%s",
+                    pending_tool or "-",
+                    confirmed.status,
+                    bool(confirmed.changed),
+                    str(confirmed.message or ""),
+                )
+                if before_snap is not None:
+                    pending_action_for_debug = type("PendingAction", (), {"tool": pending_tool, "args": {}})()
+                    after_snap = _debug_snapshot_for_action(self.state, pending_action_for_debug)
+                    _debug_log_voice_confirm_block(
+                        source="physical_click (simulator Enter)",
+                        pending_action=f"{pending_tool or 'confirm'}(confirm)",
+                        result=confirmed,
+                        before_snap=before_snap,
+                        after_snap=after_snap,
+                    )
+                msg = (
+                    "Heard: [physical confirm]\n"
+                    f"Action: {pending_tool or 'confirm'}(confirm)\n"
+                    f"Result: {confirmed.message}"
+                )
+                self._set_voice_overlay(confirmed.status, msg, hold_s=4.0)
+                self._render()
+                return
         self.state = reduce(self.state, ev, theme=self.theme)
         self._render()
+
+    def _on_enter_press(self, _event=None):
+        self._dispatch(Click())
+        return "break"
+
+    def _on_space_press(self, _event=None):
+        if self._space_release_job is not None:
+            try:
+                self.after_cancel(self._space_release_job)
+            except Exception:
+                pass
+            self._space_release_job = None
+        if self._space_pressed:
+            return "break"
+        self._space_pressed = True
+        self._start_voice_recording()
+        return "break"
+
+    def _on_space_release(self, _event=None):
+        if not self._space_pressed:
+            return "break"
+        if self._space_release_job is not None:
+            try:
+                self.after_cancel(self._space_release_job)
+            except Exception:
+                pass
+        # Debounce key-repeat synthetic release events while key is still held.
+        self._space_release_job = self.after(120, self._finalize_space_release)
+        return "break"
+
+    def _finalize_space_release(self):
+        self._space_release_job = None
+        if not self._space_pressed:
+            return
+        self._space_pressed = False
+        self._stop_voice_recording_and_send()
+
+    def _toggle_record_button(self):
+        if self.voice_recording:
+            self._stop_voice_recording_and_send()
+        else:
+            self._start_voice_recording()
+        return "break"
+
+    def _detect_audio_recorder(self) -> str:
+        if shutil.which("arecord"):
+            return "arecord"
+        if shutil.which("afrecord"):
+            return "afrecord"
+        if shutil.which("ffmpeg"):
+            return "ffmpeg"
+        return ""
+
+    def _detect_ffmpeg_input_default(self) -> str:
+        if sys.platform != "darwin":
+            return "default"
+        devices = self.ffmpeg_audio_devices or self._list_ffmpeg_audio_devices()
+        if not devices:
+            return ":0"
+        # Prefer external/user microphone over built-in when available.
+        for idx, name in devices:
+            low = name.lower()
+            if "microphone" in low and "macbook" not in low:
+                return f":{idx}"
+        return f":{devices[0][0]}"
+
+    def _list_ffmpeg_audio_devices(self) -> list[tuple[int, str]]:
+        if sys.platform != "darwin":
+            return []
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            return []
+        devices: list[tuple[int, str]] = []
+        try:
+            proc = subprocess.run(
+                [ffmpeg, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            text = (proc.stderr or "") + "\n" + (proc.stdout or "")
+            in_audio = False
+            for line in text.splitlines():
+                low = line.lower()
+                if "avfoundation audio devices" in low:
+                    in_audio = True
+                    continue
+                if "avfoundation video devices" in low:
+                    in_audio = False
+                if not in_audio:
+                    continue
+                m = re.search(r"\[(\d+)\]\s+(.+)$", line.strip())
+                if m:
+                    devices.append((int(m.group(1)), m.group(2).strip()))
+        except Exception:
+            return []
+        return devices
+
+    def _ffmpeg_device_labels(self) -> list[str]:
+        if not self.ffmpeg_audio_devices:
+            return [self.voice_ffmpeg_device_label.get() or ":0 (default)"]
+        return [f":{idx} {name}" for idx, name in self.ffmpeg_audio_devices]
+
+    def _label_for_ffmpeg_input(self, ffmpeg_input: str) -> str:
+        txt = str(ffmpeg_input or "").strip()
+        if not txt:
+            return ":0 (default)"
+        if txt.startswith(":"):
+            try:
+                idx = int(txt[1:])
+                for d_idx, name in self.ffmpeg_audio_devices:
+                    if d_idx == idx:
+                        return f":{idx} {name}"
+            except Exception:
+                pass
+        return txt
+
+    def _on_mic_selected(self, _event=None):
+        label = str(self.voice_ffmpeg_device_label.get() or "").strip()
+        m = re.match(r"^:(\d+)\b", label)
+        if m:
+            self.voice_ffmpeg_input.set(f":{m.group(1)}")
+        self._set_voice_overlay("done", f"Mic: {self.voice_ffmpeg_input.get()}", hold_s=1.6)
+        self._render()
+
+    def _refresh_ffmpeg_devices(self):
+        self.ffmpeg_audio_devices = self._list_ffmpeg_audio_devices()
+        self.mic_combo.configure(values=self._ffmpeg_device_labels())
+        new_default = self._detect_ffmpeg_input_default()
+        self.voice_ffmpeg_input.set(new_default)
+        self.voice_ffmpeg_device_label.set(self._label_for_ffmpeg_input(new_default))
+        self._set_voice_overlay("done", f"Mic input set to {new_default}", hold_s=1.8)
+        self._render()
+
+    def _build_record_command(self, *, audio_path: str, audio_device: str) -> list[str]:
+        recorder = self.audio_recorder
+        if recorder == "arecord":
+            return [
+                "arecord",
+                "-D",
+                str(audio_device or "default"),
+                "-f",
+                "S16_LE",
+                "-r",
+                "16000",
+                "-c",
+                "1",
+                "-t",
+                "wav",
+                audio_path,
+            ]
+        if recorder == "afrecord":
+            return [
+                "afrecord",
+                "-f",
+                "WAVE",
+                audio_path,
+            ]
+        if recorder == "ffmpeg":
+            # macOS default path; VOICE_FFMPEG_INPUT can override device selector.
+            if sys.platform == "darwin":
+                ffmpeg_input = str(self.voice_ffmpeg_input.get() or ":0")
+                return [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "avfoundation",
+                    "-i",
+                    ffmpeg_input,
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "16000",
+                    "-acodec",
+                    "pcm_s16le",
+                    "-y",
+                    audio_path,
+                ]
+            ffmpeg_input = str(audio_device or "default")
+            return [
+                "ffmpeg",
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "alsa",
+                "-i",
+                ffmpeg_input,
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-acodec",
+                "pcm_s16le",
+                "-y",
+                audio_path,
+            ]
+        return []
+
+    def _stop_recording_process(self, proc: subprocess.Popen | None) -> bool:
+        if not proc:
+            return False
+        if proc.poll() is not None:
+            return True
+        try:
+            proc.send_signal(signal.SIGINT)
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=1.5)
+            return True
+        except Exception:
+            pass
+        try:
+            proc.terminate()
+            proc.wait(timeout=1.0)
+            return True
+        except Exception:
+            pass
+        try:
+            proc.kill()
+            proc.wait(timeout=0.5)
+        except Exception:
+            return False
+        return True
+
+    def _set_voice_overlay(self, phase: str, message: str = "", hold_s: float = 0.0) -> None:
+        p = str(phase or "idle").strip().lower()
+        if p == "idle":
+            self.state.ui.voice_active = False
+            self.state.ui.voice_phase = "idle"
+            self.state.ui.voice_message = ""
+            self.state.ui.voice_due_at = 0.0
+            return
+
+        self.state.ui.voice_active = True
+        self.state.ui.voice_phase = p
+        self.state.ui.voice_message = str(message or "")
+        self.state.ui.voice_due_at = (time.time() + float(hold_s)) if hold_s > 0 else 0.0
+
+    def _start_voice_recording(self):
+        if self.voice_busy:
+            return
+
+        api_url = str(self.voice_api_url.get() or "").strip()
+        if not api_url:
+            self._set_voice_overlay("error", "VOICE_API_URL is not set", hold_s=2.0)
+            self._render()
+            return
+
+        if not self.audio_recorder:
+            self._set_voice_overlay("error", "No recorder found (need arecord/afrecord/ffmpeg)", hold_s=2.4)
+            self._render()
+            return
+
+        fd, audio_path = tempfile.mkstemp(prefix="sim_voice_", suffix=".wav", dir="/tmp")
+        os.close(fd)
+        audio_device = str(self.voice_audio_device.get() or "default")
+        cmd = self._build_record_command(audio_path=audio_path, audio_device=audio_device)
+        if not cmd:
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
+            self._set_voice_overlay("error", "Unsupported recorder config", hold_s=2.0)
+            self._render()
+            return
+
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
+            self._set_voice_overlay("error", f"Recorder start failed: {e}", hold_s=2.8)
+            self._render()
+            return
+
+        self.voice_busy = True
+        self.voice_recording = True
+        self.voice_recording_proc = proc
+        self.voice_recording_path = audio_path
+        self.voice_recording_started_at = time.time()
+        self.voice_request_api_url = api_url
+        self.voice_request_timeout_s = max(1.0, float(_safe_float(self.voice_timeout_s, 12.0)))
+        self.state.ui.idle = False
+        self.state.ui.last_interaction_at = time.time()
+        max_s = max(1, _safe_int(self.voice_audio_max_sec, 6))
+        if self.voice_recording_auto_stop_id is not None:
+            try:
+                self.after_cancel(self.voice_recording_auto_stop_id)
+            except Exception:
+                pass
+        self.voice_recording_auto_stop_id = self.after(max_s * 1000, self._auto_stop_recording)
+        self._set_voice_overlay("recording", f"Recording... release to send (max {max_s}s)")
+        self._render()
+
+    def _auto_stop_recording(self):
+        self.voice_recording_auto_stop_id = None
+        if self.voice_recording:
+            self._stop_voice_recording_and_send()
+
+    def _stop_voice_recording_and_send(self):
+        if not self.voice_recording:
+            return
+
+        if self.voice_recording_auto_stop_id is not None:
+            try:
+                self.after_cancel(self.voice_recording_auto_stop_id)
+            except Exception:
+                pass
+            self.voice_recording_auto_stop_id = None
+
+        proc = self.voice_recording_proc
+        audio_path = str(self.voice_recording_path or "")
+        elapsed_s = max(0.0, time.time() - float(self.voice_recording_started_at or 0.0))
+        self.voice_recording = False
+        self.voice_recording_proc = None
+        self.voice_recording_path = ""
+        self.voice_recording_started_at = 0.0
+
+        stopped = self._stop_recording_process(proc)
+        if not stopped:
+            self._voice_error("Recording stop failed")
+            self._voice_done()
+            return
+
+        if not os.path.exists(audio_path) or os.path.getsize(audio_path) <= 128:
+            try:
+                if audio_path and os.path.exists(audio_path):
+                    os.remove(audio_path)
+            except Exception:
+                pass
+            self._voice_error("No voice captured")
+            self._voice_done()
+            return
+
+        self._set_voice_overlay("processing", f"Interpreting ({elapsed_s:.1f}s)")
+        self._render()
+        threading.Thread(
+            target=self._voice_worker,
+            args=(self.voice_request_api_url, self.voice_request_timeout_s, audio_path),
+            daemon=True,
+        ).start()
+
+    def _trigger_voice_audio(self):
+        # Keep legacy entrypoint for compatibility with older hooks.
+        if self.voice_recording:
+            self._stop_voice_recording_and_send()
+        else:
+            self._start_voice_recording()
+
+    def _voice_worker(self, api_url: str, timeout_s: float, audio_path: str) -> None:
+        try:
+            meta = build_request_meta(locale="zh-CN", tz_name="UTC")
+            payload = interpret_audio_via_backend(
+                api_url=api_url,
+                audio_path=audio_path,
+                meta=meta,
+                timeout_s=timeout_s,
+                board_context=build_board_context(self.state),
+            )
+            if isinstance(payload, dict):
+                payload = dict(payload)
+                payload["_debug_request_id"] = str(meta.request_id or "")
+            self.after(0, lambda p=payload: self._apply_voice_payload(p))
+        except VoiceClientError as e:
+            self.after(0, lambda msg=str(e): self._voice_error(msg))
+        except Exception as e:
+            self.after(0, lambda msg=f"Sim voice failed: {e}": self._voice_error(msg))
+        finally:
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
+            self.after(0, self._voice_done)
+
+    def _apply_voice_payload(self, payload: dict) -> None:
+        action = parse_voice_action(payload)
+        before_snap = _debug_snapshot_for_action(self.state, action)
+        result = apply_voice_action(self.state, action)
+        after_snap = _debug_snapshot_for_action(self.state, action)
+        transcript = ""
+        request_id = ""
+        if isinstance(payload, dict):
+            transcript = str(payload.get("transcript") or "").strip()
+            request_id = str(payload.get("_debug_request_id") or payload.get("request_id") or "").strip()
+        self.last_heard = transcript
+        self.last_tool = str(action.tool or "")
+        heard = transcript if transcript else "-"
+        action_desc = describe_voice_action(action)
+        shown = (
+            f"Heard: {heard}\n"
+            f"Action: {action_desc}\n"
+            f"Result: {result.message}"
+        )
+        _log.info(
+            "voice_apply action=%s status=%s changed=%s result=%s transcript=%s",
+            action_desc,
+            result.status,
+            bool(result.changed),
+            str(result.message or ""),
+            heard,
+        )
+        _debug_log_voice_apply_block(
+            request_id=request_id,
+            heard=heard,
+            action_text=action_desc,
+            action_tool=str(action.tool or ""),
+            result=result,
+            before_snap=before_snap,
+            after_snap=after_snap,
+        )
+        self._set_voice_overlay(result.status, shown, hold_s=4.0)
+        self._render()
+
+    def _voice_error(self, msg: str) -> None:
+        self.last_heard = ""
+        self.last_tool = "error"
+        self._set_voice_overlay("error", msg, hold_s=4.0)
+        self._render()
+
+    def _voice_done(self) -> None:
+        self.voice_busy = False
 
     def _render(self):
         w, h = 800, 480
@@ -311,12 +1104,16 @@ class Simulator(tk.Tk):
 
         ui = self.state.ui
         font_ok = "YES" if not self.fonts.missing_font_paths() else "NO"
+        recorder = self.audio_recorder or "none"
+        voice_source = "backend" if str(self.voice_api_url.get() or "").strip() else "no_api"
         self.status.configure(
             text=(
                 f"screen={ui.screen.value} focus={ui.focused_index} page={ui.page} idle={ui.idle} "
                 f"pending_reorder={ui.pending_reorder} mode={mode} th={threshold} muted={muted} "
                 f"gamma={gamma:.2f} dither={dither} badge_style={badge_style} "
-                f"focus_style={self.theme.get('b_right_focus_style', 'row_box')} fonts_ok={font_ok}"
+                f"focus_style={self.theme.get('b_right_focus_style', 'row_box')} fonts_ok={font_ok} "
+                f"voice={ui.voice_phase}:{voice_source} recorder={recorder} "
+                f"last_tool={self.last_tool or '-'} heard={self.last_heard or '-'}"
             )
         )
 

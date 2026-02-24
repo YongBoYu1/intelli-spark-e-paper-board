@@ -12,6 +12,113 @@ from app.ui.placeholder import render_placeholder
 from app.ui.layout import compute_layout
 
 
+def _voice_overlay_title(phase: str) -> str:
+    p = (phase or "idle").strip().lower()
+    if p == "recording":
+        return "RECORDING"
+    if p == "processing":
+        return "PROCESSING"
+    if p == "confirm":
+        return "CONFIRM"
+    if p == "done":
+        return "DONE"
+    if p == "error":
+        return "ERROR"
+    return "VOICE"
+
+
+def _voice_wrap_message(msg: str, max_chars: int = 44, max_lines: int = 3) -> list[str]:
+    text = str(msg or "").strip()
+    if not text:
+        return []
+
+    lines: list[str] = []
+    for raw in text.splitlines():
+        part = " ".join(raw.strip().split())
+        if not part:
+            continue
+        words = part.split(" ")
+        cur = ""
+        for w in words:
+            candidate = w if not cur else f"{cur} {w}"
+            if len(candidate) <= max_chars:
+                cur = candidate
+                continue
+            if cur:
+                lines.append(cur)
+            # Handle long unbroken tokens (e.g. Chinese without spaces).
+            cur = w if len(w) <= max_chars else (w[: max_chars - 3] + "...")
+            if len(lines) >= max_lines - 1:
+                break
+        if cur and len(lines) < max_lines:
+            lines.append(cur)
+        if len(lines) >= max_lines:
+            break
+
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+    if lines and len(lines[-1]) > max_chars:
+        lines[-1] = lines[-1][: max_chars - 3] + "..."
+    if len(lines) == max_lines and " ".join(lines) != text:
+        if len(lines[-1]) >= 3:
+            lines[-1] = lines[-1][: max(0, max_chars - 3)] + "..."
+    return lines
+
+
+def _draw_voice_overlay(image, state: AppState, fonts, theme: dict) -> None:
+    if not bool(state.ui.voice_active):
+        return
+
+    draw = ImageDraw.Draw(image)
+    w, h = image.size
+
+    ink = theme.get("ink", 0)
+    card = theme.get("card", 255)
+    border = theme.get("border", ink)
+    muted = theme.get("muted", ink)
+
+    box_w = min(560, max(360, int(w * 0.62)))
+    box_h = min(220, max(176, int(h * 0.38)))
+    x0 = (w - box_w) // 2
+    y0 = (h - box_h) // 2
+    x1 = x0 + box_w
+    y1 = y0 + box_h
+
+    draw.rounded_rectangle(
+        (x0, y0, x1, y1),
+        radius=14,
+        outline=border,
+        width=3,
+        fill=card,
+    )
+
+    title = _voice_overlay_title(state.ui.voice_phase)
+    msg = str(state.ui.voice_message or "").strip()
+    title_font = fonts.get("inter_black", 32)
+    msg_font = fonts.get("inter_semibold", 18)
+    hint_font = fonts.get("inter_regular", 14)
+
+    tw = draw.textlength(title, font=title_font)
+    draw.text((x0 + (box_w - tw) / 2, y0 + 28), title, font=title_font, fill=ink)
+
+    if msg:
+        lines = _voice_wrap_message(msg, max_chars=44, max_lines=3)
+        base_y = y0 + 82
+        line_h = 24
+        for i, line in enumerate(lines):
+            mw = draw.textlength(line, font=msg_font)
+            draw.text((x0 + (box_w - mw) / 2, base_y + i * line_h), line, font=msg_font, fill=muted)
+
+    if state.ui.voice_phase in ("recording", "processing"):
+        hint = "PLEASE WAIT"
+    elif state.ui.voice_phase == "confirm":
+        hint = "PRESS CLICK / ENTER"
+    else:
+        hint = " "
+    hw = draw.textlength(hint, font=hint_font)
+    draw.text((x0 + (box_w - hw) / 2, y1 - 30), hint, font=hint_font, fill=muted)
+
+
 def _to_render_data(state: AppState) -> dict:
     reminders = []
     for r in state.model.reminders:
@@ -52,21 +159,26 @@ def _to_render_data(state: AppState) -> dict:
 def render_app(image, state: AppState, fonts, theme: dict) -> None:
     if state.ui.screen == Screen.MENU:
         render_menu(image, state, fonts, theme)
+        _draw_voice_overlay(image, state, fonts, theme)
         return
     if state.ui.screen == Screen.PLACEHOLDER:
         render_placeholder(image, state, fonts, theme)
+        _draw_voice_overlay(image, state, fonts, theme)
         return
     if state.ui.screen == Screen.CALENDAR:
         render_calendar(image, state, fonts, theme)
+        _draw_voice_overlay(image, state, fonts, theme)
         return
     if state.ui.screen == Screen.WEATHER:
         render_weather_detail(image, state, fonts, theme)
+        _draw_voice_overlay(image, state, fonts, theme)
         return
 
     # HOME: choose renderer variant based on theme (default: kitchen).
     variant = str((theme or {}).get("home_variant") or "kitchen").strip().lower()
     if variant == "kitchen":
         render_home_kitchen(image, state, fonts, theme)
+        _draw_voice_overlay(image, state, fonts, theme)
         return
 
     data = _to_render_data(state)
@@ -109,3 +221,4 @@ def render_app(image, state: AppState, fonts, theme: dict) -> None:
             width=int(overlay.get("focus_width", 4) or 4),
             fill=None,
         )
+    _draw_voice_overlay(image, state, fonts, theme)

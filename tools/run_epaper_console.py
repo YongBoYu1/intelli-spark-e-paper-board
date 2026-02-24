@@ -15,8 +15,10 @@ import argparse
 import json
 import os
 import select
+import subprocess
 import sys
 import termios
+import tempfile
 import time
 import tty
 
@@ -27,13 +29,27 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from app.core.reducer import reduce, Rotate, Click, LongPress, Back, Tick
+from app.core.reducer import reduce, Rotate, Click, Back, Tick
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem
 from app.render.epd import init_epd, display_image
 from app.render.panel import build_panel_theme, quantize_for_panel
+from app.shared.env import load_repo_dotenv
 from app.shared.fonts import FontBook
 from app.shared.paths import find_repo_root
 from app.ui.app import render_app
+from app.voice import (
+    VoiceClientError,
+    apply_voice_action,
+    build_board_context,
+    build_request_meta,
+    confirm_pending_voice_action,
+    describe_voice_action,
+    expire_pending_voice_confirmation,
+    interpret_audio_via_backend,
+    parse_voice_action,
+)
+
+load_repo_dotenv(os.path.dirname(__file__))
 
 
 def _hex_to_rgb(value):
@@ -229,6 +245,194 @@ def _render_to_epd(
     display_image(epd, image, sleep_after=False)
 
 
+def _set_voice_overlay(state: AppState, phase: str, message: str = "", hold_s: float = 0.0) -> None:
+    p = str(phase or "idle").strip().lower()
+    if p == "idle":
+        state.ui.voice_active = False
+        state.ui.voice_phase = "idle"
+        state.ui.voice_message = ""
+        state.ui.voice_due_at = 0.0
+        return
+
+    state.ui.voice_active = True
+    state.ui.voice_phase = p
+    state.ui.voice_message = str(message or "")
+    state.ui.voice_due_at = (time.time() + float(hold_s)) if hold_s > 0 else 0.0
+
+
+def _record_audio_fixed(
+    *,
+    audio_path: str,
+    audio_device: str,
+    audio_rate: int,
+    audio_channels: int,
+    max_sec: int,
+) -> str | None:
+    cmd = [
+        "arecord",
+        "-D",
+        str(audio_device),
+        "-f",
+        "S16_LE",
+        "-r",
+        str(int(audio_rate)),
+        "-c",
+        str(int(audio_channels)),
+        "-d",
+        str(int(max_sec)),
+        "-t",
+        "wav",
+        str(audio_path),
+    ]
+
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return None
+
+    if proc.returncode != 0:
+        return None
+    if not os.path.exists(audio_path):
+        return None
+    if os.path.getsize(audio_path) <= 0:
+        return None
+    return audio_path
+
+
+def _run_voice_flow(
+    *,
+    state: AppState,
+    epd,
+    fonts: FontBook,
+    theme: dict,
+    panel_threshold: int,
+    panel_muted: int,
+    panel_gamma: float,
+    panel_dither: bool,
+    voice_api_url: str,
+    voice_locale: str,
+    voice_timezone: str,
+    voice_timeout_s: float,
+    voice_max_sec: int,
+    voice_audio_device: str,
+    voice_audio_rate: int,
+    voice_audio_channels: int,
+) -> None:
+    state.ui.idle = False
+    state.ui.last_interaction_at = time.time()
+
+    fd, audio_path = tempfile.mkstemp(prefix="voice_", suffix=".wav", dir="/tmp")
+    os.close(fd)
+
+    try:
+        _set_voice_overlay(state, "recording", f"Speak within {max(1, int(voice_max_sec))}s")
+        _render_to_epd(
+            epd,
+            state,
+            fonts,
+            theme,
+            panel_threshold=panel_threshold,
+            panel_muted=panel_muted,
+            panel_gamma=panel_gamma,
+            panel_dither=panel_dither,
+        )
+
+        audio = _record_audio_fixed(
+            audio_path=audio_path,
+            audio_device=voice_audio_device,
+            audio_rate=voice_audio_rate,
+            audio_channels=voice_audio_channels,
+            max_sec=voice_max_sec,
+        )
+        if not audio:
+            _set_voice_overlay(state, "error", "Recording failed", hold_s=2.0)
+            _render_to_epd(
+                epd,
+                state,
+                fonts,
+                theme,
+                panel_threshold=panel_threshold,
+                panel_muted=panel_muted,
+                panel_gamma=panel_gamma,
+                panel_dither=panel_dither,
+            )
+            return
+
+        _set_voice_overlay(state, "processing", "Interpreting command")
+        _render_to_epd(
+            epd,
+            state,
+            fonts,
+            theme,
+            panel_threshold=panel_threshold,
+            panel_muted=panel_muted,
+            panel_gamma=panel_gamma,
+            panel_dither=panel_dither,
+        )
+
+        meta = build_request_meta(locale=voice_locale, tz_name=voice_timezone)
+        payload = interpret_audio_via_backend(
+            api_url=str(voice_api_url or ""),
+            audio_path=audio,
+            meta=meta,
+            timeout_s=float(voice_timeout_s),
+            board_context=build_board_context(state),
+        )
+        action = parse_voice_action(payload)
+        result = apply_voice_action(state, action)
+        transcript = ""
+        if isinstance(payload, dict):
+            transcript = str(payload.get("transcript") or "").strip()
+        heard = transcript if transcript else "-"
+        shown = (
+            f"Heard: {heard}\n"
+            f"Action: {describe_voice_action(action)}\n"
+            f"Result: {result.message}"
+        )
+        _set_voice_overlay(state, result.status, shown, hold_s=2.2)
+        _render_to_epd(
+            epd,
+            state,
+            fonts,
+            theme,
+            panel_threshold=panel_threshold,
+            panel_muted=panel_muted,
+            panel_gamma=panel_gamma,
+            panel_dither=panel_dither,
+        )
+    except VoiceClientError as e:
+        _set_voice_overlay(state, "error", str(e), hold_s=2.5)
+        _render_to_epd(
+            epd,
+            state,
+            fonts,
+            theme,
+            panel_threshold=panel_threshold,
+            panel_muted=panel_muted,
+            panel_gamma=panel_gamma,
+            panel_dither=panel_dither,
+        )
+    except Exception as e:
+        _set_voice_overlay(state, "error", f"Voice failed: {e}", hold_s=2.5)
+        _render_to_epd(
+            epd,
+            state,
+            fonts,
+            theme,
+            panel_threshold=panel_threshold,
+            panel_muted=panel_muted,
+            panel_gamma=panel_gamma,
+            panel_dither=panel_dither,
+        )
+    finally:
+        try:
+            os.remove(audio_path)
+        except Exception:
+            pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--theme", default="ui_tuner_theme.json", help="Theme JSON (optional)")
@@ -237,6 +441,14 @@ def main() -> int:
     parser.add_argument("--panel-muted", type=int, default=None, help="Muted gray before quantization (0-255)")
     parser.add_argument("--panel-gamma", type=float, default=None, help="Gamma before threshold (0.1-4.0)")
     parser.add_argument("--panel-dither", action="store_true", help="Use Floyd-Steinberg dithering before 1-bit output")
+    parser.add_argument("--voice-api-url", default=os.environ.get("VOICE_API_URL", ""), help="Backend URL for POST /voice/interpret")
+    parser.add_argument("--voice-locale", default=os.environ.get("VOICE_LOCALE", "zh-CN"), help="Locale sent to backend")
+    parser.add_argument("--voice-timezone", default=os.environ.get("VOICE_TIMEZONE", "UTC"), help="Timezone sent to backend")
+    parser.add_argument("--voice-timeout", type=float, default=float(os.environ.get("VOICE_TIMEOUT_S", "20")), help="Backend timeout seconds")
+    parser.add_argument("--voice-max-sec", type=int, default=int(os.environ.get("VOICE_MAX_SEC", "6")), help="Recording duration in seconds")
+    parser.add_argument("--voice-audio-device", default=os.environ.get("VOICE_AUDIO_DEVICE", "default"), help="arecord audio device")
+    parser.add_argument("--voice-audio-rate", type=int, default=int(os.environ.get("VOICE_AUDIO_RATE", "16000")), help="Audio sample rate")
+    parser.add_argument("--voice-audio-channels", type=int, default=int(os.environ.get("VOICE_AUDIO_CHANNELS", "1")), help="Audio channels")
     args = parser.parse_args()
 
     repo_root = find_repo_root(os.path.dirname(__file__))
@@ -251,6 +463,8 @@ def main() -> int:
     fonts = _build_fonts(repo_root)
     _warn_missing_fonts(fonts)
     state = AppState(model=_load_model(repo_root))
+    if not str(args.voice_api_url or "").strip():
+        print("[warn] VOICE_API_URL not set. Voice flow will show network error until configured.")
 
     epd, _ = init_epd()
     _render_to_epd(
@@ -273,6 +487,7 @@ def main() -> int:
         next_tick = time.time()
         while True:
             now = time.time()
+            expire_pending_voice_confirmation(state, now=now)
             key = _read_key_nonblocking()
 
             ev = None
@@ -281,9 +496,41 @@ def main() -> int:
             elif key in ("\x1b[C", "l"):  # right
                 ev = Rotate(+1)
             elif key in ("\r", "\n"):  # enter
-                ev = Click()
+                pending_tool = str(state.ui.voice_confirm_tool or "").strip()
+                confirmed = confirm_pending_voice_action(state, now=now)
+                if confirmed is not None:
+                    _set_voice_overlay(
+                        state,
+                        confirmed.status,
+                        "Heard: [physical confirm]\nAction: "
+                        + (pending_tool or "confirm")
+                        + "(confirm)\nResult: "
+                        + str(confirmed.message or ""),
+                        hold_s=2.4,
+                    )
+                    ev = None
+                else:
+                    ev = Click()
             elif key == " ":
-                ev = LongPress()
+                _run_voice_flow(
+                    state=state,
+                    epd=epd,
+                    fonts=fonts,
+                    theme=theme,
+                    panel_threshold=panel_threshold,
+                    panel_muted=panel_muted,
+                    panel_gamma=panel_gamma,
+                    panel_dither=panel_dither,
+                    voice_api_url=str(args.voice_api_url or ""),
+                    voice_locale=str(args.voice_locale or "zh-CN"),
+                    voice_timezone=str(args.voice_timezone or "UTC"),
+                    voice_timeout_s=float(args.voice_timeout),
+                    voice_max_sec=max(1, int(args.voice_max_sec)),
+                    voice_audio_device=str(args.voice_audio_device or "default"),
+                    voice_audio_rate=max(8000, int(args.voice_audio_rate)),
+                    voice_audio_channels=max(1, int(args.voice_audio_channels)),
+                )
+                ev = None
             elif key in ("b", "B", "\x7f", "\x1b"):  # backspace / esc
                 ev = Back()
             elif key in ("q", "Q"):
@@ -306,9 +553,11 @@ def main() -> int:
                 state.ui.timer_seconds,
                 state.ui.timer_running,
                 state.ui.voice_active,
+                state.ui.voice_phase,
+                state.ui.voice_message,
                 state.ui.menu_focused,
                 state.ui.active_menu,
-                tuple((r.rid, r.completed) for r in state.model.reminders),
+                tuple((r.rid, r.completed, r.title, r.right, r.category) for r in state.model.reminders),
             )
             if sig != last_render_sig:
                 _render_to_epd(
