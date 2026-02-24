@@ -292,6 +292,13 @@ class VoiceActionTests(unittest.TestCase):
         dt = datetime.fromisoformat(meta.request_time)
         self.assertEqual(dt.utcoffset(), timedelta(hours=8))
 
+    def test_build_request_meta_generates_collision_resistant_request_id(self) -> None:
+        m1 = build_request_meta(locale="en-US", tz_name="UTC")
+        m2 = build_request_meta(locale="en-US", tz_name="UTC")
+        self.assertNotEqual(m1.request_id, m2.request_id)
+        self.assertTrue(m1.request_id.startswith("voice-"))
+        self.assertRegex(m1.request_id, r"^voice-[0-9a-f]{32}$")
+
     def test_reducer_back_cancels_pending_voice_confirmation(self) -> None:
         self.state.ui.voice_active = True
         self.state.ui.voice_phase = "confirm"

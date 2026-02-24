@@ -37,6 +37,7 @@ _idempotency_cache: dict[str, dict[str, Any]] = {}
 _inflight_requests: dict[str, dict[str, Any]] = {}
 _IDEMPOTENCY_CACHE_TTL_S = float(os.environ.get("VOICE_API_IDEMPOTENCY_TTL_S", "900") or 900.0)
 _IDEMPOTENCY_CACHE_MAX_SIZE = int(os.environ.get("VOICE_API_IDEMPOTENCY_MAX_SIZE", "4096") or 4096)
+_IDEMPOTENCY_INFLIGHT_WAIT_TIMEOUT_S = float(os.environ.get("VOICE_API_IDEMPOTENCY_WAIT_TIMEOUT_S", "15") or 15.0)
 _log = logging.getLogger("voice_api")
 if not _log.handlers:
     logging.basicConfig(level=logging.INFO)
@@ -82,7 +83,15 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
             )
         if inflight_entry is not None and not is_leader:
             _log.info("voice_interpret waiting request_id=%s inflight=true", req_id)
-            inflight_entry["event"].wait()
+            wait_timeout_s = float(_IDEMPOTENCY_INFLIGHT_WAIT_TIMEOUT_S or 0.0)
+            done = inflight_entry["event"].wait(timeout=wait_timeout_s if wait_timeout_s > 0 else None)
+            if not done:
+                # Leader appears stuck; drop stale inflight marker and fail fast so caller can retry.
+                with _cache_lock:
+                    current = _inflight_requests.get(req_id)
+                    if current is inflight_entry:
+                        _inflight_requests.pop(req_id, None)
+                raise TimeoutError(f"idempotency wait timeout for request_id={req_id}")
             err = inflight_entry.get("error")
             if err is not None:
                 raise err

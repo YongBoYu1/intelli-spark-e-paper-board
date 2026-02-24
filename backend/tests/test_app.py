@@ -13,6 +13,7 @@ class VoiceApiAppCacheTests(unittest.TestCase):
         self._orig_inflight = dict(voice_app._inflight_requests)
         self._orig_ttl = voice_app._IDEMPOTENCY_CACHE_TTL_S
         self._orig_max = voice_app._IDEMPOTENCY_CACHE_MAX_SIZE
+        self._orig_wait_timeout = voice_app._IDEMPOTENCY_INFLIGHT_WAIT_TIMEOUT_S
         self._orig_interpret = voice_app.interpret_request_with_debug
         voice_app._idempotency_cache.clear()
         voice_app._inflight_requests.clear()
@@ -24,6 +25,7 @@ class VoiceApiAppCacheTests(unittest.TestCase):
         voice_app._inflight_requests.update(self._orig_inflight)
         voice_app._IDEMPOTENCY_CACHE_TTL_S = self._orig_ttl
         voice_app._IDEMPOTENCY_CACHE_MAX_SIZE = self._orig_max
+        voice_app._IDEMPOTENCY_INFLIGHT_WAIT_TIMEOUT_S = self._orig_wait_timeout
         voice_app.interpret_request_with_debug = self._orig_interpret
 
     def test_prune_idempotency_cache_evicts_expired_entries(self) -> None:
@@ -106,6 +108,26 @@ class VoiceApiAppCacheTests(unittest.TestCase):
         self.assertEqual(results[0].transcript, results[1].transcript)
         self.assertIn("voice-same-1", voice_app._idempotency_cache)
         self.assertNotIn("voice-same-1", voice_app._inflight_requests)
+
+    def test_voice_interpret_follower_wait_timeout_clears_stale_inflight(self) -> None:
+        entry = {"event": threading.Event(), "action": None, "transcript": "", "error": None}
+        voice_app._inflight_requests["voice-stuck-1"] = entry
+        voice_app._IDEMPOTENCY_CACHE_TTL_S = 60.0
+        voice_app._IDEMPOTENCY_CACHE_MAX_SIZE = 100
+        voice_app._IDEMPOTENCY_INFLIGHT_WAIT_TIMEOUT_S = 0.01
+
+        req = voice_app.VoiceInterpretRequest(
+            request_id="voice-stuck-1",
+            request_time="2026-02-24T12:00:00+00:00",
+            timezone="UTC",
+            locale="en-US",
+            transcript="hello",
+        )
+
+        with self.assertRaises(TimeoutError):
+            voice_app.voice_interpret(req)
+
+        self.assertNotIn("voice-stuck-1", voice_app._inflight_requests)
 
 
 if __name__ == "__main__":

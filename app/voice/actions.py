@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from dataclasses import replace
 from typing import Any
 import time
+import uuid
 from zoneinfo import ZoneInfo
 
 from app.core.state import AppState, MemoItem, Reminder, WidgetMode
@@ -224,7 +225,7 @@ def build_request_meta(*, locale: str = "zh-CN", tz_name: str = "UTC") -> VoiceR
 
     now = datetime.now(tz_obj)
     return VoiceRequestMeta(
-        request_id=f"voice-{int(time.time() * 1000)}",
+        request_id=f"voice-{uuid.uuid4().hex}",
         request_time=now.isoformat(),
         timezone=tz_label,
         locale=str(locale or "zh-CN"),
