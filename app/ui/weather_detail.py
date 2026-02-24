@@ -80,20 +80,6 @@ def _select_days(state: AppState):
     return days, sel, days[sel]
 
 
-def _uv_level(uv: float | None) -> str:
-    if uv is None:
-        return "UV"
-    if uv < 3:
-        return "Low"
-    if uv < 6:
-        return "Moderate"
-    if uv < 8:
-        return "High"
-    if uv < 11:
-        return "Very High"
-    return "Extreme"
-
-
 def _fit_font_to_width(draw, fonts, key: str, text: str, start: int, minimum: int, max_width: int):
     size = max(minimum, start)
     font = fonts.get(key, size)
@@ -151,13 +137,13 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     cy1 = h - pad_y - 1
 
     content_h = max(120, cy1 - cy0 + 1)
-    hero_h = max(138, int(content_h * 0.38))
-    metric_h = max(58, int(content_h * 0.13))
-    min_forecast_h = 150
+    hero_h = max(150, int(content_h * 0.41))
+    metric_h = max(88, int(content_h * 0.20))
+    min_forecast_h = 96
     if hero_h + metric_h > content_h - min_forecast_h:
         overflow = hero_h + metric_h - (content_h - min_forecast_h)
-        hero_h = max(132, hero_h - overflow // 2)
-        metric_h = max(52, metric_h - (overflow - overflow // 2))
+        hero_h = max(142, hero_h - overflow // 2)
+        metric_h = max(78, metric_h - (overflow - overflow // 2))
     forecast_h = content_h - hero_h - metric_h
 
     hero_y0 = cy0
@@ -238,11 +224,11 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     _, range_h = text_size(draw, range_txt, range_font)
 
     inner_top = hero_y0 + 6
-    inner_bottom = hero_y1 - 14
+    inner_bottom = hero_y1 - 24
     feels_y = inner_top
     range_y = inner_bottom - range_h
     temp_top = feels_y + feels_h + 4
-    temp_bottom = range_y - 5
+    temp_bottom = range_y - 8
     temp_track_h = max(40, temp_bottom - temp_top)
 
     while True:
@@ -279,12 +265,11 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
 
     # 2) Metrics row: text only (icons removed by design).
     uv_index_txt = "--" if uv_val is None else str(int(round(uv_val)))
-    uv_level_txt = "--" if uv_val is None else _uv_level(uv_val)
 
     metric_items = [
         (humidity, "Humidity"),
         (wind, "Wind"),
-        (f"UV Index: {uv_index_txt}", uv_level_txt),
+        (uv_index_txt, "UV Index"),
     ]
 
     metric_row_w = cx1 - cx0 + 1
@@ -301,7 +286,7 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
             fonts,
             body_focus_key,
             value_txt,
-            max(15, int(body_base * 1.30)),
+            max(18, int(body_base * 1.55)),
             11,
             text_w_limit,
         )
@@ -310,17 +295,23 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
             fonts,
             body_key,
             label_txt,
-            max(13, int(body_base * 1.10)),
+            max(14, int(body_base * 1.15)),
             10,
             text_w_limit,
         )
 
         value_w, value_h = text_size(draw, value_txt, value_font)
         label_w, label_h = text_size(draw, label_txt, label_font)
-        text_block_h = value_h + 2 + label_h
+        metric_line_gap = 8
+        text_block_h = value_h + metric_line_gap + label_h
         text_top = metric_y0 + max(4, (metric_h - text_block_h) // 2)
         draw.text((x0 + (col_w - value_w) // 2, text_top), value_txt, font=value_font, fill=ink)
-        draw.text((x0 + (col_w - label_w) // 2, text_top + value_h + 2), label_txt, font=label_font, fill=ink)
+        draw.text(
+            (x0 + (col_w - label_w) // 2, text_top + value_h + metric_line_gap),
+            label_txt,
+            font=label_font,
+            fill=ink,
+        )
 
     # 3) Forecast row: next three days with vertical separators.
     forecast_inner_top = forecast_y0 + 8
@@ -388,8 +379,8 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
 
         day_y = forecast_inner_top + 2
         temp_y = forecast_inner_bottom - th2 - 2
-        icon_room = max(28, temp_y - (day_y + dh + 8))
-        icon_size = min(max(24, int(icon_room)), max(30, int((forecast_inner_bottom - forecast_inner_top) * 0.36)))
+        icon_room = max(22, temp_y - (day_y + dh + 10))
+        icon_size = min(max(18, int(icon_room * 0.72)), max(24, int((forecast_inner_bottom - forecast_inner_top) * 0.24)))
         icon_x = x0 + (col_w - icon_size) // 2
         icon_y = day_y + dh + max(6, (icon_room - icon_size) // 2)
 
