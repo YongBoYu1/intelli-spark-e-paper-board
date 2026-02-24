@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 
 from PIL import ImageDraw
@@ -95,6 +96,31 @@ def _select_days(state: AppState):
     return days, sel, days[sel]
 
 
+def _draw_hero_icon(draw, icon_name: str, x: int, y: int, size: int, ink) -> None:
+    icon = str(icon_name or "sun").strip().lower().replace("-", "_").replace(" ", "_")
+    stroke = max(3, int(size * 0.055))
+
+    if icon in ("sun", "clear"):
+        cx = x + size // 2
+        cy = y + size // 2
+        r = int(size * 0.22)
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=ink, width=stroke)
+
+        ray_in = int(size * 0.34)
+        ray_out = int(size * 0.47)
+        for deg in (0, 45, 90, 135, 180, 225, 270, 315):
+            rad = math.radians(deg)
+            x1 = int(cx + math.cos(rad) * ray_in)
+            y1 = int(cy + math.sin(rad) * ray_in)
+            x2 = int(cx + math.cos(rad) * ray_out)
+            y2 = int(cy + math.sin(rad) * ray_out)
+            draw.line((x1, y1, x2, y2), fill=ink, width=stroke)
+        return
+
+    # For non-sun states, keep the curated icon set but with heavier stroke.
+    draw_weather_icon(draw, icon, x, y, size=size, ink=ink, stroke=max(3, int(size * 0.05)))
+
+
 def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     """Render weather detail for e-paper with strict non-overlapping layout."""
     draw = ImageDraw.Draw(image)
@@ -185,23 +211,23 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     location_txt = str(state.model.location or "Unknown").strip() or "Unknown"
     max_loc_w = max(120, status_x - cx0 - 24)
     update_h = text_size(draw, update_txt, meta_font)[1]
-    loc_size = max(22, int(body_base * 1.95))
-    loc_min = max(18, int(body_base * 1.35))
+    loc_size = max(22, int(body_base * 1.60))
+    loc_min = max(18, int(body_base * 1.25))
     location_font = fonts.get(body_focus_key, loc_size)
+    loc_y = header_y0 + 2
+    update_y = header_y1 - update_h - 6
+    max_loc_h = max(14, update_y - loc_y - 4)
     while True:
         location_font = fonts.get(body_focus_key, loc_size)
         loc_fit = truncate_text(draw, location_txt, location_font, max_loc_w)
         _, loc_h = text_size(draw, loc_fit, location_font)
-        if (loc_h + 2 + update_h) <= (header_h - 8) or loc_size <= loc_min:
+        if loc_h <= max_loc_h or loc_size <= loc_min:
             location_txt = loc_fit
             break
         loc_size -= 2
 
-    loc_y = header_y0 + 2
     draw.text((cx0, loc_y), location_txt, font=location_font, fill=ink)
 
-    _, loc_h = text_size(draw, location_txt, location_font)
-    update_y = min(header_y1 - update_h - 6, loc_y + loc_h + 2)
     draw.text((cx0, update_y), update_txt, font=meta_font, fill=muted)
 
     # 2) Hero: icon + current temp + meta lines (fixed vertical flow, no overlap).
@@ -209,7 +235,7 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     icon_size = max(82, min(112, int(hero_h * 0.58)))
     icon_x = cx0 + 16
     icon_y = hero_y0 + max(8, (hero_h - icon_size) // 2)
-    draw_weather_icon(draw, icon, icon_x, icon_y, size=icon_size, ink=ink, stroke=2)
+    _draw_hero_icon(draw, icon, icon_x, icon_y, icon_size, ink)
 
     temp_txt = _format_temp(hi_raw)
     condition_txt = _weather_word(icon)
@@ -243,7 +269,7 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     temp_y = hero_y0 + max(8, (hero_h - total_h) // 2)
     draw.text((text_x, temp_y), temp_txt, font=temp_font, fill=ink)
 
-    condition_y = temp_y + th + 8
+    condition_y = temp_y + th + 12
     draw.text((text_x, condition_y), condition_txt, font=hero_meta_font, fill=ink)
     _, cond_h = text_size(draw, condition_txt, hero_meta_font)
     draw.text((text_x, condition_y + cond_h + 6), feels_txt, font=hero_sub_font, fill=muted)
