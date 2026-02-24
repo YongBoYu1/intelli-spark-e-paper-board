@@ -1,9 +1,58 @@
 from __future__ import annotations
 
-from PIL import ImageDraw
+import os
+from functools import lru_cache
+
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from app.core.state import AppState
 from app.shared.draw import draw_weather_icon, text_size, truncate_text
+
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_ERIK_FONT_PATH = os.path.join(
+    _REPO_ROOT,
+    "assets",
+    "weather_icon_packs",
+    "erikflowers",
+    "weathericons-regular-webfont.ttf",
+)
+_KICKSTAND_PNG_DIR = os.path.join(_REPO_ROOT, "assets", "weather_icon_packs", "kickstand", "png")
+
+_ERIK_GLYPHS = {
+    "sun": "\uf00d",  # wi-day-sunny
+    "clear": "\uf00d",
+    "cloud": "\uf013",  # wi-cloudy
+    "cloudy": "\uf013",
+    "overcast": "\uf013",
+    "partly_cloudy": "\uf002",  # wi-day-cloudy
+    "partly": "\uf002",
+    "rain": "\uf019",  # wi-rain
+    "drizzle": "\uf019",
+    "storm": "\uf01e",  # wi-thunderstorm
+    "thunder": "\uf01e",
+    "thunderstorm": "\uf01e",
+    "snow": "\uf01b",  # wi-snow
+    "sleet": "\uf0b5",  # wi-sleet
+    "hail": "\uf015",  # wi-hail
+}
+
+_KICKSTAND_NAMES = {
+    "sun": "Sun",
+    "clear": "Sun",
+    "cloud": "Cloud",
+    "cloudy": "Cloud",
+    "overcast": "Cloud",
+    "partly_cloudy": "PartlySunny",
+    "partly": "PartlySunny",
+    "rain": "Rain",
+    "drizzle": "Rain",
+    "storm": "Storm",
+    "thunder": "Storm",
+    "thunderstorm": "Storm",
+    "snow": "Snow",
+    "sleet": "Hail",
+    "hail": "Hail",
+}
 
 
 def _parse_number(raw) -> float | None:
@@ -104,6 +153,149 @@ def _draw_centered_text_clamped(draw, text: str, font, cx: int, y: int, xmin: in
     if x + tw > xmax:
         x = xmax - tw
     draw.text((x, y), text, font=font, fill=fill)
+
+
+def _normalize_icon_name(icon_name: str) -> str:
+    return str(icon_name or "cloud").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+@lru_cache(maxsize=64)
+def _load_erik_font(size: int):
+    if not os.path.exists(_ERIK_FONT_PATH):
+        return None
+    try:
+        return ImageFont.truetype(_ERIK_FONT_PATH, max(8, int(size)))
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=128)
+def _load_kickstand_png(path: str):
+    try:
+        return Image.open(path).convert("RGBA")
+    except Exception:
+        return None
+
+
+def _draw_erik_icon(draw, icon_name: str, x: int, y: int, size: int, ink) -> bool:
+    key = _normalize_icon_name(icon_name)
+    glyph = _ERIK_GLYPHS.get(key) or _ERIK_GLYPHS["cloud"]
+
+    font_size = max(12, int(size * 0.96))
+    min_size = max(8, int(size * 0.56))
+    while font_size >= min_size:
+        font = _load_erik_font(font_size)
+        if font is None:
+            return False
+        bbox = draw.textbbox((0, 0), glyph, font=font)
+        gw = bbox[2] - bbox[0]
+        gh = bbox[3] - bbox[1]
+        if gw <= size and gh <= size:
+            tx = x + (size - gw) // 2 - bbox[0]
+            ty = y + (size - gh) // 2 - bbox[1]
+            draw.text((tx, ty), glyph, font=font, fill=ink)
+            return True
+        font_size -= 1
+    return False
+
+
+def _draw_kickstand_icon(
+    image,
+    icon_name: str,
+    x: int,
+    y: int,
+    size: int,
+    ink,
+    variant: str,
+    thicken: bool = False,
+    alpha_threshold: int | None = None,
+) -> bool:
+    key = _normalize_icon_name(icon_name)
+    name = _KICKSTAND_NAMES.get(key) or "Cloud"
+    use_thin = str(variant or "").strip().lower() in ("thin", "line")
+    filename = f"{name}{'-thin' if use_thin else ''}.png"
+    path = os.path.join(_KICKSTAND_PNG_DIR, filename)
+    if not os.path.exists(path) and use_thin:
+        path = os.path.join(_KICKSTAND_PNG_DIR, f"{name}.png")
+    src = _load_kickstand_png(path)
+    if src is None:
+        return False
+
+    alpha_src = src.split()[-1]
+    bbox = alpha_src.getbbox()
+    if bbox:
+        src = src.crop(bbox)
+
+    try:
+        resample = Image.Resampling.LANCZOS
+    except Exception:
+        resample = Image.LANCZOS
+    icon = src.resize((max(1, size), max(1, size)), resample)
+    alpha = icon.split()[-1]
+    if thicken:
+        try:
+            # Add transparent padding before dilation to avoid edge clipping.
+            pad = 2
+            w, h = alpha.size
+            padded = Image.new("L", (w + pad * 2, h + pad * 2), 0)
+            padded.paste(alpha, (pad, pad))
+            padded = padded.filter(ImageFilter.MaxFilter(3))
+            alpha = padded.crop((pad, pad, pad + w, pad + h))
+        except Exception:
+            pass
+
+    if alpha_threshold is not None:
+        try:
+            t = max(1, min(254, int(alpha_threshold)))
+            alpha = alpha.point(lambda p: 255 if p >= t else 0)
+        except Exception:
+            pass
+
+    paste_ink = ink
+    if image.mode in ("1", "L") and isinstance(ink, tuple):
+        paste_ink = int(round(sum(ink) / len(ink)))
+    elif image.mode in ("RGB", "RGBA") and isinstance(ink, int):
+        paste_ink = (ink, ink, ink) if image.mode == "RGB" else (ink, ink, ink, 255)
+
+    # Treat only non-transparent parts as glyph strokes and tint with ink.
+    image.paste(paste_ink, (x, y, x + size, y + size), alpha)
+    return True
+
+
+def _draw_weather_icon_pack(
+    image,
+    draw,
+    theme: dict,
+    icon_name: str,
+    x: int,
+    y: int,
+    size: int,
+    ink,
+    stroke: int,
+    thicken: bool = False,
+) -> None:
+    pack = str(theme.get("weather_icon_pack") or "native").strip().lower()
+    if pack in ("erik", "erikflowers", "weather-icons", "weather_icons"):
+        if _draw_erik_icon(draw, icon_name, x, y, size, ink):
+            return
+    elif pack in ("kickstand", "kickstandapps", "kick"):
+        variant = str(theme.get("weather_icon_variant") or "thin")
+        alpha_threshold = int(theme.get("weather_icon_alpha_threshold", 185) or 185)
+        if _draw_kickstand_icon(
+            image,
+            icon_name,
+            x,
+            y,
+            size,
+            ink,
+            variant,
+            thicken=thicken,
+            alpha_threshold=alpha_threshold,
+        ):
+            return
+
+    # Fallback to current native icon implementation.
+    draw_weather_icon(draw, icon_name, x, y, size=size, ink=ink, stroke=stroke)
 
 
 def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
@@ -253,8 +445,10 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     hero_icon_size = max(62, min(92, icon_box_w - 10, icon_box_h))
     hero_icon_x = icon_x0 + (icon_box_w - hero_icon_size) // 2
     hero_icon_y = hero_y0 + (hero_h - hero_icon_size) // 2
-    draw_weather_icon(
+    _draw_weather_icon_pack(
+        image,
         draw,
+        theme,
         icon,
         hero_icon_x,
         hero_icon_y,
@@ -379,19 +573,22 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
 
         day_y = forecast_inner_top + 2
         temp_y = forecast_inner_bottom - th2 - 2
-        icon_room = max(22, temp_y - (day_y + dh + 10))
-        icon_size = min(max(18, int(icon_room * 0.72)), max(24, int((forecast_inner_bottom - forecast_inner_top) * 0.24)))
+        icon_room = max(24, temp_y - (day_y + dh + 8))
+        icon_size = min(max(24, int(icon_room * 0.98)), max(34, int((forecast_inner_bottom - forecast_inner_top) * 0.34)))
         icon_x = x0 + (col_w - icon_size) // 2
         icon_y = day_y + dh + max(6, (icon_room - icon_size) // 2)
 
         draw.text((x0 + (col_w - dw) // 2, day_y), day_label, font=day_font, fill=ink)
-        draw_weather_icon(
+        _draw_weather_icon_pack(
+            image,
             draw,
+            theme,
             getattr(day, "icon", "sun"),
             icon_x,
             icon_y,
             size=icon_size,
             ink=ink,
-            stroke=max(2, int(icon_size * 0.08)),
+            stroke=max(3, int(icon_size * 0.12)),
+            thicken=False,
         )
         draw.text((x0 + (col_w - tw2) // 2, temp_y), temp_range, font=temp_font, fill=ink)

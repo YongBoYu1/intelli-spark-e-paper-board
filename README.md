@@ -32,6 +32,18 @@ WAVESHARE_PYTHON_ROOT=third_party/waveshare_ePaper/RaspberryPi_JetsonNano/python
 ```
 Note: the scripts also auto-detect `third_party/waveshare_ePaper/...` without the env var.
 
+### Weather Icon Packs (Weather Detail)
+
+Weather detail supports multiple icon packs via `ui_tuner_theme.json`:
+
+- `weather_icon_pack`: `native` | `erikflowers` | `kickstand`
+- `weather_icon_variant`: `thin` | `regular` (Kickstand only)
+- `weather_icon_alpha_threshold`: alpha threshold tuning for Kickstand PNG rendering (e-paper ghosting control)
+
+See full setup and license notes in:
+
+- `docs/WEATHER_ICON_PACKS.md`
+
 ---
 
 ## Features (Planned / In Progress)
