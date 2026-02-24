@@ -334,14 +334,16 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         return state
 
     if isinstance(event, Back):
+        # Back should always cancel any pending destructive voice confirmation,
+        # even if the confirmation overlay has already timed out/hidden.
+        state.ui.voice_confirm_tool = ""
+        state.ui.voice_confirm_payload_json = ""
+        state.ui.voice_confirm_due_at = 0.0
+
         if state.ui.voice_active:
             state.ui.voice_active = False
             state.ui.voice_phase = "idle"
             state.ui.voice_message = ""
-            # Back should fully cancel any pending destructive voice confirmation.
-            state.ui.voice_confirm_tool = ""
-            state.ui.voice_confirm_payload_json = ""
-            state.ui.voice_confirm_due_at = 0.0
             return state
 
         if state.ui.screen == Screen.HOME:

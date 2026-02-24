@@ -170,6 +170,24 @@ class VoiceActionTests(unittest.TestCase):
         fridge_titles = [r.title.lower() for r in self.state.model.reminders if r.category == "fridge"]
         self.assertIn("marinated chicken", fridge_titles)
 
+    def test_strong_shortage_shopping_add_removes_later_generic_inventory_match_after_specific(self) -> None:
+        now = 1771616000.0
+        self.state.model.reminders = [
+            Reminder(rid="f1", title="Marinated Chicken", right="USE TONIGHT", category="fridge", created_at=now),
+            Reminder(rid="f4", title="Chicken", right="EXP: 2 DAYS", category="fridge", created_at=now - 100),
+            Reminder(rid="g1", title="Buy Milk", right="", category="general", created_at=now),
+        ]
+        action = VoiceAction(
+            tool="shopping_add_item",
+            args={"item_name": "chicken", "inventory_remove_if_generic_match": True},
+        )
+        result = apply_voice_action(self.state, action)
+        self.assertTrue(result.changed)
+        self.assertIn("removed from inventory: chicken", result.message.lower())
+        fridge_titles = [r.title.lower() for r in self.state.model.reminders if r.category == "fridge"]
+        self.assertIn("marinated chicken", fridge_titles)
+        self.assertNotIn("chicken", fridge_titles)
+
     def test_apply_shopping_remove_item(self) -> None:
         result = apply_voice_action(self.state, VoiceAction(tool="shopping_remove_item", args={"item_name": "milk"}))
         self.assertTrue(result.changed)
@@ -279,6 +297,18 @@ class VoiceActionTests(unittest.TestCase):
         self.assertFalse(self.state.ui.voice_active)
         self.assertEqual(self.state.ui.voice_phase, "idle")
         self.assertEqual(self.state.ui.voice_message, "")
+        self.assertEqual(self.state.ui.voice_confirm_tool, "")
+        self.assertEqual(self.state.ui.voice_confirm_payload_json, "")
+        self.assertEqual(self.state.ui.voice_confirm_due_at, 0.0)
+
+    def test_reducer_back_cancels_pending_voice_confirmation_even_when_overlay_not_active(self) -> None:
+        self.state.ui.voice_active = False
+        self.state.ui.voice_confirm_tool = "inventory_clear_all"
+        self.state.ui.voice_confirm_payload_json = "{}"
+        self.state.ui.voice_confirm_due_at = 1771617000.0
+
+        reduce(self.state, Back())
+
         self.assertEqual(self.state.ui.voice_confirm_tool, "")
         self.assertEqual(self.state.ui.voice_confirm_payload_json, "")
         self.assertEqual(self.state.ui.voice_confirm_due_at, 0.0)

@@ -630,13 +630,15 @@ def _remove_matching_inventory_if_generic(state: AppState, *, item_key: str) -> 
     needle = _canonical_item_key(item_key)
     if not needle:
         return None
-    idx = _find_reminder_index(state, category="fridge", item_key=needle)
-    if idx < 0:
-        return None
-    row = state.model.reminders[idx]
-    if not _is_generic_inventory_row_for_key(row.title, needle):
-        return None
-    return state.model.reminders.pop(idx)
+    for idx, row in enumerate(state.model.reminders):
+        if str(row.category or "") != "fridge":
+            continue
+        if _canonical_item_key(row.title) != needle:
+            continue
+        if not _is_generic_inventory_row_for_key(row.title, needle):
+            continue
+        return state.model.reminders.pop(idx)
+    return None
 
 
 def _is_generic_inventory_row_for_key(title: str, item_key: str) -> bool:
