@@ -79,7 +79,9 @@ Not implemented in V1:
 ## Branch and Tracking
 
 - Working branch: `codex/settings-v1-page-structure`
-- Issue draft (for GitHub): `docs/issues/2026-02-25-settings-v1-page-structure.md`
+- GitHub issue: `#17`  
+  https://github.com/YongBoYu1/intelli-spark-e-paper-board/issues/17
+- Issue draft source: `docs/issues/2026-02-25-settings-v1-page-structure.md`
 
 ## How to publish the issue (requires auth)
 

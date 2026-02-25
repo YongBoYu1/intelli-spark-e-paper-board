@@ -50,6 +50,8 @@ Settings page scope and behavior are documented in:
 
 - `docs/SETTINGS_V1.md`
 - `docs/issues/2026-02-25-settings-v1-page-structure.md` (issue draft)
+- Tracking issue: `#17`  
+  `https://github.com/YongBoYu1/intelli-spark-e-paper-board/issues/17`
 
 ---
 
