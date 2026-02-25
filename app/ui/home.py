@@ -10,10 +10,10 @@ from app.shared.draw import (
     draw_battery,
     draw_text_spaced,
     draw_wifi,
-    draw_weather_icon,
     text_size,
     text_width_spaced,
 )
+from app.ui.weather_detail import _draw_weather_icon_pack
 from app.ui.layout import compute_layout
 from app.ui.widgets import draw_card, draw_reminder_item
 
@@ -116,6 +116,7 @@ def render_home(image, data, fonts, theme=None, overlay=None):
     draw_card(draw, right_card, radius=card_radius, outline=border, width=border_width, fill=card)
 
     _draw_left_panel(
+        image,
         draw,
         left_card,
         weather_card,
@@ -155,6 +156,7 @@ def render_home(image, data, fonts, theme=None, overlay=None):
 
 
 def _draw_left_panel(
+    image,
     draw,
     left_card,
     weather_card,
@@ -291,10 +293,10 @@ def _draw_left_panel(
             fill=ink,
         )
 
-    _draw_weather_strip(draw, weather_card, data, fonts, border, weather_divider_width, icon_stroke, ink, muted, theme)
+    _draw_weather_strip(image, draw, weather_card, data, fonts, border, weather_divider_width, icon_stroke, ink, muted, theme)
 
 
-def _draw_weather_strip(draw, weather_card, data, fonts, border, divider_width, icon_stroke, ink, muted, theme):
+def _draw_weather_strip(image, draw, weather_card, data, fonts, border, divider_width, icon_stroke, ink, muted, theme):
     x0, y0, x1, y1 = weather_card
     items = data.get("weather", [])
     if not items:
@@ -304,6 +306,12 @@ def _draw_weather_strip(draw, weather_card, data, fonts, border, divider_width, 
     hi_font = fonts.get(theme.get("weather_hi_font", "inter_semibold"), theme.get("weather_hi_size", 12))
     lo_font = fonts.get(theme.get("weather_lo_font", "inter_regular"), theme.get("weather_lo_size", 10))
     icon_size = theme.get("weather_icon_size", 36)
+    icon_scale = float(theme.get("weather_home_icon_scale", 1.35) or 1.35)
+    draw_icon_size = max(12, int(round(icon_size * icon_scale)))
+    icon_alpha = int(theme.get("weather_home_icon_alpha_threshold", theme.get("weather_icon_alpha_threshold", 165)) or 165)
+    icon_theme = dict(theme or {})
+    icon_theme["weather_icon_alpha_threshold"] = icon_alpha
+    icon_thicken = bool(theme.get("weather_home_icon_thicken", False))
     day_top = theme.get("weather_day_top", 10)
     icon_top = theme.get("weather_icon_top", 34)
     temp_bottom = theme.get("weather_temp_bottom", 10)
@@ -324,8 +332,20 @@ def _draw_weather_strip(draw, weather_card, data, fonts, border, divider_width, 
             draw.text((cx - dow_w / 2, y0 + day_top), dow, font=day_font, fill=ink)
 
         icon = item.get("icon", "sun")
-        icon_x = cx - icon_size / 2
-        draw_weather_icon(draw, icon, icon_x, y0 + icon_top, size=icon_size, ink=ink, stroke=icon_stroke)
+        icon_x = cx - draw_icon_size / 2
+        _draw_weather_icon_pack(
+            image,
+            draw,
+            icon_theme,
+            icon,
+            int(round(icon_x)),
+            int(round(y0 + icon_top)),
+            size=int(draw_icon_size),
+            size_h=None,
+            ink=ink,
+            stroke=icon_stroke,
+            thicken=icon_thicken,
+        )
 
         hi = item.get("hi", "")
         lo = item.get("lo", "")

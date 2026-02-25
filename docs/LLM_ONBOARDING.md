@@ -61,6 +61,11 @@ Use it as the source of truth for current scope and priorities.
   - Runtime defaults: `app/shared/panel_font_templates.py`
   - JSON preset: `assets/themes/panel_font_template_eink_balanced_v1.json`
   - Build path: `app/render/panel.py` auto-applies `panel_font_template` (default `eink_balanced_v1`).
+- Weather icon packs for detail screen:
+  - Runtime keys: `weather_icon_pack`, `weather_icon_variant`, `weather_icon_alpha_threshold`
+  - Asset path: `assets/weather_icon_packs/`
+  - Integration code: `app/ui/weather_detail.py`
+  - Reference doc: `docs/WEATHER_ICON_PACKS.md`
 
 ## 6) Input/Navigation Model (Current)
 

@@ -7,7 +7,8 @@ from PIL import ImageDraw
 
 from app.core.kitchen_queue import kitchen_queue_theme_key, kitchen_visible_task_indices
 from app.core.state import AppState
-from app.shared.draw import draw_text_spaced, draw_weather_icon, rounded_rect, text_size, text_width_spaced, truncate_text
+from app.shared.draw import draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
+from app.ui.weather_detail import _draw_weather_icon_pack
 
 
 def _to_rgb(c):
@@ -96,7 +97,11 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_weather_desc_offset_y", 5)
     t.setdefault("b_weather_icon_gap", 10)
     t.setdefault("b_weather_icon_size", 34)
+    # Home panel icon needs stronger visual weight than detail page.
+    t.setdefault("b_weather_icon_scale", 1.35)
     t.setdefault("b_weather_icon_stroke", 3)
+    t.setdefault("b_weather_icon_alpha_threshold", 160)
+    t.setdefault("b_weather_icon_thicken", False)
     t.setdefault("b_weather_humidity_size", 15)
     t.setdefault("b_weather_humidity_spacing", 1)
     t.setdefault("b_weather_humidity_gap", 8)
@@ -505,6 +510,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         temp_str = f"{int(w0.hi)}°"
         temp_w, temp_h = text_size(draw, temp_str, f_temp)
         icon_size = int(t["b_weather_icon_size"])
+        draw_icon_size = max(12, int(round(icon_size * float(t.get("b_weather_icon_scale", 1.12) or 1.12))))
 
         temp_x = weather_right - temp_w
         temp_y = top_y + int(t["b_weather_top"])
@@ -527,16 +533,24 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
         icon_y = desc_y + dh2 + int(t["b_weather_icon_gap"])
         icon_center_x = desc_x + dsw // 2
-        icon_x = int(icon_center_x - icon_size / 2)
-        icon_x = max(weather_left, min(weather_right - icon_size, icon_x))
-        draw_weather_icon(
+        icon_x = int(icon_center_x - draw_icon_size / 2)
+        icon_x = max(weather_left, min(weather_right - draw_icon_size, icon_x))
+        icon_theme = dict(t)
+        icon_theme["weather_icon_alpha_threshold"] = int(
+            t.get("b_weather_icon_alpha_threshold", t.get("weather_icon_alpha_threshold", 185)) or 185
+        )
+        _draw_weather_icon_pack(
+            image,
             draw,
+            icon_theme,
             w0.icon,
-            icon_x,
-            icon_y,
-            size=icon_size,
+            int(icon_x),
+            int(icon_y),
+            size=int(draw_icon_size),
+            size_h=None,
             ink=ink,
             stroke=int(t.get("b_weather_icon_stroke", 3)),
+            thicken=bool(t.get("b_weather_icon_thicken", False)),
         )
 
         humidity = getattr(w0, "humidity", None)
@@ -550,7 +564,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         elif show_humidity and bool(t.get("b_show_weather_humidity_placeholder", False)):
             humidity_text = f"{str(t['b_weather_humidity_prefix']).upper()} --%"
 
-        humidity_bottom = icon_y + icon_size
+        humidity_bottom = icon_y + draw_icon_size
         if humidity_text:
             humidity_y = humidity_bottom + int(t["b_weather_humidity_gap"])
             hsw = text_width_spaced(draw, humidity_text, f_weather_humidity, spacing=int(t["b_weather_humidity_spacing"]))
