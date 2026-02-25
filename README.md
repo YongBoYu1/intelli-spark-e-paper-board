@@ -44,6 +44,13 @@ See full setup and license notes in:
 
 - `docs/WEATHER_ICON_PACKS.md`
 
+### Settings V1 (E-Ink)
+
+Settings page scope and behavior are documented in:
+
+- `docs/SETTINGS_V1.md`
+- `docs/issues/2026-02-25-settings-v1-page-structure.md` (issue draft)
+
 ---
 
 ## Features (Planned / In Progress)

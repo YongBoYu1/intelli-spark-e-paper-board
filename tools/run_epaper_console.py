@@ -342,6 +342,16 @@ def main() -> int:
                 state.ui.voice_active,
                 state.ui.menu_focused,
                 state.ui.active_menu,
+                state.ui.settings_focused_index,
+                state.ui.font_size,
+                state.ui.partial_refresh_mode,
+                state.ui.full_refresh_every,
+                state.ui.wifi_enabled,
+                state.ui.bluetooth_enabled,
+                state.ui.auto_sync_enabled,
+                state.ui.last_sync_at,
+                state.ui.rotation_deg,
+                state.ui.settings_notice,
                 tuple((r.rid, r.completed) for r in state.model.reminders),
             )
             if sig != last_render_sig:

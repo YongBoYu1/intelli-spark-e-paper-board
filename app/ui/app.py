@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PIL import ImageDraw
+from PIL import Image, ImageDraw
 
 from app.core.state import AppState, Screen, MenuItemId, WidgetMode
 from app.ui.home import render_home
@@ -8,6 +8,7 @@ from app.ui.home_kitchen import render_home_kitchen
 from app.ui.calendar import render_calendar
 from app.ui.weather_detail import render_weather_detail
 from app.ui.menu import render_menu
+from app.ui.settings import render_settings
 from app.ui.placeholder import render_placeholder
 from app.ui.layout import compute_layout
 
@@ -49,9 +50,46 @@ def _to_render_data(state: AppState) -> dict:
     }
 
 
-def render_app(image, state: AppState, fonts, theme: dict) -> None:
+class _ScaledFontBook:
+    def __init__(self, base, scale: float):
+        self._base = base
+        self._scale = max(0.6, min(1.6, float(scale)))
+
+    def get(self, key, size):
+        try:
+            s = float(size)
+        except Exception:
+            s = 12.0
+        scaled = max(1, int(round(s * self._scale)))
+        return self._base.get(key, scaled)
+
+
+def _font_scale(state: AppState) -> float:
+    size = str(state.ui.font_size or "medium").strip().lower()
+    if size == "small":
+        return 0.9
+    if size == "large":
+        return 1.12
+    return 1.0
+
+
+def _mode_color(image, value):
+    if image.mode == "RGB":
+        if isinstance(value, tuple):
+            return value
+        if isinstance(value, int):
+            v = max(0, min(255, int(value)))
+            return (v, v, v)
+        return (255, 255, 255)
+    return int(value) if isinstance(value, int) else 255
+
+
+def _render_no_rotation(image, state: AppState, fonts, theme: dict) -> None:
     if state.ui.screen == Screen.MENU:
         render_menu(image, state, fonts, theme)
+        return
+    if state.ui.screen == Screen.SETTINGS:
+        render_settings(image, state, fonts, theme)
         return
     if state.ui.screen == Screen.PLACEHOLDER:
         render_placeholder(image, state, fonts, theme)
@@ -109,3 +147,18 @@ def render_app(image, state: AppState, fonts, theme: dict) -> None:
             width=int(overlay.get("focus_width", 4) or 4),
             fill=None,
         )
+
+
+def render_app(image, state: AppState, fonts, theme: dict) -> None:
+    scale = _font_scale(state)
+    scaled_fonts = fonts if abs(scale - 1.0) < 1e-6 else _ScaledFontBook(fonts, scale)
+    rotation = 180 if int(state.ui.rotation_deg or 0) == 180 else 0
+
+    if rotation == 0:
+        _render_no_rotation(image, state, scaled_fonts, theme)
+        return
+
+    bg = _mode_color(image, (theme or {}).get("bg", (theme or {}).get("card", 255)))
+    canvas = Image.new(image.mode, image.size, bg)
+    _render_no_rotation(canvas, state, scaled_fonts, theme)
+    image.paste(canvas.rotate(180))

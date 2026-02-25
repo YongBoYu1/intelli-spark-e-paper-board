@@ -5,6 +5,7 @@ import time
 from typing import Optional
 
 from app.core.kitchen_queue import kitchen_visible_task_indices
+from app.core.settings_schema import SettingsItem, SETTINGS_ORDER
 from app.core.state import AppState, Screen, Reminder, MenuItemId, WidgetMode
 
 
@@ -136,6 +137,72 @@ def _apply_reorder(state: AppState) -> None:
     state.ui.pending_reorder = False
 
 
+def _set_settings_notice(state: AppState, text: str, *, due_in_s: float = 2.0) -> None:
+    state.ui.settings_notice = str(text or "")
+    state.ui.settings_notice_due_at = time.time() + max(0.0, float(due_in_s))
+
+
+def _settings_item_for_focus(state: AppState) -> SettingsItem:
+    n = max(1, len(SETTINGS_ORDER))
+    idx = int(state.ui.settings_focused_index or 0) % n
+    state.ui.settings_focused_index = idx
+    return SETTINGS_ORDER[idx]
+
+
+def _cycle_value(current, options: list):
+    if not options:
+        return current
+    try:
+        idx = options.index(current)
+    except ValueError:
+        return options[0]
+    return options[(idx + 1) % len(options)]
+
+
+def _handle_settings_click(state: AppState, now: float) -> None:
+    item = _settings_item_for_focus(state)
+
+    if item == SettingsItem.FONT_SIZE:
+        state.ui.font_size = str(_cycle_value(str(state.ui.font_size or "medium"), ["small", "medium", "large"]))
+        return
+
+    if item == SettingsItem.PARTIAL_REFRESH:
+        state.ui.partial_refresh_mode = str(
+            _cycle_value(str(state.ui.partial_refresh_mode or "balanced"), ["slow", "balanced", "fast"])
+        )
+        return
+
+    if item == SettingsItem.FULL_REFRESH:
+        state.ui.full_refresh_every = int(_cycle_value(int(state.ui.full_refresh_every or 15), [10, 15, 20]))
+        return
+
+    if item == SettingsItem.CONNECTIVITY:
+        # One switch for the combined connectivity row.
+        next_on = not (bool(state.ui.wifi_enabled) and bool(state.ui.bluetooth_enabled))
+        state.ui.wifi_enabled = next_on
+        state.ui.bluetooth_enabled = next_on
+        return
+
+    if item == SettingsItem.AUTO_SYNC:
+        state.ui.auto_sync_enabled = not bool(state.ui.auto_sync_enabled)
+        return
+
+    if item == SettingsItem.SYNC_NOW:
+        # V1 placeholder: fake sync success without backend integration.
+        state.ui.last_sync_at = float(now)
+        state.ui.sync_state = "ok"
+        _set_settings_notice(state, "FAKE SYNC COMPLETE")
+        return
+
+    if item == SettingsItem.RESET_AND_WIPE:
+        _set_settings_notice(state, "NOT IMPLEMENTED")
+        return
+
+    if item == SettingsItem.ROTATION:
+        state.ui.rotation_deg = 180 if int(state.ui.rotation_deg or 0) == 0 else 0
+        return
+
+
 def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> AppState:
     theme = theme or {}
     variant = _home_variant(theme)
@@ -192,6 +259,10 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                     state.ui.memo_index = (int(state.ui.memo_index or 0) + 1) % max(1, len(state.model.memos))
                     state.ui.memo_last_rotated_at = now
 
+        if state.ui.settings_notice and now >= float(state.ui.settings_notice_due_at or 0.0):
+            state.ui.settings_notice = ""
+            state.ui.settings_notice_due_at = 0.0
+
         return state
 
     # Any non-tick event wakes the UI
@@ -233,6 +304,9 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                         state.ui.calendar_selected_index = cur
             else:
                 state.ui.calendar_offset_days = int(state.ui.calendar_offset_days or 0) + event.delta
+        elif state.ui.screen == Screen.SETTINGS:
+            n = max(1, len(SETTINGS_ORDER))
+            state.ui.settings_focused_index = (int(state.ui.settings_focused_index or 0) + event.delta) % n
         else:
             # Minimal: rotate does nothing on detail pages for now.
             pass
@@ -267,6 +341,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                     _clamp_focus_kitchen(state, theme)
                 else:
                     _clamp_focus_home(state, items_per_page)
+            elif picked == MenuItemId.SETTINGS:
+                state.ui.screen = Screen.SETTINGS
             else:
                 state.ui.screen = Screen.PLACEHOLDER
             return state
@@ -318,6 +394,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                     if idx >= n_events:
                         task_idx = idx - n_events
                         _toggle_task_completed_by_index(state, task_idx)
+        elif state.ui.screen == Screen.SETTINGS:
+            _handle_settings_click(state, now)
         else:
             # Detail/placeholder: click does nothing; Back is the exit (TSX).
             pass
