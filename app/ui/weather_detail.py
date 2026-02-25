@@ -159,6 +159,21 @@ def _normalize_icon_name(icon_name: str) -> str:
     return str(icon_name or "cloud").strip().lower().replace("-", "_").replace(" ", "_")
 
 
+def _forecast_icon_visual_scale(theme: dict, icon_name: str) -> tuple[float, float]:
+    pack = str(theme.get("weather_icon_pack") or "native").strip().lower()
+    variant = str(theme.get("weather_icon_variant") or "").strip().lower()
+    icon = _normalize_icon_name(icon_name)
+
+    # Kickstand thin cloud icons look optically taller than rain/storm.
+    # Keep width aligned, compress only height for cloud-like shapes.
+    if pack in ("kickstand", "kickstandapps", "kick") and variant in ("thin", "line"):
+        if icon in ("cloud", "cloudy", "overcast"):
+            return (1.0, 0.70)
+        if icon in ("partly", "partly_cloudy"):
+            return (1.0, 0.78)
+    return (1.0, 1.0)
+
+
 @lru_cache(maxsize=64)
 def _load_erik_font(size: int):
     if not os.path.exists(_ERIK_FONT_PATH):
@@ -205,6 +220,7 @@ def _draw_kickstand_icon(
     x: int,
     y: int,
     size: int,
+    size_h: int | None,
     ink,
     variant: str,
     thicken: bool = False,
@@ -230,7 +246,9 @@ def _draw_kickstand_icon(
         resample = Image.Resampling.LANCZOS
     except Exception:
         resample = Image.LANCZOS
-    icon = src.resize((max(1, size), max(1, size)), resample)
+    target_w = max(1, int(size))
+    target_h = max(1, int(size_h if size_h is not None else size))
+    icon = src.resize((target_w, target_h), resample)
     alpha = icon.split()[-1]
     if thicken:
         try:
@@ -258,7 +276,7 @@ def _draw_kickstand_icon(
         paste_ink = (ink, ink, ink) if image.mode == "RGB" else (ink, ink, ink, 255)
 
     # Treat only non-transparent parts as glyph strokes and tint with ink.
-    image.paste(paste_ink, (x, y, x + size, y + size), alpha)
+    image.paste(paste_ink, (x, y, x + target_w, y + target_h), alpha)
     return True
 
 
@@ -270,6 +288,7 @@ def _draw_weather_icon_pack(
     x: int,
     y: int,
     size: int,
+    size_h: int | None,
     ink,
     stroke: int,
     thicken: bool = False,
@@ -287,6 +306,7 @@ def _draw_weather_icon_pack(
             x,
             y,
             size,
+            size_h,
             ink,
             variant,
             thicken=thicken,
@@ -295,7 +315,8 @@ def _draw_weather_icon_pack(
             return
 
     # Fallback to current native icon implementation.
-    draw_weather_icon(draw, icon_name, x, y, size=size, ink=ink, stroke=stroke)
+    fallback_size = max(1, min(size, size_h)) if size_h is not None else size
+    draw_weather_icon(draw, icon_name, x, y, size=fallback_size, ink=ink, stroke=stroke)
 
 
 def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
@@ -345,7 +366,6 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     forecast_y0 = metric_y1
     forecast_y1 = forecast_y0 + forecast_h
 
-    draw.line((cx0, hero_y1, cx1, hero_y1), fill=ink, width=2)
     draw.line((cx0, metric_y1, cx1, metric_y1), fill=ink, width=2)
 
     days, sel, current = _select_days(state)
@@ -453,6 +473,7 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
         hero_icon_x,
         hero_icon_y,
         size=hero_icon_size,
+        size_h=None,
         ink=ink,
         stroke=max(3, int(hero_icon_size * 0.06)),
     )
@@ -575,8 +596,13 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
         temp_y = forecast_inner_bottom - th2 - 2
         icon_room = max(24, temp_y - (day_y + dh + 8))
         icon_size = min(max(24, int(icon_room * 0.98)), max(34, int((forecast_inner_bottom - forecast_inner_top) * 0.34)))
-        icon_x = x0 + (col_w - icon_size) // 2
-        icon_y = day_y + dh + max(6, (icon_room - icon_size) // 2)
+        icon_scale_w, icon_scale_h = _forecast_icon_visual_scale(theme, getattr(day, "icon", "sun"))
+        draw_icon_w = max(18, int(round(icon_size * icon_scale_w)))
+        draw_icon_h = max(16, int(round(icon_size * icon_scale_h)))
+        icon_box_x = x0 + (col_w - icon_size) // 2
+        icon_box_y = day_y + dh + max(6, (icon_room - icon_size) // 2)
+        icon_x = icon_box_x + (icon_size - draw_icon_w) // 2
+        icon_y = icon_box_y + (icon_size - draw_icon_h) // 2
 
         draw.text((x0 + (col_w - dw) // 2, day_y), day_label, font=day_font, fill=ink)
         _draw_weather_icon_pack(
@@ -586,9 +612,10 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
             getattr(day, "icon", "sun"),
             icon_x,
             icon_y,
-            size=icon_size,
+            size=draw_icon_w,
+            size_h=draw_icon_h,
             ink=ink,
-            stroke=max(3, int(icon_size * 0.12)),
+            stroke=max(2, int(max(draw_icon_w, draw_icon_h) * 0.10)),
             thicken=False,
         )
         draw.text((x0 + (col_w - tw2) // 2, temp_y), temp_range, font=temp_font, fill=ink)
