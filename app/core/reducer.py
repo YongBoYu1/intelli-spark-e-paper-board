@@ -177,8 +177,10 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 _clamp_focus_home(state, items_per_page)
 
         # Voice overlay timeout (stub)
-        if state.ui.voice_active and now >= state.ui.voice_due_at:
+        if state.ui.voice_active and float(state.ui.voice_due_at or 0.0) > 0.0 and now >= state.ui.voice_due_at:
             state.ui.voice_active = False
+            state.ui.voice_phase = "idle"
+            state.ui.voice_message = ""
             if state.ui.screen == Screen.HOME and variant == "kitchen":
                 _clamp_focus_kitchen(state, theme)
             else:
@@ -326,12 +328,22 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
     if isinstance(event, LongPress):
         # Voice overlay stub: show listening overlay briefly, then return.
         state.ui.voice_active = True
+        state.ui.voice_phase = "recording"
+        state.ui.voice_message = ""
         state.ui.voice_due_at = now + 2.0
         return state
 
     if isinstance(event, Back):
+        # Back should always cancel any pending destructive voice confirmation,
+        # even if the confirmation overlay has already timed out/hidden.
+        state.ui.voice_confirm_tool = ""
+        state.ui.voice_confirm_payload_json = ""
+        state.ui.voice_confirm_due_at = 0.0
+
         if state.ui.voice_active:
             state.ui.voice_active = False
+            state.ui.voice_phase = "idle"
+            state.ui.voice_message = ""
             return state
 
         if state.ui.screen == Screen.HOME:

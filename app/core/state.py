@@ -123,7 +123,12 @@ class UiState:
 
     # Voice overlay stub (TSX: long press/Space enters listening overlay on the clock panel).
     voice_active: bool = False
+    voice_phase: str = "idle"  # "idle" | "recording" | "processing" | "done" | "error"
+    voice_message: str = ""
     voice_due_at: float = 0.0
+    voice_confirm_tool: str = ""
+    voice_confirm_payload_json: str = ""
+    voice_confirm_due_at: float = 0.0
 
     last_interaction_at: float = field(default_factory=lambda: time.time())
 
