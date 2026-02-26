@@ -29,8 +29,8 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from app.core.reducer import reduce, Rotate, Click, Back, Tick
-from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem
+from app.core.reducer import reduce, Rotate, Click, LongPress, Back, Tick
+from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
 from app.render.epd import init_epd, display_image
 from app.render.panel import build_panel_theme, quantize_for_panel
 from app.shared.env import load_repo_dotenv
@@ -115,6 +115,29 @@ def _parse_optional_humidity(raw) -> int | None:
         return None
 
 
+def _parse_optional_number(raw) -> float | None:
+    if raw is None:
+        return None
+    try:
+        if isinstance(raw, str):
+            txt = raw.strip()
+            if not txt:
+                return None
+            cleaned = []
+            for ch in txt:
+                if ch.isdigit() or ch in (".", "-"):
+                    cleaned.append(ch)
+                else:
+                    cleaned.append(" ")
+            tokens = "".join(cleaned).split()
+            if not tokens:
+                return None
+            return float(tokens[0])
+        return float(raw)
+    except Exception:
+        return None
+
+
 def _load_model(repo_root: str) -> DashboardModel:
     path = os.path.join(repo_root, "data", "dashboard.json")
     if os.path.exists(path):
@@ -162,6 +185,13 @@ def _load_model(repo_root: str) -> DashboardModel:
                     hi=int(w.get("hi", 0)),
                     lo=int(w.get("lo", 0)),
                     humidity=_parse_optional_humidity(w.get("humidity")),
+                    feels_like=_parse_optional_number(
+                        w.get("feels_like") or w.get("feelsLike") or w.get("feels") or w.get("apparent_temp")
+                    ),
+                    wind_kmh=_parse_optional_number(
+                        w.get("wind_kmh") or w.get("windKmh") or w.get("wind_speed") or w.get("wind")
+                    ),
+                    uv_index=_parse_optional_number(w.get("uv_index") or w.get("uv") or w.get("uvi")),
                 )
             )
         except Exception:
@@ -486,7 +516,7 @@ def main() -> int:
     old = termios.tcgetattr(fd)
     tty.setraw(fd)
     try:
-        print("Controls: Left/Right rotate, Enter click, Space long press, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, W weather, Space long press, B/Esc back, Q quit")
         last_render_sig = None
         next_tick = time.time()
         while True:
@@ -537,6 +567,10 @@ def main() -> int:
                 ev = None
             elif key in ("b", "B", "\x7f", "\x1b"):  # backspace / esc
                 ev = Back()
+            elif key in ("w", "W"):
+                if state.ui.screen == Screen.HOME:
+                    state.ui.screen = Screen.WEATHER
+                    state.ui.weather_day_index = 0
             elif key in ("q", "Q"):
                 return 0
 

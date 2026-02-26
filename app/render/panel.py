@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PIL import Image
+from app.shared.panel_font_templates import apply_panel_font_template
 
 
 def _clamp_u8(v) -> int:
@@ -46,13 +47,14 @@ def build_panel_theme(theme: dict | None, *, muted_gray: int = 150) -> dict:
     We intentionally render to RGB/L first, then quantize to 1-bit to avoid the
     very jagged direct draw artifacts from rendering primitives directly on mode '1'.
     """
-    t = dict(theme or {})
+    t = apply_panel_font_template(theme)
     muted = _to_gray(t.get("panel_muted", t.get("muted")), muted_gray)
     t["ink"] = (0, 0, 0)
     t["border"] = (0, 0, 0)
     t["card"] = (255, 255, 255)
     t["bg"] = (255, 255, 255)
     t["muted"] = (muted, muted, muted)
+    t["panel_mode"] = True
     return t
 
 

@@ -45,6 +45,9 @@ class WeatherDay:
     hi: int
     lo: int
     humidity: int | None = None
+    feels_like: float | None = None
+    wind_kmh: float | None = None
+    uv_index: float | None = None
 
 
 @dataclass
