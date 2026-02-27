@@ -13,7 +13,7 @@ from tkinter import ttk
 import re
 from datetime import datetime
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
@@ -25,7 +25,7 @@ from app.render.panel import build_panel_theme, quantize_for_panel
 from app.shared.env import load_repo_dotenv
 from app.shared.fonts import FontBook
 from app.shared.paths import find_repo_root
-from app.ui.app import render_app
+from app.ui.app import render_app, _draw_mic_icon, _normalize_mic_style
 from app.voice import (
     VoiceClientError,
     apply_voice_action,
@@ -530,6 +530,8 @@ class Simulator(tk.Tk):
         self.panel_gamma = tk.DoubleVar(value=float(self.theme.get("panel_gamma", 1.0)))
         self.panel_dither = tk.BooleanVar(value=bool(self.theme.get("panel_dither", False)))
         self.badge_style = tk.StringVar(value=str(self.theme.get("b_badge_style", "text")))
+        self.voice_mic_mode = tk.StringVar(value=str(self.theme.get("voice_zone_mic_mode", "tabler_state")))
+        self.voice_mic_style = tk.StringVar(value=str(self.theme.get("voice_zone_mic_style", "tabler_outline")))
         self.voice_api_url = tk.StringVar(value=os.environ.get("VOICE_SIM_API_URL", os.environ.get("VOICE_API_URL", "")))
         self.voice_timeout_s = tk.DoubleVar(value=float(os.environ.get("VOICE_TIMEOUT_S", "12")))
         self.voice_audio_max_sec = tk.IntVar(value=max(1, int(os.environ.get("VOICE_MAX_SEC", "6"))))
@@ -578,6 +580,30 @@ class Simulator(tk.Tk):
             state="readonly",
             width=16,
         ).grid(row=0, column=10, padx=(0, 6), sticky="w")
+        ttk.Label(self.controls, text="Mic Style").grid(row=0, column=11, padx=(10, 6), sticky="w")
+        ttk.Combobox(
+            self.controls,
+            textvariable=self.voice_mic_style,
+            values=(
+                "heroicons_solid",
+                "heroicons_outline",
+                "tabler_outline",
+                "tabler_half",
+                "tabler_filled",
+                "bootstrap_outline",
+                "bootstrap_fill",
+            ),
+            state="readonly",
+            width=16,
+        ).grid(row=0, column=12, padx=(0, 6), sticky="w")
+        ttk.Label(self.controls, text="Mic Mode").grid(row=0, column=13, padx=(8, 6), sticky="w")
+        ttk.Combobox(
+            self.controls,
+            textvariable=self.voice_mic_mode,
+            values=("tabler_state", "manual"),
+            state="readonly",
+            width=12,
+        ).grid(row=0, column=14, padx=(0, 6), sticky="w")
         ttk.Label(self.controls, text="Voice API").grid(row=1, column=0, padx=(0, 6), pady=(8, 0), sticky="w")
         ttk.Entry(self.controls, textvariable=self.voice_api_url, width=42).grid(row=1, column=1, columnspan=5, pady=(8, 0), sticky="ew")
         ttk.Label(self.controls, text="Max").grid(row=1, column=6, padx=(6, 4), pady=(8, 0), sticky="w")
@@ -596,6 +622,9 @@ class Simulator(tk.Tk):
         self.mic_combo.grid(row=2, column=1, columnspan=3, padx=(0, 8), pady=(8, 0), sticky="w")
         self.mic_combo.bind("<<ComboboxSelected>>", self._on_mic_selected)
         ttk.Button(self.controls, text="Refresh Mic", command=self._refresh_ffmpeg_devices).grid(row=2, column=4, pady=(8, 0), sticky="w")
+        ttk.Label(self.controls, text="Mic Gallery").grid(row=3, column=0, padx=(0, 6), pady=(8, 0), sticky="nw")
+        self.mic_gallery = ttk.Label(self.controls)
+        self.mic_gallery.grid(row=3, column=1, columnspan=12, padx=(0, 6), pady=(8, 0), sticky="w")
 
         self.preview = ttk.Label(self)
         self.preview.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
@@ -632,17 +661,52 @@ class Simulator(tk.Tk):
         self.bind_all("<KeyPress-space>", self._on_space_press)
         self.bind_all("<KeyRelease-space>", self._on_space_release)
 
-        for v in (self.preview_mode, self.panel_threshold, self.panel_muted, self.panel_gamma, self.badge_style):
+        for v in (
+            self.preview_mode,
+            self.panel_threshold,
+            self.panel_muted,
+            self.panel_gamma,
+            self.badge_style,
+            self.voice_mic_mode,
+            self.voice_mic_style,
+        ):
             v.trace_add("write", lambda *_: self._render())
 
+        self._last_tick_render_sig = None
         self.after(100, self._tick)
         self._render()
 
     def _tick(self):
+        before_sig = self._tick_render_sig()
         expire_pending_voice_confirmation(self.state)
         self.state = reduce(self.state, Tick(), theme=self.theme)
-        self._render()
+        after_sig = self._tick_render_sig()
+        if after_sig != before_sig or after_sig != self._last_tick_render_sig:
+            self._render()
+            self._last_tick_render_sig = after_sig
         self.after(100, self._tick)
+
+    def _tick_render_sig(self):
+        ui = self.state.ui
+        return (
+            ui.screen.value,
+            int(ui.focused_index or 0),
+            int(ui.page or 0),
+            bool(ui.idle),
+            str(getattr(ui.widget_mode, "value", ui.widget_mode)),
+            int(ui.timer_seconds or 0),
+            bool(ui.timer_running),
+            bool(ui.voice_active),
+            str(ui.voice_phase or ""),
+            str(ui.voice_message or ""),
+            str(ui.voice_confirm_tool or ""),
+            bool(ui.pending_reorder),
+            int(ui.reminders_version or 0),
+            int(ui.memo_index or 0),
+            int(ui.weather_day_index or 0),
+            bool(self.voice_busy),
+            bool(self.voice_recording),
+        )
 
     def _dispatch(self, ev):
         if isinstance(ev, Click):
@@ -1101,7 +1165,11 @@ class Simulator(tk.Tk):
             before_snap=before_snap,
             after_snap=after_snap,
         )
-        self._set_voice_overlay(result.status, shown, hold_s=4.0)
+        hold_s = 4.0
+        if str(result.status or "").strip().lower() == "confirm":
+            remaining_confirm_s = max(0.0, float(self.state.ui.voice_confirm_due_at or 0.0) - time.time())
+            hold_s = max(hold_s, remaining_confirm_s + 0.2)
+        self._set_voice_overlay(result.status, shown, hold_s=hold_s)
         self._render()
 
     def _voice_error(self, msg: str) -> None:
@@ -1119,6 +1187,13 @@ class Simulator(tk.Tk):
         if badge_style not in ("text", "text_focus_invert", "outline", "invert", "focus_invert"):
             badge_style = "text"
         self.theme["b_badge_style"] = badge_style
+        mic_mode = str(self.voice_mic_mode.get() or "tabler_state").strip().lower()
+        if mic_mode not in ("tabler_state", "manual"):
+            mic_mode = "tabler_state"
+        self.theme["voice_zone_mic_mode"] = mic_mode
+        mic_style = _normalize_mic_style(str(self.voice_mic_style.get() or "tabler_outline"))
+        self.theme["voice_zone_mic_style"] = mic_style
+        self._render_mic_gallery(selected=mic_style)
 
         bg = self.theme.get("bg", (229, 229, 229))
         color_img = Image.new("RGB", (w, h), bg if isinstance(bg, tuple) else (229, 229, 229))
@@ -1156,11 +1231,51 @@ class Simulator(tk.Tk):
                 f"screen={ui.screen.value} focus={ui.focused_index} page={ui.page} idle={ui.idle} "
                 f"pending_reorder={ui.pending_reorder} mode={mode} th={threshold} muted={muted} "
                 f"gamma={gamma:.2f} dither={dither} badge_style={badge_style} "
+                f"mic_mode={mic_mode} mic_style={mic_style} "
                 f"focus_style={self.theme.get('b_right_focus_style', 'row_box')} fonts_ok={font_ok} "
                 f"voice={ui.voice_phase}:{voice_source} recorder={recorder} "
                 f"last_tool={self.last_tool or '-'} heard={self.last_heard or '-'}"
             )
         )
+
+    def _render_mic_gallery(self, *, selected: str) -> None:
+        styles = [
+            ("heroicons_solid", "Hero S"),
+            ("heroicons_outline", "Hero O"),
+            ("tabler_outline", "Tabler O"),
+            ("tabler_half", "Tabler H"),
+            ("tabler_filled", "Tabler F"),
+            ("bootstrap_outline", "BS O"),
+            ("bootstrap_fill", "BS F"),
+        ]
+        tile_w = 96
+        tile_h = 82
+        gap = 8
+        pad = 6
+        img_w = pad * 2 + len(styles) * tile_w + (len(styles) - 1) * gap
+        img_h = tile_h + pad * 2
+        img = Image.new("RGB", (img_w, img_h), (246, 246, 246))
+        draw = ImageDraw.Draw(img)
+        for i, (key, label) in enumerate(styles):
+            x = pad + i * (tile_w + gap)
+            y = pad
+            is_sel = (key == selected)
+            draw.rounded_rectangle(
+                (x, y, x + tile_w, y + tile_h),
+                radius=6,
+                outline=(0, 0, 0) if is_sel else (190, 190, 190),
+                width=2 if is_sel else 1,
+                fill=(255, 255, 255),
+            )
+            # Top: actual-size line sample (close to board usage).
+            _draw_mic_icon(draw, x + 7, y + 8, 16, (0, 0, 0), style=key)
+            draw.text((x + 28, y + 8), "READY", fill=(0, 0, 0), font=self.fonts.get("inter_semibold", 12))
+            draw.line((x + 7, y + 28, x + tile_w - 7, y + 28), fill=(205, 205, 205), width=1)
+            # Bottom: zoomed icon for silhouette comparison.
+            _draw_mic_icon(draw, x + 34, y + 34, 26, (0, 0, 0), style=key)
+            draw.text((x + 8, y + 63), label, fill=(0, 0, 0), font=self.fonts.get("inter_semibold", 11))
+        self._mic_gallery_photo = ImageTk.PhotoImage(img)
+        self.mic_gallery.configure(image=self._mic_gallery_photo)
 
 
 if __name__ == "__main__":

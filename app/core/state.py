@@ -121,9 +121,9 @@ class UiState:
     pending_reorder: bool = False
     reorder_due_at: float = 0.0
 
-    # Voice overlay stub (TSX: long press/Space enters listening overlay on the clock panel).
+    # Voice UI zone state (used by simulator + board render paths).
     voice_active: bool = False
-    voice_phase: str = "idle"  # "idle" | "recording" | "processing" | "done" | "error"
+    voice_phase: str = "idle"  # "idle" | "recording" | "processing" | "confirm" | "done" | "error"
     voice_message: str = ""
     voice_due_at: float = 0.0
     voice_confirm_tool: str = ""
