@@ -35,6 +35,11 @@ from app.shared.fonts import FontBook
 from app.shared.paths import find_repo_root
 from app.ui.app import render_app
 
+try:
+    import RPi.GPIO as GPIO
+except Exception:
+    GPIO = None
+
 
 def _hex_to_rgb(value):
     value = (value or "").strip()
@@ -267,7 +272,45 @@ def main() -> int:
     parser.add_argument("--panel-muted", type=int, default=None, help="Muted gray before quantization (0-255)")
     parser.add_argument("--panel-gamma", type=float, default=None, help="Gamma before threshold (0.1-4.0)")
     parser.add_argument("--panel-dither", action="store_true", help="Use Floyd-Steinberg dithering before 1-bit output")
+    parser.add_argument(
+        "--rotate-pin",
+        type=int,
+        default=None,
+        help="BCM GPIO pin for dedicated rotate button (auto: 21 on Raspberry Pi). Use -1 to disable.",
+    )
+    parser.add_argument(
+        "--rotate-active",
+        choices=("low", "high"),
+        default="low",
+        help="Active level for rotate button GPIO input (default: low)",
+    )
+    parser.add_argument(
+        "--rotate-pull",
+        choices=("up", "down"),
+        default="up",
+        help="GPIO pull mode for rotate button (default: up)",
+    )
+    parser.add_argument(
+        "--rotate-debounce-ms",
+        type=int,
+        default=180,
+        help="Debounce window for rotate button GPIO edge detection in ms (default: 180)",
+    )
     args = parser.parse_args()
+
+    rotate_pin = args.rotate_pin
+    if rotate_pin is None and GPIO is not None:
+        # Default board wiring uses KEY -> GPIO21.
+        env_pin = os.environ.get("ROTATE_BUTTON_PIN", "").strip()
+        if env_pin:
+            try:
+                rotate_pin = int(env_pin)
+            except Exception:
+                rotate_pin = 21
+        else:
+            rotate_pin = 21
+    if rotate_pin is not None and int(rotate_pin) < 0:
+        rotate_pin = None
 
     repo_root = find_repo_root(os.path.dirname(__file__))
     theme_path = args.theme
@@ -297,6 +340,28 @@ def main() -> int:
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     tty.setraw(fd)
+    gpio_ready = False
+    rotate_prev = None
+    rotate_last_press_at = 0.0
+    rotate_debounce_s = max(0.0, float(args.rotate_debounce_ms) / 1000.0)
+
+    if rotate_pin is not None:
+        if GPIO is None:
+            print("[warn] rotate GPIO requested but RPi.GPIO is unavailable; keyboard R remains enabled.")
+        else:
+            try:
+                GPIO.setmode(GPIO.BCM)
+                pull = GPIO.PUD_UP if str(args.rotate_pull).lower() == "up" else GPIO.PUD_DOWN
+                GPIO.setup(int(rotate_pin), GPIO.IN, pull_up_down=pull)
+                rotate_prev = GPIO.input(int(rotate_pin))
+                gpio_ready = True
+                print(
+                    f"[gpio] rotate button enabled: pin={int(rotate_pin)} active={args.rotate_active} "
+                    f"pull={args.rotate_pull} debounce_ms={int(args.rotate_debounce_ms)}"
+                )
+            except Exception as e:
+                print(f"[warn] failed to init rotate GPIO pin {rotate_pin}: {e}")
+
     try:
         print("Controls: Left/Right rotate, Enter click, R rotate screen, S settings, W weather, Space long press, B/Esc back, Q quit")
         last_render_sig = None
@@ -306,6 +371,21 @@ def main() -> int:
             key = _read_key_nonblocking()
 
             ev = None
+            if gpio_ready:
+                try:
+                    curr = GPIO.input(int(rotate_pin))
+                    active_low = str(args.rotate_active).lower() == "low"
+                    pressed = (
+                        (active_low and rotate_prev == GPIO.HIGH and curr == GPIO.LOW)
+                        or ((not active_low) and rotate_prev == GPIO.LOW and curr == GPIO.HIGH)
+                    )
+                    rotate_prev = curr
+                    if pressed and (now - rotate_last_press_at) >= rotate_debounce_s:
+                        ev = RotateButton()
+                        rotate_last_press_at = now
+                except Exception:
+                    pass
+
             if key in ("\x1b[D", "h"):  # left
                 ev = Rotate(-1)
             elif key in ("\x1b[C", "l"):  # right
@@ -374,6 +454,11 @@ def main() -> int:
             time.sleep(0.01)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        if gpio_ready and GPIO is not None:
+            try:
+                GPIO.cleanup(int(rotate_pin))
+            except Exception:
+                pass
         try:
             epd.sleep()
         except Exception:
