@@ -12,13 +12,31 @@ These scripts are **hardware validation only**. The main firmware is planned in 
   Simple todo list rendering test.
 - `test_clock_gongxi.py`
   Clock display test with partial updates.
+- `test_rotary_encoder.py`
+  Rotary encoder (S1/S2/KEY) GPIO validation on Raspberry Pi.
 
 ## Requirements
 
 - Waveshare 7.5" V2 e-paper panel and Python driver (`waveshare_epd`).
 - `Pillow` (PIL).
-- Optional: `RPi.GPIO` for button input.
+- Optional: `RPi.GPIO` for button/rotary input.
 - Optional: `google-genai` and `GOOGLE_API_KEY` for Gemini parsing.
+
+## Rotary Encoder Quick Test
+
+Default pins in this repo:
+
+- `S1=GPIO16`
+- `S2=GPIO20`
+- `KEY=GPIO21`
+
+Run:
+
+```bash
+sudo python3 hardware_tests/test_rotary_encoder.py
+```
+
+See `docs/ROTARY_ENCODER_RPI4B.md` for wiring and custom pin options.
 
 ## Driver Paths
 
