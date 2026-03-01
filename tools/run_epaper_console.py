@@ -27,7 +27,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from app.core.reducer import reduce, Rotate, Click, LongPress, Back, Tick
+from app.core.reducer import reduce, Rotate, Click, LongPress, RotateButton, Back, Tick
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
 from app.render.epd import init_epd, display_image
 from app.render.panel import build_panel_theme, quantize_for_panel
@@ -298,7 +298,7 @@ def main() -> int:
     old = termios.tcgetattr(fd)
     tty.setraw(fd)
     try:
-        print("Controls: Left/Right rotate, Enter click, W weather, Space long press, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, R rotate screen, W weather, Space long press, B/Esc back, Q quit")
         last_render_sig = None
         next_tick = time.time()
         while True:
@@ -314,6 +314,8 @@ def main() -> int:
                 ev = Click()
             elif key == " ":
                 ev = LongPress()
+            elif key in ("r", "R"):
+                ev = RotateButton()
             elif key in ("b", "B", "\x7f", "\x1b"):  # backspace / esc
                 ev = Back()
             elif key in ("w", "W"):

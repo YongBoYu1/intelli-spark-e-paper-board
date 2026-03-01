@@ -26,6 +26,12 @@ class LongPress(Event):
     pass
 
 
+class RotateButton(Event):
+    """Dedicated rotate button: toggles screen orientation (0° <-> 180°)."""
+
+    pass
+
+
 class Back(Event):
     """Back/menu key.
 
@@ -199,8 +205,12 @@ def _handle_settings_click(state: AppState, now: float) -> None:
         return
 
     if item == SettingsItem.ROTATION:
-        state.ui.rotation_deg = 180 if int(state.ui.rotation_deg or 0) == 0 else 0
+        _toggle_rotation(state)
         return
+
+
+def _toggle_rotation(state: AppState) -> None:
+    state.ui.rotation_deg = 180 if int(state.ui.rotation_deg or 0) == 0 else 0
 
 
 def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> AppState:
@@ -405,6 +415,10 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         # Voice overlay stub: show listening overlay briefly, then return.
         state.ui.voice_active = True
         state.ui.voice_due_at = now + 2.0
+        return state
+
+    if isinstance(event, RotateButton):
+        _toggle_rotation(state)
         return state
 
     if isinstance(event, Back):
