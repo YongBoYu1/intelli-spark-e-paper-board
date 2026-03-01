@@ -108,13 +108,25 @@ def main() -> int:
                     accum -= 1
 
                 if accum >= steps_per_detent:
-                    cw_count += 1
-                    direction = "CCW" if flip else "CW"
+                    # Raw quadrature direction is CW; optionally flip to logical direction.
+                    logical_cw = not flip
+                    if logical_cw:
+                        cw_count += 1
+                        direction = "CW"
+                    else:
+                        ccw_count += 1
+                        direction = "CCW"
                     print(f"{now:.3f} rotate {direction} (cw={cw_count}, ccw={ccw_count})")
                     accum = 0
                 elif accum <= -steps_per_detent:
-                    ccw_count += 1
-                    direction = "CW" if flip else "CCW"
+                    # Raw quadrature direction is CCW; optionally flip to logical direction.
+                    logical_cw = flip
+                    if logical_cw:
+                        cw_count += 1
+                        direction = "CW"
+                    else:
+                        ccw_count += 1
+                        direction = "CCW"
                     print(f"{now:.3f} rotate {direction} (cw={cw_count}, ccw={ccw_count})")
                     accum = 0
 
