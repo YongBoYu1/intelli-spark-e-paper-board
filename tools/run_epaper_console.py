@@ -671,12 +671,18 @@ def main() -> int:
                 if diff_box is not None:
                     curr_screen = state.ui.screen
                     curr_rotation = int(state.ui.rotation_deg or 0)
+                    screen_changed = curr_screen != last_render_screen
+                    rotation_changed = curr_rotation != last_render_rotation
+                    if screen_changed or rotation_changed:
+                        driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
+                        settings_partial_count = 0
+                        committed = True
                     in_settings = (
                         curr_screen == Screen.SETTINGS
                         and last_render_screen == Screen.SETTINGS
                         and curr_rotation == last_render_rotation
                     )
-                    if in_settings:
+                    if in_settings and not committed:
                         rect = _align_partial_rect(diff_box, epd.width, epd.height, pad=2)
                         if rect is not None:
                             x0, y0, x1, y1 = rect
