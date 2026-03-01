@@ -11,7 +11,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem
+from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
 from app.core.reducer import reduce, Rotate, Click, LongPress, RotateButton, Back, Tick, MemoDelta
 from app.render.panel import build_panel_theme, quantize_for_panel
 from app.shared.fonts import FontBook
@@ -271,6 +271,7 @@ class Simulator(tk.Tk):
             "  ←/→ = Rotate (move focus / auto page)\n"
             "  Enter = Click (open detail / toggle task / select menu)\n"
             "  R = Rotate screen (0°/180°)\n"
+            "  S = Open settings\n"
             "  Space = Long press (voice overlay stub)\n"
             "  B / Esc / Backspace = Back (dashboard -> menu, detail/menu -> dashboard)\n"
             "  ↑/↓ = Memo (when left panel focused)\n"
@@ -287,6 +288,8 @@ class Simulator(tk.Tk):
         self.bind("<space>", lambda _e: self._dispatch(LongPress()))
         self.bind("r", lambda _e: self._dispatch(RotateButton()))
         self.bind("R", lambda _e: self._dispatch(RotateButton()))
+        self.bind("s", lambda _e: self._open_settings())
+        self.bind("S", lambda _e: self._open_settings())
         self.bind("b", lambda _e: self._dispatch(Back()))
         self.bind("B", lambda _e: self._dispatch(Back()))
         self.bind("<Escape>", lambda _e: self._dispatch(Back()))
@@ -306,6 +309,10 @@ class Simulator(tk.Tk):
 
     def _dispatch(self, ev):
         self.state = reduce(self.state, ev, theme=self.theme)
+        self._render()
+
+    def _open_settings(self):
+        self.state.ui.screen = Screen.SETTINGS
         self._render()
 
     def _render(self):

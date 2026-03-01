@@ -298,7 +298,7 @@ def main() -> int:
     old = termios.tcgetattr(fd)
     tty.setraw(fd)
     try:
-        print("Controls: Left/Right rotate, Enter click, R rotate screen, W weather, Space long press, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, R rotate screen, S settings, W weather, Space long press, B/Esc back, Q quit")
         last_render_sig = None
         next_tick = time.time()
         while True:
@@ -318,6 +318,8 @@ def main() -> int:
                 ev = RotateButton()
             elif key in ("b", "B", "\x7f", "\x1b"):  # backspace / esc
                 ev = Back()
+            elif key in ("s", "S"):
+                state.ui.screen = Screen.SETTINGS
             elif key in ("w", "W"):
                 if state.ui.screen == Screen.HOME:
                     state.ui.screen = Screen.WEATHER
