@@ -498,6 +498,7 @@ def main() -> int:
     last_render_sig = _state_render_sig(state)
     last_render_screen = state.ui.screen
     last_render_rotation = int(state.ui.rotation_deg or 0)
+    last_render_font_size = str(state.ui.font_size or "medium")
     settings_partial_count = 0
 
     fd = sys.stdin.fileno()
@@ -671,9 +672,16 @@ def main() -> int:
                 if diff_box is not None:
                     curr_screen = state.ui.screen
                     curr_rotation = int(state.ui.rotation_deg or 0)
+                    curr_font_size = str(state.ui.font_size or "medium")
                     screen_changed = curr_screen != last_render_screen
                     rotation_changed = curr_rotation != last_render_rotation
+                    font_size_changed = curr_font_size != last_render_font_size
                     if screen_changed or rotation_changed:
+                        driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
+                        settings_partial_count = 0
+                        committed = True
+                    if curr_screen == Screen.SETTINGS and font_size_changed and not committed:
+                        # Font size changes reflow most rows; prefer stable full refresh.
                         driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
                         settings_partial_count = 0
                         committed = True
@@ -700,12 +708,12 @@ def main() -> int:
                                     driver_mode = _blit_partial(epd, frame, rect, driver_mode)
                                     settings_partial_count += 1
                                 else:
-                                    driver_mode = _blit_full(epd, frame, driver_mode, fast=True)
+                                    driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
                                     settings_partial_count = 0
                                 committed = True
                             except Exception as e:
                                 print(f"[warn] settings partial refresh failed, fallback to fast full refresh: {e}")
-                                driver_mode = _blit_full(epd, frame, driver_mode, fast=True)
+                                driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
                                 settings_partial_count = 0
                                 committed = True
                     if not committed:
@@ -716,6 +724,7 @@ def main() -> int:
                 last_render_frame = frame
                 last_render_screen = state.ui.screen
                 last_render_rotation = int(state.ui.rotation_deg or 0)
+                last_render_font_size = str(state.ui.font_size or "medium")
 
             time.sleep(0.01)
     finally:
