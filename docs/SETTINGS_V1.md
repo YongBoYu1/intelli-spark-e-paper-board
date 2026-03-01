@@ -51,6 +51,7 @@ Goals:
 ## Interaction Rules
 
 - Rotate: move focus to previous/next selectable row.
+- Rotate Button (global): toggle screen orientation `0 <-> 180` from any screen.
 - Click on selected row:
   - `Font Size`: cycle `Small -> Medium -> Large`
   - `Partial Refresh`: cycle `Slow -> Balanced -> Fast`
