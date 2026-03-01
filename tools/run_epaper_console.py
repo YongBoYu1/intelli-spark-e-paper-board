@@ -6,7 +6,9 @@ This is the missing piece that makes the app non-static on hardware:
 - Keyboard maps to encoder-like events (rotate/click/back/long press)
 - Periodic Tick drives idle + timer + delayed reorder
 
-Note: Uses full refresh via display_image() (simple + reliable). Partial refresh can be added later.
+Note: Uses mixed refresh strategy:
+- Settings page updates prefer partial-rect refresh.
+- Other page updates use full/fast full refresh for stability.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ import termios
 import time
 import tty
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 # Ensure repo root is importable when running this script directly.
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -29,7 +31,7 @@ if REPO_ROOT not in sys.path:
 
 from app.core.reducer import reduce, Rotate, Click, LongPress, RotateButton, Back, Tick
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
-from app.render.epd import init_epd, display_image
+from app.render.epd import init_epd
 from app.render.panel import build_panel_theme, quantize_for_panel
 from app.shared.fonts import FontBook
 from app.shared.paths import find_repo_root
@@ -257,7 +259,7 @@ def _warn_missing_fonts(fonts: FontBook) -> None:
         print(f"  - {key}: {path}")
 
 
-def _render_to_epd(
+def _render_frame(
     epd,
     state: AppState,
     fonts: FontBook,
@@ -267,14 +269,101 @@ def _render_to_epd(
     panel_muted: int,
     panel_gamma: float,
     panel_dither: bool,
-) -> None:
+) -> Image.Image:
     # Render in RGB first, then quantize to 1-bit. This produces less jagged text
     # than drawing directly to mode '1'.
     t = build_panel_theme(theme, muted_gray=panel_muted)
     rgb = Image.new("RGB", (epd.width, epd.height), t.get("bg", (255, 255, 255)))
     render_app(rgb, state, fonts, t)
-    image = quantize_for_panel(rgb, threshold=panel_threshold, gamma=panel_gamma, dither=panel_dither)
-    display_image(epd, image, sleep_after=False)
+    return quantize_for_panel(rgb, threshold=panel_threshold, gamma=panel_gamma, dither=panel_dither)
+
+
+def _state_render_sig(state: AppState):
+    return (
+        state.ui.screen,
+        state.ui.focused_index,
+        state.ui.page,
+        state.ui.idle,
+        state.ui.widget_mode,
+        state.ui.timer_seconds,
+        state.ui.timer_running,
+        state.ui.voice_active,
+        state.ui.menu_focused,
+        state.ui.active_menu,
+        state.ui.settings_focused_index,
+        state.ui.font_size,
+        state.ui.partial_refresh_mode,
+        state.ui.full_refresh_every,
+        state.ui.wifi_enabled,
+        state.ui.bluetooth_enabled,
+        state.ui.auto_sync_enabled,
+        state.ui.last_sync_at,
+        state.ui.rotation_deg,
+        state.ui.settings_notice,
+        tuple((r.rid, r.completed) for r in state.model.reminders),
+    )
+
+
+def _ensure_epd_mode(epd, current_mode: str, target_mode: str) -> str:
+    if current_mode == target_mode:
+        return current_mode
+    if target_mode == "part":
+        epd.init_part()
+    elif target_mode == "fast":
+        epd.init_fast()
+    else:
+        epd.init()
+    return target_mode
+
+
+def _blit_full(epd, image: Image.Image, current_mode: str, *, fast: bool) -> str:
+    target_mode = "fast" if fast else "full"
+    current_mode = _ensure_epd_mode(epd, current_mode, target_mode)
+    epd.display(epd.getbuffer(image))
+    return current_mode
+
+
+def _settings_partial_area_limit(mode: str) -> float:
+    normalized = str(mode or "balanced").strip().lower()
+    if normalized == "slow":
+        return 0.40
+    if normalized == "fast":
+        return 0.85
+    return 0.65
+
+
+def _align_partial_rect(rect: tuple[int, int, int, int], width: int, height: int, *, pad: int = 2) -> tuple[int, int, int, int] | None:
+    x0, y0, x1, y1 = rect
+    x0 = max(0, int(x0) - pad)
+    y0 = max(0, int(y0) - pad)
+    x1 = min(int(width), int(x1) + pad)
+    y1 = min(int(height), int(y1) + pad)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    x0 = (x0 // 8) * 8
+    x1 = ((x1 + 7) // 8) * 8
+    x1 = max(x0 + 8, min(int(width), x1))
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return (x0, y0, x1, y1)
+
+
+def _pack_partial_buffer(image: Image.Image) -> bytearray:
+    mono = image.convert("1")
+    buf = bytearray(mono.tobytes("raw"))
+    for i in range(len(buf)):
+        buf[i] ^= 0xFF
+    return buf
+
+
+def _blit_partial(epd, frame: Image.Image, rect: tuple[int, int, int, int], current_mode: str) -> str:
+    x0, y0, x1, y1 = rect
+    if x1 <= x0 or y1 <= y0:
+        return current_mode
+    current_mode = _ensure_epd_mode(epd, current_mode, "part")
+    patch = frame.crop((x0, y0, x1, y1))
+    epd.display_Partial(_pack_partial_buffer(patch), x0, y0, x1, y1)
+    return current_mode
 
 
 def main() -> int:
@@ -394,7 +483,8 @@ def main() -> int:
     state = AppState(model=_load_model(repo_root))
 
     epd, _ = init_epd()
-    _render_to_epd(
+    driver_mode = "full"
+    last_render_frame = _render_frame(
         epd,
         state,
         fonts,
@@ -404,6 +494,11 @@ def main() -> int:
         panel_gamma=panel_gamma,
         panel_dither=panel_dither,
     )
+    driver_mode = _blit_full(epd, last_render_frame, driver_mode, fast=False)
+    last_render_sig = _state_render_sig(state)
+    last_render_screen = state.ui.screen
+    last_render_rotation = int(state.ui.rotation_deg or 0)
+    settings_partial_count = 0
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -470,7 +565,6 @@ def main() -> int:
 
     try:
         print("Controls: Left/Right rotate, Enter click, R rotate screen, S settings, W weather, Space long press, B/Esc back, Q quit")
-        last_render_sig = None
         next_tick = time.time()
         while True:
             now = time.time()
@@ -560,31 +654,9 @@ def main() -> int:
                 next_tick = now + float(args.tick)
 
             # Only re-render if state that affects UI changed.
-            sig = (
-                state.ui.screen,
-                state.ui.focused_index,
-                state.ui.page,
-                state.ui.idle,
-                state.ui.widget_mode,
-                state.ui.timer_seconds,
-                state.ui.timer_running,
-                state.ui.voice_active,
-                state.ui.menu_focused,
-                state.ui.active_menu,
-                state.ui.settings_focused_index,
-                state.ui.font_size,
-                state.ui.partial_refresh_mode,
-                state.ui.full_refresh_every,
-                state.ui.wifi_enabled,
-                state.ui.bluetooth_enabled,
-                state.ui.auto_sync_enabled,
-                state.ui.last_sync_at,
-                state.ui.rotation_deg,
-                state.ui.settings_notice,
-                tuple((r.rid, r.completed) for r in state.model.reminders),
-            )
+            sig = _state_render_sig(state)
             if sig != last_render_sig:
-                _render_to_epd(
+                frame = _render_frame(
                     epd,
                     state,
                     fonts,
@@ -594,7 +666,50 @@ def main() -> int:
                     panel_gamma=panel_gamma,
                     panel_dither=panel_dither,
                 )
+                committed = False
+                diff_box = ImageChops.difference(last_render_frame, frame).getbbox()
+                if diff_box is not None:
+                    curr_screen = state.ui.screen
+                    curr_rotation = int(state.ui.rotation_deg or 0)
+                    in_settings = (
+                        curr_screen == Screen.SETTINGS
+                        and last_render_screen == Screen.SETTINGS
+                        and curr_rotation == last_render_rotation
+                    )
+                    if in_settings:
+                        rect = _align_partial_rect(diff_box, epd.width, epd.height, pad=2)
+                        if rect is not None:
+                            x0, y0, x1, y1 = rect
+                            partial_area = (x1 - x0) * (y1 - y0)
+                            total_area = max(1, epd.width * epd.height)
+                            area_ratio = float(partial_area) / float(total_area)
+                            mode_limit = _settings_partial_area_limit(state.ui.partial_refresh_mode)
+                            full_every = max(1, int(state.ui.full_refresh_every or 15))
+                            force_full_clean = settings_partial_count >= full_every
+                            try:
+                                if force_full_clean:
+                                    driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
+                                    settings_partial_count = 0
+                                elif area_ratio <= mode_limit:
+                                    driver_mode = _blit_partial(epd, frame, rect, driver_mode)
+                                    settings_partial_count += 1
+                                else:
+                                    driver_mode = _blit_full(epd, frame, driver_mode, fast=True)
+                                    settings_partial_count = 0
+                                committed = True
+                            except Exception as e:
+                                print(f"[warn] settings partial refresh failed, fallback to fast full refresh: {e}")
+                                driver_mode = _blit_full(epd, frame, driver_mode, fast=True)
+                                settings_partial_count = 0
+                                committed = True
+                    if not committed:
+                        driver_mode = _blit_full(epd, frame, driver_mode, fast=True)
+                        settings_partial_count = 0
+                        committed = True
                 last_render_sig = sig
+                last_render_frame = frame
+                last_render_screen = state.ui.screen
+                last_render_rotation = int(state.ui.rotation_deg or 0)
 
             time.sleep(0.01)
     finally:
