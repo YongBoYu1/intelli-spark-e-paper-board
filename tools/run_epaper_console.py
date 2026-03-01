@@ -40,6 +40,19 @@ try:
 except Exception:
     GPIO = None
 
+CW_SEQ = {
+    (0b00, 0b01),
+    (0b01, 0b11),
+    (0b11, 0b10),
+    (0b10, 0b00),
+}
+CCW_SEQ = {
+    (0b00, 0b10),
+    (0b10, 0b11),
+    (0b11, 0b01),
+    (0b01, 0b00),
+}
+
 
 def _hex_to_rgb(value):
     value = (value or "").strip()
@@ -273,10 +286,57 @@ def main() -> int:
     parser.add_argument("--panel-gamma", type=float, default=None, help="Gamma before threshold (0.1-4.0)")
     parser.add_argument("--panel-dither", action="store_true", help="Use Floyd-Steinberg dithering before 1-bit output")
     parser.add_argument(
+        "--encoder-pin-s1",
+        type=int,
+        default=None,
+        help="BCM pin for rotary S1/CLK (auto: 16 on Raspberry Pi). Use -1 to disable.",
+    )
+    parser.add_argument(
+        "--encoder-pin-s2",
+        type=int,
+        default=None,
+        help="BCM pin for rotary S2/DT (auto: 20 on Raspberry Pi). Use -1 to disable.",
+    )
+    parser.add_argument(
+        "--encoder-key-pin",
+        type=int,
+        default=None,
+        help="BCM pin for rotary KEY/SW click (auto: 21 on Raspberry Pi). Use -1 to disable.",
+    )
+    parser.add_argument(
+        "--encoder-pull",
+        choices=("up", "down"),
+        default="up",
+        help="GPIO pull mode for rotary inputs (default: up)",
+    )
+    parser.add_argument(
+        "--encoder-key-active",
+        choices=("low", "high"),
+        default="low",
+        help="Active level for encoder KEY press (default: low)",
+    )
+    parser.add_argument(
+        "--encoder-steps-per-detent",
+        type=int,
+        default=4,
+        help="Quadrature steps required to emit one rotate event (default: 4)",
+    )
+    parser.add_argument(
+        "--encoder-key-debounce-ms",
+        type=int,
+        default=180,
+        help="Debounce window for encoder KEY press in ms (default: 180)",
+    )
+    parser.add_argument(
+        "--encoder-flip-direction",
+        action="store_true",
+        help="Flip rotary direction if CW/CCW feels reversed",
+    )
+    parser.add_argument(
         "--rotate-pin",
         type=int,
         default=None,
-        help="BCM GPIO pin for dedicated rotate button (auto: 21 on Raspberry Pi). Use -1 to disable.",
+        help="BCM GPIO pin for dedicated screen-rotate button (default: disabled).",
     )
     parser.add_argument(
         "--rotate-active",
@@ -298,17 +358,25 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    encoder_pin_s1 = args.encoder_pin_s1
+    encoder_pin_s2 = args.encoder_pin_s2
+    encoder_key_pin = args.encoder_key_pin
+    if GPIO is not None:
+        if encoder_pin_s1 is None:
+            encoder_pin_s1 = 16
+        if encoder_pin_s2 is None:
+            encoder_pin_s2 = 20
+        if encoder_key_pin is None:
+            encoder_key_pin = 21
+    encoder_pin_s1 = None if (encoder_pin_s1 is not None and int(encoder_pin_s1) < 0) else encoder_pin_s1
+    encoder_pin_s2 = None if (encoder_pin_s2 is not None and int(encoder_pin_s2) < 0) else encoder_pin_s2
+    encoder_key_pin = None if (encoder_key_pin is not None and int(encoder_key_pin) < 0) else encoder_key_pin
+    if (encoder_pin_s1 is None) != (encoder_pin_s2 is None):
+        print("[warn] encoder S1/S2 must be enabled together; disabling rotary turn input.")
+        encoder_pin_s1 = None
+        encoder_pin_s2 = None
+
     rotate_pin = args.rotate_pin
-    if rotate_pin is None and GPIO is not None:
-        # Default board wiring uses KEY -> GPIO21.
-        env_pin = os.environ.get("ROTATE_BUTTON_PIN", "").strip()
-        if env_pin:
-            try:
-                rotate_pin = int(env_pin)
-            except Exception:
-                rotate_pin = 21
-        else:
-            rotate_pin = 21
     if rotate_pin is not None and int(rotate_pin) < 0:
         rotate_pin = None
 
@@ -340,27 +408,65 @@ def main() -> int:
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     tty.setraw(fd)
-    gpio_ready = False
+    encoder_ready = False
+    rotate_btn_ready = False
+    prev_ab = None
+    encoder_accum = 0
+    prev_key = None
+    key_last_press_at = 0.0
     rotate_prev = None
-    rotate_last_press_at = 0.0
+    rotate_btn_last_press_at = 0.0
+    gpio_pins_in_use = set()
+    encoder_key_debounce_s = max(0.0, float(args.encoder_key_debounce_ms) / 1000.0)
     rotate_debounce_s = max(0.0, float(args.rotate_debounce_ms) / 1000.0)
 
-    if rotate_pin is not None:
-        if GPIO is None:
-            print("[warn] rotate GPIO requested but RPi.GPIO is unavailable; keyboard R remains enabled.")
-        else:
-            try:
-                GPIO.setmode(GPIO.BCM)
-                pull = GPIO.PUD_UP if str(args.rotate_pull).lower() == "up" else GPIO.PUD_DOWN
-                GPIO.setup(int(rotate_pin), GPIO.IN, pull_up_down=pull)
-                rotate_prev = GPIO.input(int(rotate_pin))
-                gpio_ready = True
+    if GPIO is None:
+        if encoder_pin_s1 is not None or encoder_pin_s2 is not None or encoder_key_pin is not None or rotate_pin is not None:
+            print("[warn] GPIO input requested but RPi.GPIO is unavailable; keyboard input remains enabled.")
+    else:
+        try:
+            GPIO.setmode(GPIO.BCM)
+            pull_encoder = GPIO.PUD_UP if str(args.encoder_pull).lower() == "up" else GPIO.PUD_DOWN
+            pull_rotate = GPIO.PUD_UP if str(args.rotate_pull).lower() == "up" else GPIO.PUD_DOWN
+
+            if encoder_pin_s1 is not None and encoder_pin_s2 is not None:
+                GPIO.setup(int(encoder_pin_s1), GPIO.IN, pull_up_down=pull_encoder)
+                GPIO.setup(int(encoder_pin_s2), GPIO.IN, pull_up_down=pull_encoder)
+                prev_ab = (GPIO.input(int(encoder_pin_s1)) << 1) | GPIO.input(int(encoder_pin_s2))
+                gpio_pins_in_use.update({int(encoder_pin_s1), int(encoder_pin_s2)})
+                encoder_ready = True
+
+            if encoder_key_pin is not None:
+                GPIO.setup(int(encoder_key_pin), GPIO.IN, pull_up_down=pull_encoder)
+                prev_key = GPIO.input(int(encoder_key_pin))
+                gpio_pins_in_use.add(int(encoder_key_pin))
+
+            if rotate_pin is not None:
+                if encoder_key_pin is not None and int(rotate_pin) == int(encoder_key_pin):
+                    print(f"[warn] rotate-pin {int(rotate_pin)} equals encoder-key-pin; dedicated rotate button disabled.")
+                else:
+                    GPIO.setup(int(rotate_pin), GPIO.IN, pull_up_down=pull_rotate)
+                    rotate_prev = GPIO.input(int(rotate_pin))
+                    gpio_pins_in_use.add(int(rotate_pin))
+                    rotate_btn_ready = True
+
+            if encoder_ready:
+                print(
+                    "[gpio] rotary enabled: "
+                    f"s1={encoder_pin_s1} s2={encoder_pin_s2} key={encoder_key_pin} "
+                    f"pull={args.encoder_pull} key_active={args.encoder_key_active} "
+                    f"steps_per_detent={max(1, int(args.encoder_steps_per_detent))} "
+                    f"flip_direction={bool(args.encoder_flip_direction)}"
+                )
+            if rotate_btn_ready:
                 print(
                     f"[gpio] rotate button enabled: pin={int(rotate_pin)} active={args.rotate_active} "
                     f"pull={args.rotate_pull} debounce_ms={int(args.rotate_debounce_ms)}"
                 )
-            except Exception as e:
-                print(f"[warn] failed to init rotate GPIO pin {rotate_pin}: {e}")
+        except Exception as e:
+            print(f"[warn] failed to init GPIO inputs: {e}")
+            encoder_ready = False
+            rotate_btn_ready = False
 
     try:
         print("Controls: Left/Right rotate, Enter click, R rotate screen, S settings, W weather, Space long press, B/Esc back, Q quit")
@@ -371,7 +477,46 @@ def main() -> int:
             key = _read_key_nonblocking()
 
             ev = None
-            if gpio_ready:
+            if encoder_ready:
+                try:
+                    curr_ab = (GPIO.input(int(encoder_pin_s1)) << 1) | GPIO.input(int(encoder_pin_s2))
+                    if curr_ab != prev_ab:
+                        edge = (prev_ab, curr_ab)
+                        if edge in CW_SEQ:
+                            encoder_accum += 1
+                        elif edge in CCW_SEQ:
+                            encoder_accum -= 1
+
+                        step_n = max(1, int(args.encoder_steps_per_detent))
+                        flip = bool(args.encoder_flip_direction)
+                        if encoder_accum >= step_n:
+                            logical_cw = not flip
+                            ev = Rotate(+1 if logical_cw else -1)
+                            encoder_accum = 0
+                        elif encoder_accum <= -step_n:
+                            logical_cw = flip
+                            ev = Rotate(+1 if logical_cw else -1)
+                            encoder_accum = 0
+                        prev_ab = curr_ab
+                except Exception:
+                    pass
+
+            if encoder_key_pin is not None and ev is None:
+                try:
+                    curr_key = GPIO.input(int(encoder_key_pin))
+                    active_low = str(args.encoder_key_active).lower() == "low"
+                    is_press_edge = (
+                        (active_low and prev_key == GPIO.HIGH and curr_key == GPIO.LOW)
+                        or ((not active_low) and prev_key == GPIO.LOW and curr_key == GPIO.HIGH)
+                    )
+                    if is_press_edge and (now - key_last_press_at) >= encoder_key_debounce_s:
+                        ev = Click()
+                        key_last_press_at = now
+                    prev_key = curr_key
+                except Exception:
+                    pass
+
+            if rotate_btn_ready and ev is None:
                 try:
                     curr = GPIO.input(int(rotate_pin))
                     active_low = str(args.rotate_active).lower() == "low"
@@ -380,9 +525,9 @@ def main() -> int:
                         or ((not active_low) and rotate_prev == GPIO.LOW and curr == GPIO.HIGH)
                     )
                     rotate_prev = curr
-                    if pressed and (now - rotate_last_press_at) >= rotate_debounce_s:
+                    if pressed and (now - rotate_btn_last_press_at) >= rotate_debounce_s:
                         ev = RotateButton()
-                        rotate_last_press_at = now
+                        rotate_btn_last_press_at = now
                 except Exception:
                     pass
 
@@ -454,9 +599,9 @@ def main() -> int:
             time.sleep(0.01)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        if gpio_ready and GPIO is not None:
+        if GPIO is not None and gpio_pins_in_use:
             try:
-                GPIO.cleanup(int(rotate_pin))
+                GPIO.cleanup(list(gpio_pins_in_use))
             except Exception:
                 pass
         try:
