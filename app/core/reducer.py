@@ -49,6 +49,7 @@ class Tick(Event):
     def __init__(self, now: Optional[float] = None):
         self.now = now if now is not None else time.time()
 
+
 class MemoDelta(Event):
     """Developer-only: scroll memos when the left panel is focused."""
 
@@ -219,6 +220,79 @@ def _toggle_rotation(state: AppState) -> None:
     state.ui.rotation_deg = 180 if int(state.ui.rotation_deg or 0) == 0 else 0
 
 
+def _timer_default_s(theme: dict) -> int:
+    try:
+        value = int(theme.get("timer_default_s", 5 * 60) or (5 * 60))
+    except Exception:
+        value = 5 * 60
+    return max(1, value)
+
+
+def _timer_step_s(theme: dict) -> int:
+    try:
+        value = int(theme.get("timer_step_s", 60) or 60)
+    except Exception:
+        value = 60
+    return max(1, value)
+
+
+def _timer_max_s(theme: dict) -> int:
+    try:
+        value = int(theme.get("timer_max_s", 3 * 60 * 60) or (3 * 60 * 60))
+    except Exception:
+        value = 3 * 60 * 60
+    return max(1, value)
+
+
+def _clamp_timer_focus(state: AppState) -> None:
+    n = 4  # [DECREASE, INCREASE, START_PAUSE, RESET]
+    state.ui.timer_focused_index = int(state.ui.timer_focused_index or 0) % n
+
+
+def _adjust_timer_seconds(state: AppState, delta_s: int, *, max_s: int) -> None:
+    secs = int(state.ui.timer_seconds or 0) + int(delta_s)
+    secs = max(0, min(int(max_s), secs))
+    state.ui.timer_seconds = secs
+    if secs <= 0:
+        state.ui.timer_running = False
+
+
+def _handle_timer_click(state: AppState, now: float, *, theme: dict) -> None:
+    _clamp_timer_focus(state)
+    focus = int(state.ui.timer_focused_index or 0)
+    step_s = _timer_step_s(theme)
+    max_s = _timer_max_s(theme)
+    default_s = min(_timer_default_s(theme), max_s)
+
+    state.ui.widget_mode = WidgetMode.TIMER
+
+    if focus == 0:
+        _adjust_timer_seconds(state, -step_s, max_s=max_s)
+        state.ui.timer_last_tick_at = now
+        return
+
+    if focus == 1:
+        _adjust_timer_seconds(state, +step_s, max_s=max_s)
+        state.ui.timer_last_tick_at = now
+        return
+
+    if focus == 2:
+        secs = int(state.ui.timer_seconds or 0)
+        if bool(state.ui.timer_running):
+            state.ui.timer_running = False
+        else:
+            if secs <= 0:
+                state.ui.timer_seconds = default_s
+            state.ui.timer_running = True
+        state.ui.timer_last_tick_at = now
+        return
+
+    # focus == 3 => reset
+    state.ui.timer_seconds = 0
+    state.ui.timer_running = False
+    state.ui.timer_last_tick_at = now
+
+
 def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> AppState:
     theme = theme or {}
     variant = _home_variant(theme)
@@ -329,6 +403,9 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             pos = 0 if cur < 0 else (cur + 1)
             pos = (pos + event.delta) % total
             state.ui.settings_focused_index = -1 if pos == 0 else (pos - 1)
+        elif state.ui.screen == Screen.TIMER:
+            state.ui.timer_focused_index = int(state.ui.timer_focused_index or 0) + event.delta
+            _clamp_timer_focus(state)
         else:
             # Minimal: rotate does nothing on detail pages for now.
             pass
@@ -348,15 +425,12 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 state.ui.screen = Screen.CALENDAR
             elif picked == MenuItemId.TIMER:
                 state.ui.widget_mode = WidgetMode.TIMER
-                state.ui.timer_seconds = int(theme.get("timer_default_s", 5 * 60) or 5 * 60)
-                state.ui.timer_running = True
+                if int(state.ui.timer_seconds or 0) <= 0:
+                    state.ui.timer_seconds = _timer_default_s(theme)
+                state.ui.timer_running = False
                 state.ui.timer_last_tick_at = now
-                state.ui.screen = Screen.HOME
-                state.ui.focused_index = 0  # focus clock
-                if variant == "kitchen":
-                    _clamp_focus_kitchen(state, theme)
-                else:
-                    _clamp_focus_home(state, items_per_page)
+                state.ui.timer_focused_index = 2
+                state.ui.screen = Screen.TIMER
             elif picked == MenuItemId.LIST:
                 state.ui.screen = Screen.HOME
                 if variant == "kitchen":
@@ -416,6 +490,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                     if idx >= n_events:
                         task_idx = idx - n_events
                         _toggle_task_completed_by_index(state, task_idx)
+        elif state.ui.screen == Screen.TIMER:
+            _handle_timer_click(state, now, theme=theme)
         elif state.ui.screen == Screen.SETTINGS:
             _handle_settings_click(state, now)
         else:

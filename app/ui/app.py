@@ -11,6 +11,7 @@ from app.ui.calendar import render_calendar
 from app.ui.weather_detail import render_weather_detail
 from app.ui.menu import render_menu
 from app.ui.settings import render_settings
+from app.ui.timer import render_timer
 from app.ui.placeholder import render_placeholder
 from app.ui.layout import compute_layout
 
@@ -649,6 +650,10 @@ def _render_no_rotation(image, state: AppState, fonts, theme: dict) -> None:
         return
     if state.ui.screen == Screen.SETTINGS:
         render_settings(image, state, fonts, theme)
+        return
+    if state.ui.screen == Screen.TIMER:
+        render_timer(image, state, fonts, theme)
+        _draw_voice_overlay(image, state, fonts, theme)
         return
     if state.ui.screen == Screen.PLACEHOLDER:
         render_placeholder(image, state, fonts, theme)

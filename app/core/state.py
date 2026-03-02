@@ -9,6 +9,7 @@ from typing import Optional
 class Screen(str, Enum):
     HOME = "home"
     MENU = "menu"
+    TIMER = "timer"
     CALENDAR = "calendar"
     WEATHER = "weather"
     SETTINGS = "settings"
@@ -96,6 +97,8 @@ class UiState:
     timer_seconds: int = 0
     timer_running: bool = False
     timer_last_tick_at: float = field(default_factory=lambda: time.time())
+    # TIMER page focus: [DECREASE, INCREASE, START_PAUSE, RESET]
+    timer_focused_index: int = 2
 
     # Detail-page navigation (rotary-driven).
     # Calendar: rotate changes date; click toggles to agenda mode; rotate selects agenda item; click toggles task.
