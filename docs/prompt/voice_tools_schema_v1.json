@@ -138,6 +138,30 @@
       "type": "object",
       "required": ["tool", "args"],
       "properties": {
+        "tool": { "const": "undo_last_action_group" },
+        "args": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["tool", "args"],
+      "properties": {
+        "tool": { "const": "redo_last_action_group" },
+        "args": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["tool", "args"],
+      "properties": {
         "tool": { "const": "no_action" },
         "args": {
           "type": "object",

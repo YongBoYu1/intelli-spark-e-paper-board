@@ -3,14 +3,26 @@
 This service provides the cloud endpoint used by device/simulator:
 - `POST /voice/interpret`
 
-It uses Gemini function calling and returns one action:
+It uses Gemini function calling and returns:
+- legacy `action` (single-action compatibility)
+- optional `plan.actions[]` (multi-action execution)
+
+Available action tools:
 - `inventory_log_event`
+- `inventory_set_expiry`
+- `inventory_clear_all`
 - `shopping_add_item`
+- `shopping_remove_item`
+- `shopping_clear_all`
+- `timer_set`
+- `memo_add`
+- `undo_last_action_group`
+- `redo_last_action_group`
 - `no_action`
 
 Pipeline:
 - Step 1: ASR transcription from uploaded audio
-- Step 2: Function calling on transcript -> normalized action
+- Step 2: Function calling on transcript -> normalized `plan.actions[]` + first `action` compatibility field
 
 ## 1) Install
 
@@ -66,4 +78,7 @@ VOICE_API_URL="http://<server>:8000/voice/interpret" python3 tools/run_epaper_co
 - Prompt source: `docs/prompt/voice_prompt_v1.md`
 - Tool schema source: `docs/prompt/voice_tools_schema_v1.json`
 - `request_id` is idempotent within process memory (simple cache)
+- Local correction KB (voice alias memory) path:
+  - default: `backend/voice_api/data/correction_kb.json`
+  - override: `VOICE_CORRECTION_KB_PATH=/abs/path/to/correction_kb.json`
 - Latency budget/SLO template: `docs/VOICE_LATENCY_BUDGET.md`

@@ -23,10 +23,13 @@ ALLOWED_TOOLS = {
     "shopping_clear_all",
     "timer_set",
     "memo_add",
+    "undo_last_action_group",
+    "redo_last_action_group",
     "no_action",
 }
 ALLOWED_EVENT_TYPES = {"consumed", "used", "added", "restocked", "finished"}
 CONFIRM_WINDOW_S = 4.0
+VOICE_HISTORY_MAX_GROUPS = 8
 
 _ITEM_CANONICAL = {
     "milk": "milk",
@@ -81,6 +84,33 @@ class VoiceApplyResult:
 
 
 @dataclass(frozen=True)
+class VoicePlan:
+    actions: list[VoiceAction]
+    needs_clarification: bool = False
+    clarification: str = ""
+    response_copy: str = ""
+
+
+@dataclass(frozen=True)
+class VoicePlanStepResult:
+    action: VoiceAction
+    result: VoiceApplyResult
+
+
+@dataclass(frozen=True)
+class VoicePlanApplyResult:
+    changed: bool
+    status: str
+    message: str
+    executed_count: int
+    total_count: int
+    success_count: int
+    failed_count: int
+    skipped_count: int
+    step_results: list[VoicePlanStepResult]
+
+
+@dataclass(frozen=True)
 class VoiceRequestMeta:
     request_id: str
     request_time: str
@@ -117,26 +147,65 @@ def describe_voice_action(action: VoiceAction) -> str:
         if len(txt) > 18:
             txt = txt[:15] + "..."
         return f"memo_add(text={txt or '?'})"
+    if tool == "undo_last_action_group":
+        return "undo_last_action_group"
+    if tool == "redo_last_action_group":
+        return "redo_last_action_group"
     if tool == "no_action":
         reason = str(args.get("reason") or "no_action").strip()
         return f"no_action({reason})"
     return tool
 
 
-def parse_voice_action(payload: dict[str, Any] | None) -> VoiceAction:
+def parse_voice_plan(payload: dict[str, Any] | None) -> VoicePlan:
     if not isinstance(payload, dict):
-        return VoiceAction("no_action", {"reason": "invalid_payload"})
+        return VoicePlan(actions=[VoiceAction("no_action", {"reason": "invalid_payload"})])
 
-    action: dict[str, Any] | None = None
-    if isinstance(payload.get("action"), dict):
-        action = payload["action"]
-    elif isinstance(payload.get("actions"), list) and payload["actions"]:
-        first = payload["actions"][0]
-        if isinstance(first, dict):
-            action = first
-    else:
-        action = payload
+    plan_obj = payload.get("plan") if isinstance(payload.get("plan"), dict) else payload
+    needs_clarification = bool(plan_obj.get("needs_clarification") or payload.get("needs_clarification"))
+    clarification = str(plan_obj.get("clarification") or payload.get("clarification") or "").strip()
+    response_copy = str(plan_obj.get("response_copy") or payload.get("response_copy") or "").strip()
 
+    raw_actions: list[dict[str, Any]] = []
+    if isinstance(plan_obj.get("actions"), list):
+        for row in plan_obj.get("actions") or []:
+            if isinstance(row, dict):
+                raw_actions.append(dict(row))
+    elif isinstance(payload.get("actions"), list):
+        for row in payload.get("actions") or []:
+            if isinstance(row, dict):
+                raw_actions.append(dict(row))
+    elif isinstance(payload.get("action"), dict):
+        raw_actions.append(dict(payload.get("action") or {}))
+    elif isinstance(payload, dict):
+        # Legacy shape: payload itself is an action object.
+        raw_actions.append(dict(payload))
+
+    actions: list[VoiceAction] = []
+    for row in raw_actions:
+        parsed = _parse_single_voice_action(row)
+        actions.append(parsed)
+
+    if not actions:
+        reason = "needs_clarification" if needs_clarification else "missing_action"
+        actions = [VoiceAction("no_action", {"reason": reason})]
+
+    return VoicePlan(
+        actions=actions,
+        needs_clarification=needs_clarification,
+        clarification=clarification,
+        response_copy=response_copy,
+    )
+
+
+def parse_voice_action(payload: dict[str, Any] | None) -> VoiceAction:
+    plan = parse_voice_plan(payload)
+    if plan.actions:
+        return plan.actions[0]
+    return VoiceAction("no_action", {"reason": "missing_action"})
+
+
+def _parse_single_voice_action(action: dict[str, Any] | None) -> VoiceAction:
     if not isinstance(action, dict):
         return VoiceAction("no_action", {"reason": "missing_action"})
 
@@ -174,13 +243,8 @@ def parse_voice_action(payload: dict[str, Any] | None) -> VoiceAction:
         if not expiry_date:
             return VoiceAction("no_action", {"reason": "missing_expiry_date"})
 
-    if tool == "inventory_clear_all":
-        if not isinstance(args, dict):
-            args = {}
-
-    if tool == "shopping_clear_all":
-        if not isinstance(args, dict):
-            args = {}
+    if tool in {"inventory_clear_all", "shopping_clear_all"} and not isinstance(args, dict):
+        args = {}
 
     if tool == "timer_set":
         raw = args.get("duration_seconds")
@@ -200,13 +264,18 @@ def parse_voice_action(payload: dict[str, Any] | None) -> VoiceAction:
         args = dict(args)
         args["text"] = text
 
+    if tool in {"undo_last_action_group", "redo_last_action_group"}:
+        if not isinstance(args, dict):
+            args = {}
+        else:
+            args = {}
+
     if tool == "no_action":
         reason = str(args.get("reason") or "").strip()
         if not reason:
             args = {"reason": "no_action"}
 
     return VoiceAction(tool=tool, args=args)
-
 
 def build_request_meta(*, locale: str = "zh-CN", tz_name: str = "UTC") -> VoiceRequestMeta:
     tz_text = str(tz_name or "UTC").strip() or "UTC"
@@ -232,6 +301,90 @@ def build_request_meta(*, locale: str = "zh-CN", tz_name: str = "UTC") -> VoiceR
     )
 
 
+def apply_voice_plan(state: AppState, plan: VoicePlan, *, transcript: str = "") -> VoicePlanApplyResult:
+    if not isinstance(plan, VoicePlan):
+        plan = VoicePlan(actions=[VoiceAction("no_action", {"reason": "invalid_plan"})])
+
+    before_snapshot = _capture_undo_snapshot(state)
+    step_results: list[VoicePlanStepResult] = []
+    changed = False
+    success_count = 0
+    failed_count = 0
+    skipped_count = 0
+    hit_confirm = False
+
+    for action in list(plan.actions or []):
+        result = apply_voice_action(state, action)
+        step_results.append(VoicePlanStepResult(action=action, result=result))
+        changed = changed or bool(result.changed)
+
+        st = str(result.status or "").strip().lower()
+        if st == "confirm":
+            hit_confirm = True
+            break
+        if st == "error":
+            failed_count += 1
+            continue
+        if action.tool == "no_action" or not bool(result.changed):
+            skipped_count += 1
+        else:
+            success_count += 1
+
+    executed_count = len(step_results)
+    total_count = len(list(plan.actions or []))
+
+    status = "done"
+    if hit_confirm:
+        status = "confirm"
+    elif failed_count > 0 and success_count <= 0 and skipped_count <= 0:
+        status = "error"
+
+    message = _compose_voice_plan_message(
+        plan=plan,
+        step_results=step_results,
+        status=status,
+        success_count=success_count,
+        failed_count=failed_count,
+        skipped_count=skipped_count,
+    )
+
+    is_history_control_plan = all(
+        str(step.action.tool or "").strip() in {"undo_last_action_group", "redo_last_action_group"}
+        for step in step_results
+    ) and bool(step_results)
+    if _should_record_undo_history(step_results, status=status) and not is_history_control_plan:
+        after_snapshot = _capture_undo_snapshot(state)
+        _push_undo_history_group(
+            state,
+            transcript=transcript,
+            step_results=step_results,
+            status=status,
+            message=message,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+        )
+
+    _push_recent_voice_action_group(
+        state,
+        transcript=transcript,
+        step_results=step_results,
+        status=status,
+        message=message,
+    )
+
+    return VoicePlanApplyResult(
+        changed=changed,
+        status=status,
+        message=message,
+        executed_count=executed_count,
+        total_count=total_count,
+        success_count=success_count,
+        failed_count=failed_count,
+        skipped_count=skipped_count,
+        step_results=step_results,
+    )
+
+
 def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult:
     expire_pending_voice_confirmation(state)
 
@@ -239,6 +392,14 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
         _clear_pending_voice_confirmation(state)
         reason = str(action.args.get("reason") or "no_action")
         return VoiceApplyResult(changed=False, status="done", message=f"No action: {reason}")
+
+    if action.tool == "undo_last_action_group":
+        _clear_pending_voice_confirmation(state)
+        return _undo_last_action_group(state)
+
+    if action.tool == "redo_last_action_group":
+        _clear_pending_voice_confirmation(state)
+        return _redo_last_action_group(state)
 
     if action.tool == "shopping_add_item":
         _clear_pending_voice_confirmation(state)
@@ -465,6 +626,253 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
     return VoiceApplyResult(changed=False, status="error", message="Unsupported voice action")
 
 
+def _capture_undo_snapshot(state: AppState) -> dict[str, Any]:
+    reminders = [replace(r) for r in list(getattr(state.model, "reminders", []) or [])]
+    memos = [replace(m) for m in list(getattr(state.model, "memos", []) or [])]
+    return {
+        "model": {
+            "reminders": reminders,
+            "memos": memos,
+        },
+        "ui": {
+            "widget_mode": str(getattr(state.ui, "widget_mode", WidgetMode.CLOCK) or WidgetMode.CLOCK.value),
+            "timer_seconds": int(getattr(state.ui, "timer_seconds", 0) or 0),
+            "timer_running": bool(getattr(state.ui, "timer_running", False)),
+            "timer_last_tick_at": float(getattr(state.ui, "timer_last_tick_at", 0.0) or 0.0),
+            "memo_index": int(getattr(state.ui, "memo_index", 0) or 0),
+            "memo_last_rotated_at": float(getattr(state.ui, "memo_last_rotated_at", 0.0) or 0.0),
+            "reminders_version": int(getattr(state.ui, "reminders_version", 0) or 0),
+        },
+    }
+
+
+def _restore_undo_snapshot(state: AppState, snap: dict[str, Any] | None) -> bool:
+    if not isinstance(snap, dict):
+        return False
+    model = snap.get("model")
+    ui = snap.get("ui")
+    if not isinstance(model, dict) or not isinstance(ui, dict):
+        return False
+
+    reminders_raw = model.get("reminders")
+    memos_raw = model.get("memos")
+    if not isinstance(reminders_raw, list) or not isinstance(memos_raw, list):
+        return False
+
+    state.model.reminders = [replace(r) for r in reminders_raw if isinstance(r, Reminder)]
+    state.model.memos = [replace(m) for m in memos_raw if isinstance(m, MemoItem)]
+
+    mode_raw = str(ui.get("widget_mode") or WidgetMode.CLOCK.value).strip().lower()
+    if mode_raw == WidgetMode.TIMER.value:
+        state.ui.widget_mode = WidgetMode.TIMER
+    else:
+        state.ui.widget_mode = WidgetMode.CLOCK
+    state.ui.timer_seconds = int(ui.get("timer_seconds") or 0)
+    state.ui.timer_running = bool(ui.get("timer_running") or False)
+    state.ui.timer_last_tick_at = float(ui.get("timer_last_tick_at") or time.time())
+    state.ui.memo_index = int(ui.get("memo_index") or 0)
+    state.ui.memo_last_rotated_at = float(ui.get("memo_last_rotated_at") or time.time())
+    state.ui.reminders_version = int(ui.get("reminders_version") or 0)
+    state.ui.pending_reorder = False
+    state.ui.reorder_due_at = 0.0
+    return True
+
+
+def _should_record_undo_history(step_results: list[VoicePlanStepResult], *, status: str) -> bool:
+    if str(status or "").strip().lower() in {"confirm", "error"}:
+        return False
+    for step in step_results:
+        tool = str(step.action.tool or "").strip()
+        if tool in {"no_action", "undo_last_action_group", "redo_last_action_group"}:
+            continue
+        if bool(step.result.changed):
+            return True
+    return False
+
+
+def _push_undo_history_group(
+    state: AppState,
+    *,
+    transcript: str,
+    step_results: list[VoicePlanStepResult],
+    status: str,
+    message: str,
+    before_snapshot: dict[str, Any],
+    after_snapshot: dict[str, Any],
+    max_groups: int = VOICE_HISTORY_MAX_GROUPS,
+) -> None:
+    actions: list[dict[str, Any]] = []
+    for step in step_results:
+        tool = str(step.action.tool or "").strip()
+        if not tool or tool in {"no_action", "undo_last_action_group", "redo_last_action_group"}:
+            continue
+        actions.append({"tool": tool, "args": dict(step.action.args or {})})
+    if not actions:
+        return
+
+    done_groups = list(getattr(state.ui, "voice_done_action_groups", []) or [])
+    done_groups.insert(
+        0,
+        {
+            "at": time.time(),
+            "transcript": str(transcript or "")[:180],
+            "actions": actions[:4],
+            "status": str(status or ""),
+            "message": str(message or "")[:180],
+            "before_snapshot": before_snapshot,
+            "after_snapshot": after_snapshot,
+        },
+    )
+    state.ui.voice_done_action_groups = done_groups[: max(1, int(max_groups))]
+    # New committed actions invalidate redo history.
+    state.ui.voice_redo_action_groups = []
+
+
+def _push_undo_history_from_confirm(
+    state: AppState,
+    *,
+    action: VoiceAction,
+    before_snapshot: dict[str, Any],
+    message: str,
+) -> None:
+    if not isinstance(before_snapshot, dict) or not before_snapshot:
+        return
+    step = VoicePlanStepResult(action=action, result=VoiceApplyResult(changed=True, status="done", message=message))
+    _push_undo_history_group(
+        state,
+        transcript="[physical confirm]",
+        step_results=[step],
+        status="done",
+        message=message,
+        before_snapshot=before_snapshot,
+        after_snapshot=_capture_undo_snapshot(state),
+    )
+
+
+def _undo_last_action_group(state: AppState) -> VoiceApplyResult:
+    done_groups = list(getattr(state.ui, "voice_done_action_groups", []) or [])
+    if not done_groups:
+        return VoiceApplyResult(changed=False, status="done", message="Nothing to undo")
+
+    entry = dict(done_groups.pop(0) or {})
+    before_snapshot = entry.get("before_snapshot")
+    if not _restore_undo_snapshot(state, before_snapshot if isinstance(before_snapshot, dict) else None):
+        return VoiceApplyResult(changed=False, status="error", message="Undo failed: invalid history snapshot")
+
+    redo_groups = list(getattr(state.ui, "voice_redo_action_groups", []) or [])
+    redo_groups.insert(0, entry)
+    state.ui.voice_done_action_groups = done_groups[:VOICE_HISTORY_MAX_GROUPS]
+    state.ui.voice_redo_action_groups = redo_groups[:VOICE_HISTORY_MAX_GROUPS]
+    return VoiceApplyResult(changed=True, status="done", message="Undid last action group")
+
+
+def _redo_last_action_group(state: AppState) -> VoiceApplyResult:
+    redo_groups = list(getattr(state.ui, "voice_redo_action_groups", []) or [])
+    if not redo_groups:
+        return VoiceApplyResult(changed=False, status="done", message="Nothing to redo")
+
+    entry = dict(redo_groups.pop(0) or {})
+    after_snapshot = entry.get("after_snapshot")
+    if not _restore_undo_snapshot(state, after_snapshot if isinstance(after_snapshot, dict) else None):
+        return VoiceApplyResult(changed=False, status="error", message="Redo failed: invalid history snapshot")
+
+    done_groups = list(getattr(state.ui, "voice_done_action_groups", []) or [])
+    done_groups.insert(0, entry)
+    state.ui.voice_redo_action_groups = redo_groups[:VOICE_HISTORY_MAX_GROUPS]
+    state.ui.voice_done_action_groups = done_groups[:VOICE_HISTORY_MAX_GROUPS]
+    return VoiceApplyResult(changed=True, status="done", message="Redid last action group")
+
+
+def _compose_voice_plan_message(
+    *,
+    plan: VoicePlan,
+    step_results: list[VoicePlanStepResult],
+    status: str,
+    success_count: int,
+    failed_count: int,
+    skipped_count: int,
+) -> str:
+    use_response_copy = bool(plan.response_copy) and (
+        success_count > 0
+        or str(status or "").strip().lower() == "confirm"
+    )
+    if use_response_copy:
+        base = str(plan.response_copy).strip()
+    else:
+        base = ""
+
+    if not base:
+        if status == "confirm" and step_results:
+            base = str(step_results[-1].result.message or "Need confirmation").strip()
+        elif status == "error":
+            if step_results:
+                base = str(step_results[-1].result.message or "").strip() or "Voice action failed"
+            else:
+                base = "Voice action failed"
+        elif success_count > 0 and failed_count > 0:
+            base = f"Partial success: {success_count} done, {failed_count} failed"
+        elif success_count > 0:
+            base = f"Done: {success_count} action(s)"
+        elif plan.needs_clarification:
+            clar = str(plan.clarification or "").strip() or "Need clarification"
+            base = f"Skipped: {clar}"
+        elif skipped_count > 0:
+            base = ""
+            for step in reversed(step_results):
+                if str(step.action.tool or "").strip() == "no_action":
+                    continue
+                msg = str(step.result.message or "").strip()
+                if msg:
+                    base = msg
+                    break
+            if not base:
+                base = "Skipped: no actionable command"
+        elif step_results:
+            base = str(step_results[-1].result.message or "").strip() or "Skipped: no actionable command"
+        else:
+            base = "Skipped: no actionable command"
+
+    failed_actions: list[str] = []
+    for step in step_results:
+        if str(step.result.status or "").strip().lower() == "error":
+            failed_actions.append(describe_voice_action(step.action))
+    if failed_actions and status != "error":
+        base = f"{base}; failed: {', '.join(failed_actions[:2])}"
+    return base
+
+
+def _push_recent_voice_action_group(
+    state: AppState,
+    *,
+    transcript: str,
+    step_results: list[VoicePlanStepResult],
+    status: str,
+    message: str,
+    max_groups: int = VOICE_HISTORY_MAX_GROUPS,
+) -> None:
+    actions: list[dict[str, Any]] = []
+    for step in step_results:
+        tool = str(step.action.tool or "").strip()
+        if not tool or tool in {"no_action", "undo_last_action_group", "redo_last_action_group"}:
+            continue
+        actions.append({"tool": tool, "args": dict(step.action.args or {})})
+    if not actions:
+        return
+
+    groups = list(getattr(state.ui, "voice_recent_action_groups", []) or [])
+    groups.insert(
+        0,
+        {
+            "at": time.time(),
+            "transcript": str(transcript or "")[:180],
+            "actions": actions[:4],
+            "status": str(status or ""),
+            "message": str(message or "")[:180],
+        },
+    )
+    state.ui.voice_recent_action_groups = groups[: max(1, int(max_groups))]
+
+
 def expire_pending_voice_confirmation(state: AppState, now: float | None = None) -> None:
     ts = float(now if now is not None else time.time())
     due = float(state.ui.voice_confirm_due_at or 0.0)
@@ -482,18 +890,42 @@ def confirm_pending_voice_action(state: AppState, now: float | None = None) -> V
     tool = str(state.ui.voice_confirm_tool or "").strip()
     if not tool:
         return None
+    payload_args: dict[str, Any] = {}
+    try:
+        raw = str(state.ui.voice_confirm_payload_json or "").strip()
+        if raw:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                payload_args = dict(parsed)
+    except Exception:
+        payload_args = {}
+    before_snapshot = state.ui.voice_confirm_before_snapshot if isinstance(state.ui.voice_confirm_before_snapshot, dict) else {}
     if tool == "shopping_clear_all":
         removed = _clear_shopping_items(state)
         _clear_pending_voice_confirmation(state)
         if removed <= 0:
             return VoiceApplyResult(changed=False, status="done", message="Shopping list already empty")
-        return VoiceApplyResult(changed=True, status="done", message=f"Cleared shopping list ({removed})")
+        msg = f"Cleared shopping list ({removed})"
+        _push_undo_history_from_confirm(
+            state,
+            action=VoiceAction(tool="shopping_clear_all", args=payload_args),
+            before_snapshot=before_snapshot,
+            message=msg,
+        )
+        return VoiceApplyResult(changed=True, status="done", message=msg)
     if tool == "inventory_clear_all":
         removed = _clear_inventory_items(state)
         _clear_pending_voice_confirmation(state)
         if removed <= 0:
             return VoiceApplyResult(changed=False, status="done", message="Inventory already empty")
-        return VoiceApplyResult(changed=True, status="done", message=f"Cleared inventory ({removed})")
+        msg = f"Cleared inventory ({removed})"
+        _push_undo_history_from_confirm(
+            state,
+            action=VoiceAction(tool="inventory_clear_all", args=payload_args),
+            before_snapshot=before_snapshot,
+            message=msg,
+        )
+        return VoiceApplyResult(changed=True, status="done", message=msg)
     _clear_pending_voice_confirmation(state)
     return VoiceApplyResult(changed=False, status="error", message="Unsupported pending confirmation")
 
@@ -564,12 +996,14 @@ def _set_pending_voice_confirmation(state: AppState, action: VoiceAction) -> Non
     state.ui.voice_confirm_tool = str(action.tool or "")
     state.ui.voice_confirm_payload_json = json.dumps(dict(action.args or {}), ensure_ascii=False)
     state.ui.voice_confirm_due_at = time.time() + CONFIRM_WINDOW_S
+    state.ui.voice_confirm_before_snapshot = _capture_undo_snapshot(state)
 
 
 def _clear_pending_voice_confirmation(state: AppState) -> None:
     state.ui.voice_confirm_tool = ""
     state.ui.voice_confirm_payload_json = ""
     state.ui.voice_confirm_due_at = 0.0
+    state.ui.voice_confirm_before_snapshot = {}
 
 
 def _clear_shopping_items(state: AppState) -> int:

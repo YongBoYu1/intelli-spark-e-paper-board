@@ -5,7 +5,14 @@ from typing import Any
 from app.core.state import AppState
 
 
-def build_board_context(state: AppState, *, max_inventory: int = 6, max_shopping: int = 8, max_memos: int = 2) -> dict[str, Any]:
+def build_board_context(
+    state: AppState,
+    *,
+    max_inventory: int = 6,
+    max_shopping: int = 8,
+    max_memos: int = 2,
+    max_recent_action_groups: int = 4,
+) -> dict[str, Any]:
     reminders = list(getattr(state.model, "reminders", []) or [])
     fridge = [r for r in reminders if str(getattr(r, "category", "") or "") == "fridge"]
     shopping = [r for r in reminders if str(getattr(r, "category", "") or "") != "fridge"]
@@ -33,6 +40,34 @@ def build_board_context(state: AppState, *, max_inventory: int = 6, max_shopping
         )
 
     ui = getattr(state, "ui", None)
+    recent_groups = list(getattr(ui, "voice_recent_action_groups", []) or [])
+    packed_recent_groups: list[dict[str, Any]] = []
+    for g in recent_groups[: max(0, int(max_recent_action_groups))]:
+        if not isinstance(g, dict):
+            continue
+        actions = g.get("actions")
+        packed_actions: list[dict[str, Any]] = []
+        if isinstance(actions, list):
+            for a in actions[:4]:
+                if not isinstance(a, dict):
+                    continue
+                tool = str(a.get("tool") or "").strip()
+                args = a.get("args") if isinstance(a.get("args"), dict) else {}
+                if not tool:
+                    continue
+                packed_actions.append({"tool": tool, "args": args})
+        if not packed_actions:
+            continue
+        packed_recent_groups.append(
+            {
+                "at": float(g.get("at") or 0.0),
+                "transcript": str(g.get("transcript") or "")[:180],
+                "status": str(g.get("status") or ""),
+                "message": str(g.get("message") or "")[:180],
+                "actions": packed_actions,
+            }
+        )
+
     return {
         "screen": str(getattr(getattr(ui, "screen", None), "value", getattr(ui, "screen", "home"))),
         "inventory": {
@@ -48,4 +83,9 @@ def build_board_context(state: AppState, *, max_inventory: int = 6, max_shopping
             "running": bool(getattr(ui, "timer_running", False)),
         },
         "memos": memo_items,
+        "history": {
+            "undoable_count": len(list(getattr(ui, "voice_done_action_groups", []) or [])),
+            "redoable_count": len(list(getattr(ui, "voice_redo_action_groups", []) or [])),
+        },
+        "recent_action_groups": packed_recent_groups,
     }

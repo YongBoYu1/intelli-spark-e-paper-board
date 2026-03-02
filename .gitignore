@@ -40,3 +40,6 @@ e-ink-smart-fridge-dashboard/
 # Voice planning docs (keep local unless explicitly reviewing docs)
 docs/VOICE_LATENCY_BUDGET.md
 docs/VOICE_PIPELINE_MVP.md
+
+# Voice runtime data
+backend/voice_api/data/

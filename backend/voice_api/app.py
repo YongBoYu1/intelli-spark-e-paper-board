@@ -21,6 +21,7 @@ class VoiceInterpretRequest(BaseModel):
     request_time: str = Field(min_length=1, max_length=64)
     timezone: str = Field(min_length=1, max_length=64)
     locale: str = Field(default="zh-CN", min_length=2, max_length=32)
+    household_id: str | None = None
     audio_base64: str | None = None
     transcript: str | None = None
     board_context: dict[str, Any] | None = None
@@ -28,6 +29,7 @@ class VoiceInterpretRequest(BaseModel):
 
 class VoiceInterpretResponse(BaseModel):
     action: dict[str, Any]
+    plan: dict[str, Any] | None = None
     transcript: str = ""
 
 
@@ -67,7 +69,7 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
             if cached is None:
                 inflight_entry = _inflight_requests.get(req_id)
                 if inflight_entry is None:
-                    inflight_entry = {"event": threading.Event(), "action": None, "transcript": "", "error": None}
+                    inflight_entry = {"event": threading.Event(), "action": None, "plan": None, "transcript": "", "error": None}
                     _inflight_requests[req_id] = inflight_entry
                     is_leader = True
         if cached is not None:
@@ -79,6 +81,7 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
             )
             return VoiceInterpretResponse(
                 action=dict(cached.get("action") or {}),
+                plan=dict(cached.get("plan") or {}) if isinstance(cached.get("plan"), dict) else None,
                 transcript=str(cached.get("transcript") or ""),
             )
         if inflight_entry is not None and not is_leader:
@@ -96,6 +99,7 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
             if err is not None:
                 raise err
             action = dict(inflight_entry.get("action") or {})
+            plan = dict(inflight_entry.get("plan") or {}) if isinstance(inflight_entry.get("plan"), dict) else None
             transcript = str(inflight_entry.get("transcript") or "")
             _log.info(
                 "voice_interpret inflight-reuse request_id=%s action=%s transcript=%s",
@@ -103,11 +107,12 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
                 _summarize_action(action),
                 _clip_log_text(transcript),
             )
-            return VoiceInterpretResponse(action=action, transcript=transcript)
+            return VoiceInterpretResponse(action=action, plan=plan, transcript=transcript)
 
     try:
         result = interpret_request_with_debug(req_dict)
         action = dict(result.get("action") or {})
+        plan = dict(result.get("plan") or {}) if isinstance(result.get("plan"), dict) else None
         transcript = str(result.get("transcript") or "")
     except Exception as e:
         if req_id and is_leader and inflight_entry is not None:
@@ -119,11 +124,12 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
 
     if req_id:
         with _cache_lock:
-            _idempotency_cache[req_id] = {"action": action, "transcript": transcript, "_cached_at": time.time()}
+            _idempotency_cache[req_id] = {"action": action, "plan": plan, "transcript": transcript, "_cached_at": time.time()}
             _prune_idempotency_cache_locked(now_ts=time.time())
             if is_leader and inflight_entry is not None:
                 _inflight_requests.pop(req_id, None)
                 inflight_entry["action"] = action
+                inflight_entry["plan"] = plan
                 inflight_entry["transcript"] = transcript
                 inflight_entry["error"] = None
                 inflight_entry["event"].set()
@@ -135,7 +141,7 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
         _clip_log_text(transcript),
     )
 
-    return VoiceInterpretResponse(action=action, transcript=transcript)
+    return VoiceInterpretResponse(action=action, plan=plan, transcript=transcript)
 
 
 def _prune_idempotency_cache_locked(*, now_ts: float | None = None) -> None:
