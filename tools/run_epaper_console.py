@@ -385,14 +385,23 @@ def _align_partial_rect(rect: tuple[int, int, int, int], width: int, height: int
     return (x0, y0, x1, y1)
 
 
+def _partial_buffer_from_frame(frame: Image.Image, rect: tuple[int, int, int, int]) -> bytearray:
+    x0, y0, x1, y1 = rect
+    crop = frame.crop((x0, y0, x1, y1)).convert("1")
+    buf = bytearray(crop.tobytes("raw"))
+    # Match waveshare getbuffer() polarity: PIL 0=black/1=white -> panel expects inverted bits.
+    for i in range(len(buf)):
+        buf[i] ^= 0xFF
+    return buf
+
+
 def _blit_partial(epd, frame: Image.Image, rect: tuple[int, int, int, int], current_mode: str) -> str:
     x0, y0, x1, y1 = rect
     if x1 <= x0 or y1 <= y0:
         return current_mode
     current_mode = _ensure_epd_mode(epd, current_mode, "part")
-    width = x1 - x0
-    height = y1 - y0
-    epd.display_Partial(epd.getbuffer(frame), x0, y0, width, height)
+    part_buf = _partial_buffer_from_frame(frame, rect)
+    epd.display_Partial(part_buf, x0, y0, x1, y1)
     return current_mode
 
 
