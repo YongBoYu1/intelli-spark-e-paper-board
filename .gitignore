@@ -1,5 +1,10 @@
 .DS_Store
 
+# Environment variables
+.env
+.env.local
+.env.*.local
+
 # Hardware test artifacts
 hardware_tests/run.log
 hardware_tests/last_frame.png
@@ -27,3 +32,11 @@ assets/fonts/*
 !assets/fonts/Inter-Black.ttf
 !assets/fonts/JetBrainsMono-Bold.ttf
 !assets/fonts/JetBrainsMono-ExtraBold.ttf
+
+# Local copied dashboard prototypes (not part of current voice PR scope)
+copy-of-e-ink-smart-fridge-dashboard*/
+e-ink-smart-fridge-dashboard/
+
+# Voice planning docs (keep local unless explicitly reviewing docs)
+docs/VOICE_LATENCY_BUDGET.md
+docs/VOICE_PIPELINE_MVP.md
