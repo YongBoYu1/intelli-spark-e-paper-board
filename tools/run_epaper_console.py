@@ -366,21 +366,14 @@ def _align_partial_rect(rect: tuple[int, int, int, int], width: int, height: int
     return (x0, y0, x1, y1)
 
 
-def _pack_partial_buffer(image: Image.Image) -> bytearray:
-    mono = image.convert("1")
-    buf = bytearray(mono.tobytes("raw"))
-    for i in range(len(buf)):
-        buf[i] ^= 0xFF
-    return buf
-
-
 def _blit_partial(epd, frame: Image.Image, rect: tuple[int, int, int, int], current_mode: str) -> str:
     x0, y0, x1, y1 = rect
     if x1 <= x0 or y1 <= y0:
         return current_mode
     current_mode = _ensure_epd_mode(epd, current_mode, "part")
-    patch = frame.crop((x0, y0, x1, y1))
-    epd.display_Partial(_pack_partial_buffer(patch), x0, y0, x1, y1)
+    width = x1 - x0
+    height = y1 - y0
+    epd.display_Partial(epd.getbuffer(frame), x0, y0, width, height)
     return current_mode
 
 
