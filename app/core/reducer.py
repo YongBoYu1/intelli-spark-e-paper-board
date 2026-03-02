@@ -208,6 +208,10 @@ def _handle_settings_click(state: AppState, now: float) -> None:
         _toggle_rotation(state)
         return
 
+    if item == SettingsItem.BACK_HOME:
+        state.ui.screen = Screen.HOME
+        return
+
 
 def _toggle_rotation(state: AppState) -> None:
     state.ui.rotation_deg = 180 if int(state.ui.rotation_deg or 0) == 0 else 0

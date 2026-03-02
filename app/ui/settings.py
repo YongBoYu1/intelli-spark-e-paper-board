@@ -73,6 +73,8 @@ def _value_for_item(state: AppState, item: SettingsItem) -> str:
         return "PRESS ENTER"
     if item == SettingsItem.ROTATION:
         return _rotation_text(state.ui.rotation_deg)
+    if item == SettingsItem.BACK_HOME:
+        return "PRESS ENTER"
     if item == SettingsItem.RESET_AND_WIPE:
         return "PLACEHOLDER"
     return ""
