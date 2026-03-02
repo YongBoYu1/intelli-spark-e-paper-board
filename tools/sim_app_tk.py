@@ -19,8 +19,8 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem
-from app.core.reducer import reduce, Rotate, Click, Back, Tick, MemoDelta
+from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
+from app.core.reducer import reduce, Rotate, Click, LongPress, RotateButton, Back, Tick, MemoDelta
 from app.render.panel import build_panel_theme, quantize_for_panel
 from app.shared.env import load_repo_dotenv
 from app.shared.fonts import FontBook
@@ -638,6 +638,8 @@ class Simulator(tk.Tk):
             "Keys: \n"
             "  ←/→ = Rotate (move focus / auto page)\n"
             "  Enter = Click (open detail / toggle task / select menu)\n"
+            "  R = Rotate screen (0°/180°)\n"
+            "  S = Open settings\n"
             "  Hold Space = Record, Release Space = Send to Voice API\n"
             "  B / Esc / Backspace = Back (dashboard -> menu, detail/menu -> dashboard)\n"
             "  ↑/↓ = Memo (when left panel focused)\n"
@@ -650,6 +652,10 @@ class Simulator(tk.Tk):
         self.bind("<Right>", lambda _e: self._dispatch(Rotate(+1)))
         self.bind("<Up>", lambda _e: self._dispatch(MemoDelta(-1)))
         self.bind("<Down>", lambda _e: self._dispatch(MemoDelta(+1)))
+        self.bind("r", lambda _e: self._dispatch(RotateButton()))
+        self.bind("R", lambda _e: self._dispatch(RotateButton()))
+        self.bind("s", lambda _e: self._open_settings())
+        self.bind("S", lambda _e: self._open_settings())
         self.bind_all("<KeyPress-Return>", self._on_enter_press)
         self.bind_all("<KeyPress-KP_Enter>", self._on_enter_press)
         self.bind("b", lambda _e: self._dispatch(Back()))
@@ -745,6 +751,10 @@ class Simulator(tk.Tk):
                 self._render()
                 return
         self.state = reduce(self.state, ev, theme=self.theme)
+        self._render()
+
+    def _open_settings(self):
+        self.state.ui.screen = Screen.SETTINGS
         self._render()
 
     def _on_enter_press(self, _event=None):

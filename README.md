@@ -32,6 +32,18 @@ WAVESHARE_PYTHON_ROOT=third_party/waveshare_ePaper/RaspberryPi_JetsonNano/python
 ```
 Note: the scripts also auto-detect `third_party/waveshare_ePaper/...` without the env var.
 
+### Rotary Encoder Hardware Demo (Raspberry Pi 4B)
+
+If you want to validate rotary input (`S1/S2/KEY`) on Pi first:
+
+```bash
+sudo python3 hardware_tests/test_rotary_encoder.py
+```
+
+Wiring + options:
+
+- `docs/ROTARY_ENCODER_RPI4B.md`
+
 ### Weather Icon Packs (Weather Detail)
 
 Weather detail supports multiple icon packs via `ui_tuner_theme.json`:
@@ -43,6 +55,23 @@ Weather detail supports multiple icon packs via `ui_tuner_theme.json`:
 See full setup and license notes in:
 
 - `docs/WEATHER_ICON_PACKS.md`
+
+### Settings V1 (E-Ink)
+
+Settings page scope and behavior are documented in:
+
+- `docs/SETTINGS_V1.md`
+- `docs/issues/2026-02-25-settings-v1-page-structure.md` (issue draft)
+- Tracking issue: `#17`  
+  `https://github.com/YongBoYu1/intelli-spark-e-paper-board/issues/17`
+
+### E-Paper Refresh Strategy Playbook
+
+Refresh strategy standard for this board and future UI pages:
+
+- `docs/EPD_REFRESH_STRATEGY_PLAYBOOK.md`
+- Tracking issue: `#18`  
+  `https://github.com/YongBoYu1/intelli-spark-e-paper-board/issues/18`
 
 ---
 
@@ -189,3 +218,4 @@ fridge-ink/
     test_action_router.c
     test_sync.c
     test_json.c
+```

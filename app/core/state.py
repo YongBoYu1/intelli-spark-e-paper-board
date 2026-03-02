@@ -11,6 +11,7 @@ class Screen(str, Enum):
     MENU = "menu"
     CALENDAR = "calendar"
     WEATHER = "weather"
+    SETTINGS = "settings"
     PLACEHOLDER = "placeholder"
 
 
@@ -129,6 +130,20 @@ class UiState:
     voice_confirm_tool: str = ""
     voice_confirm_payload_json: str = ""
     voice_confirm_due_at: float = 0.0
+
+    # Settings page selection + values (V1).
+    settings_focused_index: int = 0
+    font_size: str = "medium"  # small | medium | large
+    partial_refresh_mode: str = "balanced"  # slow | balanced | fast
+    full_refresh_every: int = 15  # trigger a full refresh after N partial refreshes
+    wifi_enabled: bool = True
+    bluetooth_enabled: bool = False
+    auto_sync_enabled: bool = True
+    last_sync_at: float = 0.0
+    sync_state: str = "never"  # never | ok | fail
+    rotation_deg: int = 0  # 0 | 180
+    settings_notice: str = ""
+    settings_notice_due_at: float = 0.0
 
     last_interaction_at: float = field(default_factory=lambda: time.time())
 
