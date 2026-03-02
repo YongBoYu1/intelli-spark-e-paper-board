@@ -303,6 +303,7 @@ def _state_render_sig(state: AppState):
         state.ui.widget_mode,
         state.ui.timer_seconds,
         state.ui.timer_running,
+        state.ui.timer_focused_index,
         state.ui.voice_active,
         state.ui.voice_phase,
         state.ui.voice_message,
@@ -348,6 +349,24 @@ def _settings_partial_area_limit(mode: str) -> float:
     if normalized == "fast":
         return 0.85
     return 0.65
+
+
+def _screen_partial_area_limit(screen: Screen, mode: str) -> float:
+    # Timer can tolerate a larger partial rect than settings because updates are
+    # concentrated around the central countdown and control row.
+    base = _settings_partial_area_limit(mode)
+    if screen == Screen.TIMER:
+        return min(0.95, base + 0.20)
+    return base
+
+
+def _timer_partial_full_every(theme: dict) -> int:
+    # Avoid forcing full refresh too frequently during active countdown ticks.
+    try:
+        value = int(theme.get("timer_full_refresh_every", 300) or 300)
+    except Exception:
+        value = 300
+    return max(60, value)
 
 
 def _align_partial_rect(rect: tuple[int, int, int, int], width: int, height: int, *, pad: int = 2) -> tuple[int, int, int, int] | None:
@@ -713,6 +732,7 @@ def main() -> int:
     last_render_rotation = int(state.ui.rotation_deg or 0)
     last_render_font_size = str(state.ui.font_size or "medium")
     settings_partial_count = 0
+    timer_partial_count = 0
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -929,46 +949,66 @@ def main() -> int:
                     if screen_changed or rotation_changed:
                         driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
                         settings_partial_count = 0
+                        timer_partial_count = 0
                         committed = True
                     if curr_screen == Screen.SETTINGS and font_size_changed and not committed:
                         # Font size changes reflow most rows; prefer stable full refresh.
                         driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
                         settings_partial_count = 0
+                        timer_partial_count = 0
                         committed = True
-                    in_settings = (
-                        curr_screen == Screen.SETTINGS
-                        and last_render_screen == Screen.SETTINGS
+                    in_partial_screen = (
+                        curr_screen in (Screen.SETTINGS, Screen.TIMER)
+                        and last_render_screen == curr_screen
                         and curr_rotation == last_render_rotation
                     )
-                    if in_settings and not committed:
+                    if in_partial_screen and not committed:
                         rect = _align_partial_rect(diff_box, epd.width, epd.height, pad=2)
                         if rect is not None:
                             x0, y0, x1, y1 = rect
                             partial_area = (x1 - x0) * (y1 - y0)
                             total_area = max(1, epd.width * epd.height)
                             area_ratio = float(partial_area) / float(total_area)
-                            mode_limit = _settings_partial_area_limit(state.ui.partial_refresh_mode)
-                            full_every = max(1, int(state.ui.full_refresh_every or 15))
-                            force_full_clean = settings_partial_count >= full_every
+                            mode_limit = _screen_partial_area_limit(curr_screen, state.ui.partial_refresh_mode)
+                            if curr_screen == Screen.SETTINGS:
+                                full_every = max(1, int(state.ui.full_refresh_every or 15))
+                                force_full_clean = settings_partial_count >= full_every
+                            else:
+                                full_every = _timer_partial_full_every(theme)
+                                force_full_clean = timer_partial_count >= full_every
                             try:
                                 if force_full_clean:
                                     driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                                    settings_partial_count = 0
+                                    if curr_screen == Screen.SETTINGS:
+                                        settings_partial_count = 0
+                                    else:
+                                        timer_partial_count = 0
                                 elif area_ratio <= mode_limit:
                                     driver_mode = _blit_partial(epd, frame, rect, driver_mode)
-                                    settings_partial_count += 1
+                                    if curr_screen == Screen.SETTINGS:
+                                        settings_partial_count += 1
+                                    else:
+                                        timer_partial_count += 1
                                 else:
                                     driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                                    settings_partial_count = 0
+                                    if curr_screen == Screen.SETTINGS:
+                                        settings_partial_count = 0
+                                    else:
+                                        timer_partial_count = 0
                                 committed = True
                             except Exception as e:
-                                print(f"[warn] settings partial refresh failed, fallback to fast full refresh: {e}")
+                                screen_name = str(curr_screen.value if isinstance(curr_screen, Screen) else curr_screen)
+                                print(f"[warn] {screen_name} partial refresh failed, fallback to full refresh: {e}")
                                 driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                                settings_partial_count = 0
+                                if curr_screen == Screen.SETTINGS:
+                                    settings_partial_count = 0
+                                else:
+                                    timer_partial_count = 0
                                 committed = True
                     if not committed:
                         driver_mode = _blit_full(epd, frame, driver_mode, fast=True)
                         settings_partial_count = 0
+                        timer_partial_count = 0
                         committed = True
                 last_render_sig = sig
                 last_render_frame = frame

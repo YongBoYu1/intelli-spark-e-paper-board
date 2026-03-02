@@ -81,7 +81,7 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
 
     title_x = icon_x + icon_size + 14
     draw.text((title_x, title_y), title_text, font=title_font, fill=ink)
-    hint_text = "ROTATE TO SELECT  -  CLICK TO CHANGE  -  B TO BACK"
+    hint_text = "ROTATE TO SELECT  -  CLICK TO CHANGE"
     if meta_compact:
         hint_text = hint_text.upper()
     hint_w = text_width_spaced(draw, hint_text, hint_font, spacing=meta_spacing)
