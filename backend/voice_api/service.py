@@ -512,17 +512,21 @@ def _maybe_build_explicit_correction_plan(
         return None
 
     wrong, correct = correction
-    try:
-        get_correction_kb().upsert(scope_id=scope_id, wrong=wrong, correct=correct)
-    except Exception:
-        pass
-
-    return _build_context_rename_plan(
+    plan = _build_context_rename_plan(
         board_context=board_context,
         wrong=wrong,
         correct=correct,
         request_time=request_time,
     )
+    if plan is None:
+        return None
+
+    if str(scope_id or "").strip() and str(scope_id or "").strip() != _CORRECTION_SCOPE_DEFAULT:
+        try:
+            get_correction_kb().upsert(scope_id=scope_id, wrong=wrong, correct=correct)
+        except Exception:
+            pass
+    return plan
 
 
 def _extract_explicit_correction(transcript: str) -> tuple[str, str] | None:

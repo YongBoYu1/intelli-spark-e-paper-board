@@ -265,10 +265,7 @@ def _parse_single_voice_action(action: dict[str, Any] | None) -> VoiceAction:
         args["text"] = text
 
     if tool in {"undo_last_action_group", "redo_last_action_group"}:
-        if not isinstance(args, dict):
-            args = {}
-        else:
-            args = {}
+        args = {}
 
     if tool == "no_action":
         reason = str(args.get("reason") or "").strip()
