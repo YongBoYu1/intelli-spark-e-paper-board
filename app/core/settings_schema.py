@@ -11,7 +11,6 @@ class SettingsItem(str, Enum):
     AUTO_SYNC = "auto_sync"
     SYNC_NOW = "sync_now"
     ROTATION = "rotation"
-    BACK_HOME = "back_home"
     RESET_AND_WIPE = "reset_and_wipe"
 
 
@@ -23,7 +22,6 @@ SETTINGS_ORDER: list[SettingsItem] = [
     SettingsItem.CONNECTIVITY,
     SettingsItem.AUTO_SYNC,
     SettingsItem.SYNC_NOW,
-    SettingsItem.BACK_HOME,
     SettingsItem.RESET_AND_WIPE,
 ]
 
@@ -48,7 +46,6 @@ SETTINGS_GROUPS: list[tuple[str, list[SettingsItem]]] = [
     (
         "OTHER",
         [
-            SettingsItem.BACK_HOME,
             SettingsItem.RESET_AND_WIPE,
         ],
     ),
@@ -63,6 +60,5 @@ SETTINGS_LABELS: dict[SettingsItem, str] = {
     SettingsItem.AUTO_SYNC: "AUTO SYNC",
     SettingsItem.SYNC_NOW: "SYNC NOW",
     SettingsItem.ROTATION: "ROTATION",
-    SettingsItem.BACK_HOME: "BACK HOME",
     SettingsItem.RESET_AND_WIPE: "RESET / WEB DATA",
 }

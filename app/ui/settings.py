@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 
-from PIL import ImageDraw
+from PIL import Image, ImageDraw
 
 from app.shared.draw import draw_text_spaced, text_size, text_width_spaced, truncate_text
 from app.shared.panel_font_templates import apply_panel_font_template
@@ -73,11 +75,29 @@ def _value_for_item(state: AppState, item: SettingsItem) -> str:
         return "PRESS ENTER"
     if item == SettingsItem.ROTATION:
         return _rotation_text(state.ui.rotation_deg)
-    if item == SettingsItem.BACK_HOME:
-        return "PRESS ENTER"
     if item == SettingsItem.RESET_AND_WIPE:
         return "PLACEHOLDER"
     return ""
+
+
+@lru_cache(maxsize=1)
+def _load_home_icon_png() -> Image.Image | None:
+    root = Path(__file__).resolve().parents[2]
+    icon_path = root / "assets" / "icons" / "home_tabler.png"
+    if not icon_path.exists():
+        return None
+    return Image.open(icon_path).convert("RGBA")
+
+
+def _draw_home_icon(image, x: int, y: int, size: int, color) -> None:
+    icon = _load_home_icon_png()
+    if icon is None:
+        return
+    s = max(24, int(size))
+    src = icon.resize((s, s), Image.Resampling.LANCZOS)
+    # Use a higher alpha cutoff so the rendered outline looks thinner on e-ink.
+    alpha = src.getchannel("A").point(lambda v: 255 if v >= 170 else 0, mode="1")
+    image.paste(color, (x, y, x + s, y + s), alpha)
 
 
 def render_settings(image, state: AppState, fonts, theme: dict) -> None:
@@ -114,17 +134,44 @@ def render_settings(image, state: AppState, fonts, theme: dict) -> None:
     row_focus_font = fonts.get(body_focus_key, label_size)
     value_font = fonts.get(meta_key, value_size)
 
-    draw.text((24, 16), "SETTINGS", font=title_font, fill=ink)
+    focused_raw = int(state.ui.settings_focused_index or 0)
+    home_focused = focused_raw < 0
+    focused = focused_raw if focused_raw >= 0 else -1
+
+    title_y = 16
+    title_bbox = draw.textbbox((0, 0), "SETTINGS", font=title_font)
+    title_mid_y = title_y + int(round((title_bbox[1] + title_bbox[3]) / 2.0))
+    title_h = max(1, int(title_bbox[3] - title_bbox[1]))
+    icon_size = max(38, int(round(title_h * 0.84)))
+    icon_x = 24
+    icon_y = max(4, title_mid_y - (icon_size // 2) - 2)
+    _draw_home_icon(image, icon_x, icon_y, icon_size, ink)
+    if home_focused:
+        pad = 2
+        draw.rectangle(
+            (icon_x - pad, icon_y - pad, icon_x + icon_size + pad, icon_y + icon_size + pad),
+            outline=ink,
+            width=2,
+            fill=None,
+        )
+        draw.text((icon_x - 15, icon_y + max(2, icon_size // 4)), ">", font=value_font, fill=ink)
+
+    title_x = icon_x + icon_size + 14
+    draw.text((title_x, title_y), "SETTINGS", font=title_font, fill=ink)
+    hint_text = "ROTATE TO SELECT  -  CLICK TO CHANGE"
+    hint_w = text_width_spaced(draw, hint_text, meta_font, spacing=meta_spacing)
+    hint_x = max(24, (w - 24) - hint_w)
     draw_text_spaced(
         draw,
-        "ROTATE TO SELECT  -  ENTER TO CHANGE  -  B TO BACK",
-        24,
+        hint_text,
+        hint_x,
         52,
         meta_font,
         spacing=meta_spacing,
         fill=muted,
     )
-    draw.line((24, 76, w - 24, 76), fill=border, width=int(theme.get("divider_width", 2) or 2))
+    divider_y = 68
+    draw.line((24, divider_y, w - 24, divider_y), fill=border, width=int(theme.get("divider_width", 2) or 2))
 
     left = 24
     right = w - 24
@@ -133,7 +180,6 @@ def render_settings(image, state: AppState, fonts, theme: dict) -> None:
     row_gap = 1
     group_h = 20
     group_gap = 7
-    focused = int(state.ui.settings_focused_index or 0) % max(1, len(SETTINGS_ORDER))
     group_font = fonts.get(meta_key, max(10, meta_base - 1))
     group_ink = muted
 

@@ -150,7 +150,10 @@ def _set_settings_notice(state: AppState, text: str, *, due_in_s: float = 2.0) -
 
 def _settings_item_for_focus(state: AppState) -> SettingsItem:
     n = max(1, len(SETTINGS_ORDER))
-    idx = int(state.ui.settings_focused_index or 0) % n
+    idx = int(state.ui.settings_focused_index or 0)
+    if idx < 0:
+        idx = 0
+    idx = idx % n
     state.ui.settings_focused_index = idx
     return SETTINGS_ORDER[idx]
 
@@ -166,6 +169,10 @@ def _cycle_value(current, options: list):
 
 
 def _handle_settings_click(state: AppState, now: float) -> None:
+    if int(state.ui.settings_focused_index or 0) < 0:
+        state.ui.screen = Screen.HOME
+        return
+
     item = _settings_item_for_focus(state)
 
     if item == SettingsItem.FONT_SIZE:
@@ -207,11 +214,6 @@ def _handle_settings_click(state: AppState, now: float) -> None:
     if item == SettingsItem.ROTATION:
         _toggle_rotation(state)
         return
-
-    if item == SettingsItem.BACK_HOME:
-        state.ui.screen = Screen.HOME
-        return
-
 
 def _toggle_rotation(state: AppState) -> None:
     state.ui.rotation_deg = 180 if int(state.ui.rotation_deg or 0) == 0 else 0
@@ -320,7 +322,11 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 state.ui.calendar_offset_days = int(state.ui.calendar_offset_days or 0) + event.delta
         elif state.ui.screen == Screen.SETTINGS:
             n = max(1, len(SETTINGS_ORDER))
-            state.ui.settings_focused_index = (int(state.ui.settings_focused_index or 0) + event.delta) % n
+            total = n + 1  # +1 for header home icon focus target
+            cur = int(state.ui.settings_focused_index or 0)
+            pos = 0 if cur < 0 else (cur + 1)
+            pos = (pos + event.delta) % total
+            state.ui.settings_focused_index = -1 if pos == 0 else (pos - 1)
         else:
             # Minimal: rotate does nothing on detail pages for now.
             pass
