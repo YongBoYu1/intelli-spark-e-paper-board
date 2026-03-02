@@ -19,7 +19,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
+from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen, WidgetMode
 from app.core.reducer import reduce, Rotate, Click, LongPress, RotateButton, Back, Tick, MemoDelta
 from app.render.panel import build_panel_theme, quantize_for_panel
 from app.shared.env import load_repo_dotenv
@@ -640,6 +640,7 @@ class Simulator(tk.Tk):
             "  Enter = Click (open detail / toggle task / select menu)\n"
             "  R = Rotate screen (0°/180°)\n"
             "  S = Open settings\n"
+            "  T = Open timer (home only)\n"
             "  Hold Space = Record, Release Space = Send to Voice API\n"
             "  B / Esc / Backspace = Back (dashboard -> menu, detail/menu -> dashboard)\n"
             "  ↑/↓ = Memo (when left panel focused)\n"
@@ -656,6 +657,8 @@ class Simulator(tk.Tk):
         self.bind("R", lambda _e: self._dispatch(RotateButton()))
         self.bind("s", lambda _e: self._open_settings())
         self.bind("S", lambda _e: self._open_settings())
+        self.bind("t", lambda _e: self._open_timer())
+        self.bind("T", lambda _e: self._open_timer())
         self.bind_all("<KeyPress-Return>", self._on_enter_press)
         self.bind_all("<KeyPress-KP_Enter>", self._on_enter_press)
         self.bind("b", lambda _e: self._dispatch(Back()))
@@ -755,6 +758,22 @@ class Simulator(tk.Tk):
 
     def _open_settings(self):
         self.state.ui.screen = Screen.SETTINGS
+        self._render()
+
+    def _open_timer(self):
+        if self.state.ui.screen != Screen.HOME:
+            return
+        self.state.ui.widget_mode = WidgetMode.TIMER
+        if int(self.state.ui.timer_seconds or 0) <= 0:
+            try:
+                default_s = int(self.theme.get("timer_default_s", 5 * 60) or (5 * 60))
+            except Exception:
+                default_s = 5 * 60
+            self.state.ui.timer_seconds = max(1, default_s)
+        self.state.ui.timer_running = False
+        self.state.ui.timer_last_tick_at = time.time()
+        self.state.ui.timer_focused_index = 2
+        self.state.ui.screen = Screen.TIMER
         self._render()
 
     def _on_enter_press(self, _event=None):
