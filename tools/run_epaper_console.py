@@ -383,6 +383,18 @@ def _screen_area_limit_with_theme(screen: Screen, mode: str, theme: dict) -> flo
     return max(0.05, min(0.98, value))
 
 
+def _screen_mode_with_theme(screen: Screen, mode: str, theme: dict) -> str:
+    screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
+    key = f"refresh_mode_{screen_name}"
+    override = str(theme.get(key, "") or "").strip().lower()
+    if override in ("slow", "balanced", "fast"):
+        return override
+    base = str(mode or "balanced").strip().lower()
+    if base in ("slow", "balanced", "fast"):
+        return base
+    return "balanced"
+
+
 def _mode_gap_with_theme(mode: str, theme: dict) -> int:
     params = mode_params(mode)
     key = f"refresh_min_gap_ms_{str(mode or 'balanced').strip().lower()}"
@@ -1132,10 +1144,15 @@ def main() -> int:
 
             # Flush staged updates with policy-driven refresh level.
             if pending_frame is not None and pending_snapshot is not None:
-                min_gap_ms = _mode_gap_with_theme(pending_snapshot.partial_refresh_mode, theme)
+                policy_mode = _screen_mode_with_theme(
+                    pending_snapshot.screen,
+                    pending_snapshot.partial_refresh_mode,
+                    theme,
+                )
+                min_gap_ms = _mode_gap_with_theme(policy_mode, theme)
                 full_every = effective_full_refresh_every(
                     screen=pending_snapshot.screen,
-                    mode=pending_snapshot.partial_refresh_mode,
+                    mode=policy_mode,
                     ui_full_refresh_every=pending_snapshot.full_refresh_every,
                     timer_full_refresh_every_override=_timer_partial_full_every(theme),
                 )
@@ -1156,7 +1173,7 @@ def main() -> int:
                                 print(
                                     f"[refresh] R3_FULL_CLEAN screen={pending_snapshot.screen.value} "
                                     f"reason={full_clean_reason} partial_count={refresh_runtime.partial_count} "
-                                    f"full_every={full_every} mode={pending_snapshot.partial_refresh_mode} "
+                                    f"full_every={full_every} mode={policy_mode} "
                                     f"dirty={','.join(pending_reasons) or '-'}"
                                 )
                         elif screen_changed or rotation_changed:
@@ -1166,7 +1183,7 @@ def main() -> int:
                                 reason = "screen_changed" if screen_changed else "rotation_changed"
                                 print(
                                     f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} "
-                                    f"reason={reason} mode={pending_snapshot.partial_refresh_mode} "
+                                    f"reason={reason} mode={policy_mode} "
                                     f"fast={'on' if fast_full else 'off'}"
                                 )
                         elif pending_snapshot.screen == Screen.SETTINGS and font_size_changed:
@@ -1176,7 +1193,7 @@ def main() -> int:
                             if refresh_debug:
                                 print(
                                     f"[refresh] R3_FULL_CLEAN screen={pending_snapshot.screen.value} "
-                                    f"reason=settings.font_size_reflow mode={pending_snapshot.partial_refresh_mode}"
+                                    f"reason=settings.font_size_reflow mode={policy_mode}"
                                 )
                         else:
                             merged_pending = merge_rects(refresh_runtime.pending_dirty_rects, epd.width, epd.height)
@@ -1194,7 +1211,7 @@ def main() -> int:
                             partial_enabled = _screen_partial_enabled_with_theme(pending_snapshot.screen, theme)
                             mode_limit = _screen_area_limit_with_theme(
                                 pending_snapshot.screen,
-                                pending_snapshot.partial_refresh_mode,
+                                policy_mode,
                                 theme,
                             )
                             if pending_snapshot.screen == Screen.HOME and "home.family_board_update" in pending_reasons:
@@ -1218,7 +1235,7 @@ def main() -> int:
                                         f"[refresh] R1_PARTIAL_RECT screen={pending_snapshot.screen.value} "
                                         f"rect=({ax0},{ay0},{ax1},{ay1}) area_ratio={area_ratio:.3f} "
                                         f"limit={mode_limit:.3f} partial_count={refresh_runtime.partial_count}/{full_every} "
-                                        f"mode={pending_snapshot.partial_refresh_mode} dirty={','.join(pending_reasons) or '-'}"
+                                        f"mode={policy_mode} dirty={','.join(pending_reasons) or '-'}"
                                     )
                             else:
                                 driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
@@ -1234,7 +1251,7 @@ def main() -> int:
                                     print(
                                         f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} reason={why} "
                                         f"area_ratio={area_ratio:.3f} limit={mode_limit:.3f} "
-                                        f"mode={pending_snapshot.partial_refresh_mode} fast={'on' if fast_full else 'off'} "
+                                        f"mode={policy_mode} fast={'on' if fast_full else 'off'} "
                                         f"dirty={','.join(pending_reasons) or '-'}"
                                     )
                     except Exception as e:
@@ -1249,7 +1266,7 @@ def main() -> int:
                         if refresh_debug:
                             print(
                                 f"[refresh] R3_FULL_CLEAN screen={screen_name} reason=exception "
-                                f"mode={pending_snapshot.partial_refresh_mode}"
+                                f"mode={policy_mode}"
                             )
 
                     committed_frame = pending_frame
@@ -1263,7 +1280,7 @@ def main() -> int:
                 elif refresh_debug:
                     print(
                         f"[refresh] HOLD screen={pending_snapshot.screen.value} "
-                        f"reason=throttle gap_ms={min_gap_ms} mode={pending_snapshot.partial_refresh_mode} "
+                        f"reason=throttle gap_ms={min_gap_ms} mode={policy_mode} "
                         f"dirty={','.join(pending_reasons) or '-'}"
                     )
 
