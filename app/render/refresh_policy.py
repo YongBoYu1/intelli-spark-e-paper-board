@@ -288,6 +288,13 @@ def _screen_regions(screen: Screen, width: int, height: int) -> dict[str, Rect]:
         "left_clock": (ox0, oy0, left_split, min(oy1, oy0 + int((oy1 - oy0) * 0.42))),
         "left_memo": (ox0, oy0 + int((oy1 - oy0) * 0.35), left_split, oy1),
         "left_weather": (ox0, oy0 + int((oy1 - oy0) * 0.22), left_split, oy0 + int((oy1 - oy0) * 0.62)),
+        # Family board sits in the lower-left column; use a narrower inner rect to keep partial area small.
+        "left_family_board": (
+            ox0 + 20,
+            oy0 + int((oy1 - oy0) * 0.52),
+            max(ox0 + 28, left_split - 20),
+            oy1,
+        ),
         "right_list": (left_split, oy0, ox1, oy1),
     }
 
@@ -420,9 +427,8 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         else:
             rects.append(regions["right_list"])
             reasons.append("home.focus_move")
-        if prev.focused_index == 0 or curr.focused_index == 0:
-            rects.append(regions["left_clock"])
-            reasons.append("home.left_focus_transition")
+        # Do not force a left-panel redraw on focus entering/leaving index 0.
+        # In current kitchen renderer there is no persistent left focus ring by default.
     if prev.reminders_digest != curr.reminders_digest:
         prev_rids = tuple(str(r[0]) for r in prev.reminders_digest)
         curr_rids = tuple(str(r[0]) for r in curr.reminders_digest)
@@ -444,8 +450,8 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             rects.append(regions["right_list"])
             reasons.append("home.reminder_reorder")
     if prev.memo_index != curr.memo_index:
-        rects.append(regions["left_memo"])
-        reasons.append("home.memo_rotate")
+        rects.append(regions["left_family_board"])
+        reasons.append("home.family_board_update")
     if prev.weather_digest != curr.weather_digest:
         rects.append(regions["left_weather"])
         reasons.append("home.weather_update")

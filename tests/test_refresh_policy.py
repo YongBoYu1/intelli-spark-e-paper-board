@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.core.state import AppState, DashboardModel, MenuItemId, Reminder, Screen
+from app.core.state import AppState, DashboardModel, MemoItem, MenuItemId, Reminder, Screen
 from app.render.refresh_policy import (
     RefreshPolicyRuntime,
     align_rect_for_partial,
@@ -142,6 +142,34 @@ class RefreshPolicyTests(unittest.TestCase):
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.20)
+
+    def test_home_family_board_update_prefers_partial_sized_rect(self) -> None:
+        model = DashboardModel()
+        model.memos = []
+        for i in range(3):
+            model.memos.append(
+                MemoItem(
+                    mid=f"m{i}",
+                    text=f"memo {i}",
+                    author="Mom" if i == 0 else "Dad",
+                    timestamp=1000 + i,
+                    is_new=False,
+                )
+            )
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.memo_index = 0
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.memo_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.family_board_update", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.24)
 
 if __name__ == "__main__":
     unittest.main()
