@@ -394,6 +394,15 @@ def _mode_gap_with_theme(mode: str, theme: dict) -> int:
     return max(0, value)
 
 
+def _home_family_area_limit_with_theme(theme: dict) -> float:
+    raw = theme.get("refresh_area_limit_home_family_board", 0.30)
+    try:
+        value = float(raw)
+    except Exception:
+        value = 0.30
+    return max(0.05, min(0.98, value))
+
+
 def _fast_full_enabled(theme: dict) -> bool:
     return bool(theme.get("refresh_enable_fast_full", False))
 
@@ -1122,8 +1131,14 @@ def main() -> int:
                                 )
                         else:
                             merged_pending = merge_rects(refresh_runtime.pending_dirty_rects, epd.width, epd.height)
+                            family_only = (
+                                pending_snapshot.screen == Screen.HOME
+                                and pending_reasons
+                                and all(r in ("home.family_board_update", "diff_fallback") for r in pending_reasons)
+                            )
+                            partial_pad = 1 if family_only else 2
                             aligned = (
-                                align_rect_for_partial(merged_pending, epd.width, epd.height, pad=2)
+                                align_rect_for_partial(merged_pending, epd.width, epd.height, pad=partial_pad)
                                 if merged_pending is not None
                                 else None
                             )
@@ -1133,6 +1148,8 @@ def main() -> int:
                                 pending_snapshot.partial_refresh_mode,
                                 theme,
                             )
+                            if pending_snapshot.screen == Screen.HOME and "home.family_board_update" in pending_reasons:
+                                mode_limit = max(mode_limit, _home_family_area_limit_with_theme(theme))
                             area_ratio = (
                                 rect_area_ratio(aligned, epd.width, epd.height)
                                 if aligned is not None
