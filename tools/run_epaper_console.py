@@ -389,11 +389,10 @@ def _align_partial_rect(rect: tuple[int, int, int, int], width: int, height: int
 def _partial_buffer_from_frame(frame: Image.Image, rect: tuple[int, int, int, int]) -> bytearray:
     x0, y0, x1, y1 = rect
     crop = frame.crop((x0, y0, x1, y1)).convert("1")
-    buf = bytearray(crop.tobytes("raw"))
-    # Keep polarity aligned with waveshare getbuffer(): PIL 0=black/1=white.
-    for i in range(len(buf)):
-        buf[i] ^= 0xFF
-    return buf
+    # IMPORTANT: epd7in5_V2.display_Partial() internally applies bitwise NOT
+    # before sending data. So here we must provide raw mode "1" bytes directly
+    # (do not pre-invert like getbuffer()).
+    return bytearray(crop.tobytes("raw"))
 
 
 def _blit_partial(epd, frame: Image.Image, rect: tuple[int, int, int, int], current_mode: str) -> str:
