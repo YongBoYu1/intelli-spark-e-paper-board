@@ -708,7 +708,7 @@ def _run_voice_flow(
 ) -> tuple[str, bool]:
     state.ui.idle = False
     state.ui.last_interaction_at = time.time()
-    last_step_full = False
+    did_render_step = False
     driver_mode = current_mode
 
     fd, audio_path = tempfile.mkstemp(prefix="voice_", suffix=".wav", dir="/tmp")
@@ -716,7 +716,7 @@ def _run_voice_flow(
 
     try:
         _set_voice_overlay(state, "recording", f"Speak within {max(1, int(voice_max_sec))}s")
-        driver_mode, last_step_full = _render_voice_overlay_step(
+        driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
             fonts=fonts,
@@ -729,6 +729,7 @@ def _run_voice_flow(
             supports_partial=supports_partial,
             refresh_debug=refresh_debug,
         )
+        did_render_step = True
 
         audio = _record_audio_fixed(
             audio_path=audio_path,
@@ -739,7 +740,7 @@ def _run_voice_flow(
         )
         if not audio:
             _set_voice_overlay(state, "error", "Recording failed", hold_s=2.0)
-            driver_mode, last_step_full = _render_voice_overlay_step(
+            driver_mode, _ = _render_voice_overlay_step(
                 epd=epd,
                 state=state,
                 fonts=fonts,
@@ -752,10 +753,11 @@ def _run_voice_flow(
                 supports_partial=supports_partial,
                 refresh_debug=refresh_debug,
             )
-            return driver_mode, last_step_full
+            did_render_step = True
+            return driver_mode, did_render_step
 
         _set_voice_overlay(state, "processing", "Interpreting command")
-        driver_mode, last_step_full = _render_voice_overlay_step(
+        driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
             fonts=fonts,
@@ -768,6 +770,7 @@ def _run_voice_flow(
             supports_partial=supports_partial,
             refresh_debug=refresh_debug,
         )
+        did_render_step = True
 
         meta = build_request_meta(locale=voice_locale, tz_name=voice_timezone)
         payload = interpret_audio_via_backend(
@@ -796,7 +799,7 @@ def _run_voice_flow(
             remaining_confirm_s = max(0.0, float(state.ui.voice_confirm_due_at or 0.0) - time.time())
             hold_s = max(hold_s, remaining_confirm_s + 0.2)
         _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
-        driver_mode, last_step_full = _render_voice_overlay_step(
+        driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
             fonts=fonts,
@@ -809,9 +812,10 @@ def _run_voice_flow(
             supports_partial=supports_partial,
             refresh_debug=refresh_debug,
         )
+        did_render_step = True
     except VoiceClientError as e:
         _set_voice_overlay(state, "error", str(e), hold_s=2.5)
-        driver_mode, last_step_full = _render_voice_overlay_step(
+        driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
             fonts=fonts,
@@ -824,9 +828,10 @@ def _run_voice_flow(
             supports_partial=supports_partial,
             refresh_debug=refresh_debug,
         )
+        did_render_step = True
     except Exception as e:
         _set_voice_overlay(state, "error", f"Voice failed: {e}", hold_s=2.5)
-        driver_mode, last_step_full = _render_voice_overlay_step(
+        driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
             fonts=fonts,
@@ -839,12 +844,13 @@ def _run_voice_flow(
             supports_partial=supports_partial,
             refresh_debug=refresh_debug,
         )
+        did_render_step = True
     finally:
         try:
             os.remove(audio_path)
         except Exception:
             pass
-    return driver_mode, last_step_full
+    return driver_mode, did_render_step
 
 
 def main() -> int:
