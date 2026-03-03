@@ -295,6 +295,12 @@ def _screen_regions(screen: Screen, width: int, height: int) -> dict[str, Rect]:
             max(ox0 + 28, left_split - 20),
             oy1,
         ),
+        "left_focus_indicator": (
+            max(ox0, left_split - 34),
+            oy0 + 4,
+            max(ox0 + 1, left_split - 2),
+            oy0 + 36,
+        ),
         "right_list": (left_split, oy0, ox1, oy1),
     }
 
@@ -424,9 +430,17 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             if curr_row != prev_row:
                 rects.append(curr_row)
             reasons.append("home.focus_move_row")
+        elif prev_row is not None and curr_row is None:
+            rects.append(prev_row)
+            rects.append(regions["left_focus_indicator"])
+            reasons.append("home.focus_to_left_panel")
+        elif prev_row is None and curr_row is not None:
+            rects.append(curr_row)
+            rects.append(regions["left_focus_indicator"])
+            reasons.append("home.focus_from_left_panel")
         else:
-            rects.append(regions["right_list"])
-            reasons.append("home.focus_move")
+            rects.append(regions["left_focus_indicator"])
+            reasons.append("home.focus_left_panel_only")
         # Do not force a left-panel redraw on focus entering/leaving index 0.
         # In current kitchen renderer there is no persistent left focus ring by default.
     if prev.reminders_digest != curr.reminders_digest:

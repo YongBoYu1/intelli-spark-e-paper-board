@@ -171,5 +171,21 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.24)
 
+    def test_home_focus_to_left_panel_uses_small_regions(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 1
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 0
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.focus_to_left_panel", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.24)
+
 if __name__ == "__main__":
     unittest.main()

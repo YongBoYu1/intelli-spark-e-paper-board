@@ -73,6 +73,10 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_split_ratio", 0.60)
     t.setdefault("b_divider_w", 2)
     t.setdefault("b_show_focus_ring", False)
+    t.setdefault("b_left_focus_indicator", True)
+    t.setdefault("b_left_focus_indicator_r", 5)
+    t.setdefault("b_left_focus_indicator_inset_x", 14)
+    t.setdefault("b_left_focus_indicator_inset_y", 14)
 
     # Left block
     t.setdefault("b_left_pad", 24)
@@ -402,6 +406,11 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             width=3,
             fill=None,
         )
+    if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 0:
+        r = max(2, int(t.get("b_left_focus_indicator_r", 5) or 5))
+        cx = split_x - max(r + 2, int(t.get("b_left_focus_indicator_inset_x", 14) or 14))
+        cy = oy0 + max(r + 2, int(t.get("b_left_focus_indicator_inset_y", 14) or 14))
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=ink, outline=ink)
 
     # Fonts
     panel_mode = bool(theme.get("panel_mode", False))
