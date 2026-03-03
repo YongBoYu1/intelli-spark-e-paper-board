@@ -71,5 +71,6 @@
     "b_shop_section_rule_w": 2,
     "weather_icon_pack": "kickstand",
     "weather_icon_variant": "thin",
-    "weather_icon_alpha_threshold": 185
+    "weather_icon_alpha_threshold": 185,
+    "refresh_debug": true
 }
