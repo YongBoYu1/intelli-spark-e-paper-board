@@ -96,6 +96,8 @@ class UiState:
 
     # Widget slot state (TSX: top-left is a widget slot that can show CLOCK or TIMER).
     widget_mode: WidgetMode = WidgetMode.CLOCK
+    # Home clock render source (minute bucket, local timezone). Updated on Tick.
+    clock_minute_bucket: int = field(default_factory=lambda: int(time.time() // 60))
     timer_seconds: int = 0
     timer_running: bool = False
     timer_last_tick_at: float = field(default_factory=lambda: time.time())

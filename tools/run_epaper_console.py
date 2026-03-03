@@ -329,6 +329,7 @@ def _state_render_sig(state: AppState):
         state.ui.page,
         state.ui.idle,
         state.ui.widget_mode,
+        state.ui.clock_minute_bucket,
         state.ui.timer_seconds,
         state.ui.timer_running,
         state.ui.timer_focused_index,
@@ -474,10 +475,34 @@ def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
         "home.focus_from_left_panel",
         "home.focus_left_panel_only",
         "home.menu_overlay_focus",
+        "home.focus_priority_drop_family",
         "diff_fallback",
     }
     has_focus_reason = any(r.startswith("home.focus_") or r == "home.menu_overlay_focus" for r in reasons)
     return has_focus_reason and all(r in allowed for r in reasons)
+
+
+def _prioritize_home_focus_dirty(
+    screen: Screen,
+    rects: list[tuple[int, int, int, int]],
+    reasons: list[str],
+    *,
+    width: int,
+) -> tuple[list[tuple[int, int, int, int]], list[str]]:
+    if screen != Screen.HOME:
+        return rects, reasons
+    if "home.focus_move_row" not in reasons or "home.family_board_update" not in reasons:
+        return rects, reasons
+
+    right_threshold = max(0, int(width * 0.45))
+    focus_rects = [r for r in rects if int(r[0]) >= right_threshold]
+    if not focus_rects:
+        return rects, reasons
+
+    next_reasons = [r for r in reasons if r != "home.family_board_update"]
+    if "home.focus_priority_drop_family" not in next_reasons:
+        next_reasons.append("home.focus_priority_drop_family")
+    return focus_rects, next_reasons
 
 
 def _partial_buffer_from_frame(frame: Image.Image, rect: tuple[int, int, int, int]) -> bytearray:
@@ -1277,6 +1302,12 @@ def main() -> int:
                     else:
                         dirty_rects = [diff_box]
                         dirty_reasons = ["diff_only"]
+                    dirty_rects, dirty_reasons = _prioritize_home_focus_dirty(
+                        curr_snapshot.screen,
+                        dirty_rects,
+                        dirty_reasons,
+                        width=epd.width,
+                    )
                     if _should_collapse_to_latest(curr_snapshot.screen, dirty_reasons):
                         # Drop intermediate focus-transition frames; keep only latest target state.
                         refresh_runtime.clear_pending()

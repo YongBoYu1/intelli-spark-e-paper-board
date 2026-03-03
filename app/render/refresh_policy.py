@@ -50,7 +50,7 @@ def effective_full_refresh_every(
     params = mode_params(mode)
     try:
         value = int(ui_full_refresh_every or 0)
-    except Exception:
+    except (TypeError, ValueError):
         value = 0
     if value <= 0:
         value = params.default_full_refresh_every
@@ -58,7 +58,7 @@ def effective_full_refresh_every(
     if screen == Screen.TIMER:
         try:
             timer_override = int(timer_full_refresh_every_override or 0)
-        except Exception:
+        except (TypeError, ValueError):
             timer_override = 0
         if timer_override > 0:
             value = max(value, timer_override)
@@ -172,7 +172,7 @@ class RefreshPolicyRuntime:
     def full_clean_reason(self, now: float, *, full_refresh_every: int, max_full_age_s: float = 24 * 60 * 60) -> str:
         try:
             budget = int(full_refresh_every or 0)
-        except Exception:
+        except (TypeError, ValueError):
             budget = 0
         if budget > 0 and int(self.partial_count) >= budget:
             return "partial_budget"
@@ -200,6 +200,7 @@ class UiSnapshot:
     timer_seconds: int
     timer_running: bool
     timer_focused_index: int
+    clock_minute_bucket: int
     widget_mode: str
     weather_day_index: int
     weather_digest: tuple
@@ -231,6 +232,7 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
         timer_seconds=int(state.ui.timer_seconds or 0),
         timer_running=bool(state.ui.timer_running),
         timer_focused_index=int(state.ui.timer_focused_index or 0),
+        clock_minute_bucket=int(state.ui.clock_minute_bucket or 0),
         widget_mode=str(state.ui.widget_mode.value if hasattr(state.ui.widget_mode, "value") else state.ui.widget_mode),
         weather_day_index=int(state.ui.weather_day_index or 0),
         weather_digest=tuple(
@@ -524,6 +526,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
     if (
         prev.timer_seconds != curr.timer_seconds
         or prev.timer_running != curr.timer_running
+        or prev.clock_minute_bucket != curr.clock_minute_bucket
         or prev.widget_mode != curr.widget_mode
     ):
         rects.append(regions["left_clock"])

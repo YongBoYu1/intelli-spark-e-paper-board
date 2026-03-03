@@ -462,7 +462,11 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     lx0, lx1 = ox0 + int(t["b_left_pad"]), split_x - int(t["b_left_pad"])
     top_y = oy0 + int(t["b_left_pad"])
 
-    now = datetime.now()
+    try:
+        minute_bucket = int(state.ui.clock_minute_bucket or 0)
+    except Exception:
+        minute_bucket = 0
+    now = datetime.fromtimestamp(float(minute_bucket * 60)) if minute_bucket > 0 else datetime.now()
     time_str = now.strftime("%H:%M")
     weekday = now.strftime("%A").upper()
     try:

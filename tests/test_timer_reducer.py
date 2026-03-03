@@ -141,6 +141,36 @@ class TimerReducerTests(unittest.TestCase):
         self.assertEqual(self.state.ui.memo_index, 0)
         self.assertEqual(self.state.ui.memo_last_rotated_at, 112.0)
 
+    def test_tick_updates_clock_minute_bucket(self) -> None:
+        self.state.ui.clock_minute_bucket = 100
+
+        reduce(self.state, Tick(now=(101 * 60.0) + 1.0), theme={})
+
+        self.assertEqual(self.state.ui.clock_minute_bucket, 101)
+
+    def test_tick_pauses_home_memo_rotation_during_interaction_window(self) -> None:
+        self.state.ui.screen = Screen.HOME
+        self.state.ui.focused_index = 2
+        self.state.ui.idle = False
+        self.state.ui.voice_active = False
+        self.state.ui.menu_overlay_active = False
+        self.state.ui.memo_last_rotated_at = 100.0
+        self.state.ui.last_interaction_at = 111.2
+        self.state.ui.memo_index = 0
+        self.state.model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=1, is_new=False),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=2, is_new=False),
+        ]
+
+        reduce(
+            self.state,
+            Tick(now=112.0),
+            theme={"home_variant": "kitchen", "memo_rotate_s": 8, "memo_rotate_pause_after_interaction_s": 2.5},
+        )
+
+        self.assertEqual(self.state.ui.memo_index, 0)
+        self.assertEqual(self.state.ui.memo_last_rotated_at, 112.0)
+
 
 if __name__ == "__main__":
     unittest.main()

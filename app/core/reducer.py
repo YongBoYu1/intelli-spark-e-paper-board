@@ -344,6 +344,9 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
 
     if isinstance(event, Tick):
         now = event.now
+        now_minute_bucket = int(float(now) // 60.0)
+        if int(state.ui.clock_minute_bucket or 0) != now_minute_bucket:
+            state.ui.clock_minute_bucket = now_minute_bucket
 
         # Idle: hide focus ring after inactivity. Match TSX: timer running disables idle.
         idle_timeout_s = float(theme.get("idle_timeout_s", 30.0) or 30.0)
@@ -386,9 +389,11 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         # Mood memo auto-rotation (kitchen home only)
         if state.ui.screen == Screen.HOME and variant == "kitchen":
             interval_s = float(theme.get("memo_rotate_s", 6.0) or 6.0)
+            interaction_pause_s = float(theme.get("memo_rotate_pause_after_interaction_s", 2.5) or 2.5)
+            in_interaction_pause = (now - float(state.ui.last_interaction_at or 0.0)) < max(0.0, interaction_pause_s)
             # While voice overlay is active, pause memo auto-rotation so it does not
             # merge with voice dirty regions and force a large full refresh.
-            if state.ui.voice_active or state.ui.menu_overlay_active:
+            if state.ui.voice_active or state.ui.menu_overlay_active or in_interaction_pause:
                 state.ui.memo_last_rotated_at = now
             elif state.ui.focused_index != 0 and not state.ui.idle:
                 if (now - float(state.ui.memo_last_rotated_at or now)) >= interval_s and state.model.memos:
@@ -406,23 +411,17 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
     state.ui.last_interaction_at = now
 
     if isinstance(event, Rotate):
-        if state.ui.screen == Screen.MENU:
+        if state.ui.screen == Screen.MENU or (state.ui.screen == Screen.HOME and state.ui.menu_overlay_active):
             order = _menu_order()
             idx = order.index(state.ui.menu_focused) if state.ui.menu_focused in order else 1
             idx = (idx + event.delta) % len(order)
             state.ui.menu_focused = order[idx]
         elif state.ui.screen == Screen.HOME:
-            if state.ui.menu_overlay_active:
-                order = _menu_order()
-                idx = order.index(state.ui.menu_focused) if state.ui.menu_focused in order else 1
-                idx = (idx + event.delta) % len(order)
-                state.ui.menu_focused = order[idx]
+            state.ui.focused_index += event.delta
+            if variant == "kitchen":
+                _clamp_focus_kitchen(state, theme)
             else:
-                state.ui.focused_index += event.delta
-                if variant == "kitchen":
-                    _clamp_focus_kitchen(state, theme)
-                else:
-                    _clamp_focus_home(state, items_per_page)
+                _clamp_focus_home(state, items_per_page)
         elif state.ui.screen == Screen.WEATHER:
             n = max(1, min(4, len(state.model.weather)))
             state.ui.weather_day_index = (int(state.ui.weather_day_index) + event.delta) % n

@@ -231,5 +231,21 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.20)
 
+    def test_home_clock_minute_change_marks_left_clock_region(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.HOME
+        prev.ui.clock_minute_bucket = 100
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.HOME
+        curr.ui.clock_minute_bucket = 101
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.clock_or_timer_state", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.24)
+
 if __name__ == "__main__":
     unittest.main()
