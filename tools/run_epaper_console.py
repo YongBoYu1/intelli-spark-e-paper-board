@@ -279,6 +279,21 @@ def _read_key_nonblocking() -> str:
     return "\x1b"
 
 
+def _drain_stdin_nonblocking(*, max_chars: int = 256) -> str:
+    drained: list[str] = []
+    remaining = max(0, int(max_chars))
+    while remaining > 0:
+        r, _, _ = select.select([sys.stdin], [], [], 0)
+        if not r:
+            break
+        ch = sys.stdin.read(1)
+        if not ch:
+            break
+        drained.append(ch)
+        remaining -= 1
+    return "".join(drained)
+
+
 def _warn_missing_fonts(fonts: FontBook) -> None:
     missing = fonts.missing_font_paths()
     if not missing:
@@ -965,10 +980,12 @@ def main() -> int:
     key_last_edge_at = 0.0
     rotate_prev = None
     rotate_btn_last_press_at = 0.0
+    space_last_trigger_at = 0.0
     gpio_pins_in_use = set()
     encoder_key_debounce_s = max(0.0, float(args.encoder_key_debounce_ms) / 1000.0)
     encoder_key_long_press_s = max(0.1, float(args.encoder_key_long_press_ms) / 1000.0)
     rotate_debounce_s = max(0.0, float(args.rotate_debounce_ms) / 1000.0)
+    voice_space_cooldown_s = max(0.2, float(theme.get("voice_space_cooldown_s", 1.2) or 1.2))
 
     if GPIO is None:
         if encoder_pin_s1 is not None or encoder_pin_s2 is not None or encoder_key_pin is not None or rotate_pin is not None:
@@ -1108,6 +1125,8 @@ def main() -> int:
                 ev = Rotate(-1)
             elif key in ("\x1b[C", "l"):  # right
                 ev = Rotate(+1)
+            elif key == "\x03":  # Ctrl+C in raw mode
+                return 0
             elif key in ("\r", "\n"):  # enter
                 pending_tool = str(state.ui.voice_confirm_tool or "").strip()
                 confirmed = confirm_pending_voice_action(state, now=now)
@@ -1125,6 +1144,15 @@ def main() -> int:
                 else:
                     ev = Click()
             elif key == " ":
+                if (
+                    state.ui.voice_active
+                    or (now - float(space_last_trigger_at)) < voice_space_cooldown_s
+                ):
+                    ev = None
+                    if refresh_debug:
+                        why = "voice_active" if state.ui.voice_active else "space_cooldown"
+                        print(f"[voice] ignore space trigger reason={why}")
+                    continue
                 # Voice record + send flow on keyboard space.
                 driver_mode, voice_flow_ran = _run_voice_flow(
                     state=state,
@@ -1147,6 +1175,10 @@ def main() -> int:
                     supports_partial=bool(supports_partial),
                     refresh_debug=bool(refresh_debug),
                 )
+                space_last_trigger_at = time.time()
+                buffered = _drain_stdin_nonblocking(max_chars=512)
+                if "\x03" in buffered or "q" in buffered.lower():
+                    return 0
                 ev = None
             elif key in ("p", "P"):
                 # Keep a manual way to trigger legacy long-press behavior in console.
