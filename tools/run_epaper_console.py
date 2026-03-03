@@ -435,6 +435,10 @@ def _fast_full_enabled(theme: dict) -> bool:
     return bool(theme.get("refresh_enable_fast_full", False))
 
 
+def _partial_budget_enabled_with_theme(theme: dict) -> bool:
+    return bool(theme.get("refresh_partial_budget_enabled", True))
+
+
 def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     if bool(theme.get("refresh_partial_enable_all", False)):
         return True
@@ -1287,6 +1291,9 @@ def main() -> int:
                     ui_full_refresh_every=pending_snapshot.full_refresh_every,
                     timer_full_refresh_every_override=_timer_partial_full_every(theme),
                 )
+                if not _partial_budget_enabled_with_theme(theme):
+                    full_every = 0
+                full_every_text = str(full_every) if int(full_every) > 0 else "off"
                 full_clean_reason = refresh_runtime.full_clean_reason(now, full_refresh_every=full_every)
                 force_full_clean = bool(full_clean_reason)
                 screen_changed = pending_snapshot.screen != committed_snapshot.screen
@@ -1304,7 +1311,7 @@ def main() -> int:
                                 print(
                                     f"[refresh] R3_FULL_CLEAN screen={pending_snapshot.screen.value} "
                                     f"reason={full_clean_reason} partial_count={refresh_runtime.partial_count} "
-                                    f"full_every={full_every} mode={policy_mode} "
+                                    f"full_every={full_every_text} mode={policy_mode} "
                                     f"dirty={','.join(pending_reasons) or '-'}"
                                 )
                         elif screen_changed or rotation_changed:
@@ -1365,7 +1372,7 @@ def main() -> int:
                                     print(
                                         f"[refresh] R1_PARTIAL_RECT screen={pending_snapshot.screen.value} "
                                         f"rect=({ax0},{ay0},{ax1},{ay1}) area_ratio={area_ratio:.3f} "
-                                        f"limit={mode_limit:.3f} partial_count={refresh_runtime.partial_count}/{full_every} "
+                                        f"limit={mode_limit:.3f} partial_count={refresh_runtime.partial_count}/{full_every_text} "
                                         f"mode={policy_mode} dirty={','.join(pending_reasons) or '-'}"
                                     )
                             else:

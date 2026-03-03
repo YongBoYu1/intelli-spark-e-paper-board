@@ -57,6 +57,12 @@ class RefreshPolicyTests(unittest.TestCase):
         self.assertTrue(runtime.needs_full_clean(100.0 + 24 * 60 * 60 + 1, full_refresh_every=99))
         self.assertEqual(runtime.full_clean_reason(100.0 + 24 * 60 * 60 + 1, full_refresh_every=99), "full_age")
 
+    def test_runtime_full_clean_budget_can_be_disabled(self) -> None:
+        runtime = RefreshPolicyRuntime()
+        runtime.partial_count = 999
+        self.assertEqual(runtime.full_clean_reason(100.0, full_refresh_every=0), "")
+        self.assertFalse(runtime.needs_full_clean(100.0, full_refresh_every=0))
+
     def test_settings_focus_change_generates_dirty_rect(self) -> None:
         prev = AppState(model=DashboardModel())
         prev.ui.screen = Screen.SETTINGS

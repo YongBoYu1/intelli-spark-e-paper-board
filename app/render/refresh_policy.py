@@ -170,7 +170,11 @@ class RefreshPolicyRuntime:
         return bool(self.full_clean_reason(now, full_refresh_every=full_refresh_every, max_full_age_s=max_full_age_s))
 
     def full_clean_reason(self, now: float, *, full_refresh_every: int, max_full_age_s: float = 24 * 60 * 60) -> str:
-        if int(self.partial_count) >= max(1, int(full_refresh_every)):
+        try:
+            budget = int(full_refresh_every or 0)
+        except Exception:
+            budget = 0
+        if budget > 0 and int(self.partial_count) >= budget:
             return "partial_budget"
         if self.last_full_refresh_ts > 0 and (float(now) - float(self.last_full_refresh_ts)) >= float(max_full_age_s):
             return "full_age"
