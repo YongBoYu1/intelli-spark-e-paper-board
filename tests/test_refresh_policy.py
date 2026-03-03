@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.core.state import AppState, DashboardModel, MenuItemId, Screen
+from app.core.state import AppState, DashboardModel, MenuItemId, Reminder, Screen
 from app.render.refresh_policy import (
     RefreshPolicyRuntime,
     align_rect_for_partial,
@@ -104,6 +104,40 @@ class RefreshPolicyTests(unittest.TestCase):
 
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("home.focus_move_row", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.20)
+
+    def test_home_click_toggle_prefers_row_dirty_rect(self) -> None:
+        model_prev = DashboardModel()
+        model_prev.reminders = []
+        for i in range(5):
+            model_prev.reminders.append(
+                Reminder(rid=f"r{i}", title=f"Task {i}", right="", completed=False, category="fridge")
+            )
+        prev = AppState(model=model_prev)
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 2
+
+        model_curr = DashboardModel()
+        model_curr.reminders = []
+        for i in range(5):
+            model_curr.reminders.append(
+                Reminder(
+                    rid=f"r{i}",
+                    title=f"Task {i}",
+                    right="",
+                    completed=(i == 1),
+                    category="fridge",
+                )
+            )
+        curr = AppState(model=model_curr)
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 2
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.reminder_row_update", reasons)
         merged = merge_rects(rects, 800, 480)
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)

@@ -424,8 +424,25 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             rects.append(regions["left_clock"])
             reasons.append("home.left_focus_transition")
     if prev.reminders_digest != curr.reminders_digest:
-        rects.append(regions["right_list"])
-        reasons.append("home.reminder_change")
+        prev_rids = tuple(str(r[0]) for r in prev.reminders_digest)
+        curr_rids = tuple(str(r[0]) for r in curr.reminders_digest)
+        if prev_rids == curr_rids:
+            # Same row order: likely a click-toggle style change; update focused row only.
+            prev_row = _home_focus_row_rect(width, height, prev.focused_index)
+            curr_row = _home_focus_row_rect(width, height, curr.focused_index)
+            if prev_row is not None:
+                rects.append(prev_row)
+            if curr_row is not None and curr_row != prev_row:
+                rects.append(curr_row)
+            if prev_row is None and curr_row is None:
+                rects.append(regions["right_list"])
+                reasons.append("home.reminder_change_fallback")
+            else:
+                reasons.append("home.reminder_row_update")
+        else:
+            # Delayed reorder moves multiple rows; refresh right panel region.
+            rects.append(regions["right_list"])
+            reasons.append("home.reminder_reorder")
     if prev.memo_index != curr.memo_index:
         rects.append(regions["left_memo"])
         reasons.append("home.memo_rotate")
