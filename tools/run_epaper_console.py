@@ -358,8 +358,6 @@ def _screen_partial_area_limit(screen: Screen, mode: str) -> float:
     base = _settings_partial_area_limit(mode)
     if screen == Screen.TIMER:
         return min(0.95, base + 0.20)
-    if screen == Screen.MENU:
-        return min(0.90, base + 0.15)
     return base
 
 
@@ -370,14 +368,6 @@ def _timer_partial_full_every(theme: dict) -> int:
     except Exception:
         value = 300
     return max(60, value)
-
-
-def _menu_partial_full_every(theme: dict) -> int:
-    try:
-        value = int(theme.get("menu_full_refresh_every", 180) or 180)
-    except Exception:
-        value = 180
-    return max(30, value)
 
 
 def _align_partial_rect(rect: tuple[int, int, int, int], width: int, height: int, *, pad: int = 2) -> tuple[int, int, int, int] | None:
@@ -757,7 +747,7 @@ def main() -> int:
     last_render_font_size = str(state.ui.font_size or "medium")
     settings_partial_count = 0
     timer_partial_count = 0
-    menu_partial_count = 0
+    home_full_recovery_pending = False
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -975,17 +965,19 @@ def main() -> int:
                         driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
                         settings_partial_count = 0
                         timer_partial_count = 0
-                        menu_partial_count = 0
+                        home_full_recovery_pending = (
+                            curr_screen == Screen.HOME
+                            and last_render_screen in (Screen.SETTINGS, Screen.TIMER)
+                        )
                         committed = True
                     if curr_screen == Screen.SETTINGS and font_size_changed and not committed:
                         # Font size changes reflow most rows; prefer stable full refresh.
                         driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
                         settings_partial_count = 0
                         timer_partial_count = 0
-                        menu_partial_count = 0
                         committed = True
                     in_partial_screen = (
-                        curr_screen in (Screen.SETTINGS, Screen.TIMER, Screen.MENU)
+                        curr_screen in (Screen.SETTINGS, Screen.TIMER)
                         and last_render_screen == curr_screen
                         and curr_rotation == last_render_rotation
                     )
@@ -1000,37 +992,28 @@ def main() -> int:
                             if curr_screen == Screen.SETTINGS:
                                 full_every = max(1, int(state.ui.full_refresh_every or 15))
                                 force_full_clean = settings_partial_count >= full_every
-                            elif curr_screen == Screen.TIMER:
+                            else:
                                 full_every = _timer_partial_full_every(theme)
                                 force_full_clean = timer_partial_count >= full_every
-                            else:
-                                full_every = _menu_partial_full_every(theme)
-                                force_full_clean = menu_partial_count >= full_every
                             try:
                                 if force_full_clean:
                                     driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
                                     if curr_screen == Screen.SETTINGS:
                                         settings_partial_count = 0
-                                    elif curr_screen == Screen.TIMER:
-                                        timer_partial_count = 0
                                     else:
-                                        menu_partial_count = 0
+                                        timer_partial_count = 0
                                 elif area_ratio <= mode_limit:
                                     driver_mode = _blit_partial(epd, frame, rect, driver_mode)
                                     if curr_screen == Screen.SETTINGS:
                                         settings_partial_count += 1
-                                    elif curr_screen == Screen.TIMER:
-                                        timer_partial_count += 1
                                     else:
-                                        menu_partial_count += 1
+                                        timer_partial_count += 1
                                 else:
                                     driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
                                     if curr_screen == Screen.SETTINGS:
                                         settings_partial_count = 0
-                                    elif curr_screen == Screen.TIMER:
-                                        timer_partial_count = 0
                                     else:
-                                        menu_partial_count = 0
+                                        timer_partial_count = 0
                                 committed = True
                             except Exception as e:
                                 screen_name = str(curr_screen.value if isinstance(curr_screen, Screen) else curr_screen)
@@ -1038,16 +1021,18 @@ def main() -> int:
                                 driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
                                 if curr_screen == Screen.SETTINGS:
                                     settings_partial_count = 0
-                                elif curr_screen == Screen.TIMER:
-                                    timer_partial_count = 0
                                 else:
-                                    menu_partial_count = 0
+                                    timer_partial_count = 0
                                 committed = True
                     if not committed:
-                        driver_mode = _blit_full(epd, frame, driver_mode, fast=True)
+                        # After returning from partial-refresh pages, one additional
+                        # clean full refresh on HOME improves stability on 7.5" V2.
+                        force_clean_home = home_full_recovery_pending and curr_screen == Screen.HOME
+                        driver_mode = _blit_full(epd, frame, driver_mode, fast=(not force_clean_home))
+                        if force_clean_home:
+                            home_full_recovery_pending = False
                         settings_partial_count = 0
                         timer_partial_count = 0
-                        menu_partial_count = 0
                         committed = True
                 last_render_sig = sig
                 last_render_frame = frame
