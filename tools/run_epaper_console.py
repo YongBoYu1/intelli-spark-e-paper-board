@@ -736,6 +736,12 @@ def main() -> int:
         help="Debounce window for encoder KEY press in ms (default: 180)",
     )
     parser.add_argument(
+        "--encoder-key-long-press-ms",
+        type=int,
+        default=450,
+        help="Hold threshold for encoder KEY long-press event in ms (default: 450)",
+    )
+    parser.add_argument(
         "--encoder-flip-direction",
         action="store_true",
         help="Flip rotary direction if CW/CCW feels reversed",
@@ -846,11 +852,15 @@ def main() -> int:
     prev_ab = None
     encoder_accum = 0
     prev_key = None
-    key_last_press_at = 0.0
+    key_is_down = False
+    key_down_at = 0.0
+    key_long_sent = False
+    key_last_edge_at = 0.0
     rotate_prev = None
     rotate_btn_last_press_at = 0.0
     gpio_pins_in_use = set()
     encoder_key_debounce_s = max(0.0, float(args.encoder_key_debounce_ms) / 1000.0)
+    encoder_key_long_press_s = max(0.1, float(args.encoder_key_long_press_ms) / 1000.0)
     rotate_debounce_s = max(0.0, float(args.rotate_debounce_ms) / 1000.0)
 
     if GPIO is None:
@@ -872,6 +882,10 @@ def main() -> int:
             if encoder_key_pin is not None:
                 GPIO.setup(int(encoder_key_pin), GPIO.IN, pull_up_down=pull_encoder)
                 prev_key = GPIO.input(int(encoder_key_pin))
+                active_low = str(args.encoder_key_active).lower() == "low"
+                key_is_down = bool((prev_key == GPIO.LOW) if active_low else (prev_key == GPIO.HIGH))
+                if key_is_down:
+                    key_down_at = time.time()
                 gpio_pins_in_use.add(int(encoder_key_pin))
 
             if rotate_pin is not None:
@@ -902,7 +916,7 @@ def main() -> int:
             rotate_btn_ready = False
 
     try:
-        print("Controls: Left/Right rotate, Enter click, R rotate screen, S settings, W weather, Space long press, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice, R rotate screen, S settings, W weather, B/Esc back, Q quit")
         next_tick = time.time()
         while True:
             now = time.time()
@@ -939,16 +953,29 @@ def main() -> int:
                 try:
                     curr_key = GPIO.input(int(encoder_key_pin))
                     active_low = str(args.encoder_key_active).lower() == "low"
-                    is_press_edge = (
-                        (active_low and prev_key == GPIO.HIGH and curr_key == GPIO.LOW)
-                        or ((not active_low) and prev_key == GPIO.LOW and curr_key == GPIO.HIGH)
-                    )
-                    if is_press_edge and (now - key_last_press_at) >= encoder_key_debounce_s:
-                        ev = Click()
-                        key_last_press_at = now
+                    prev_is_down = bool((prev_key == GPIO.LOW) if active_low else (prev_key == GPIO.HIGH))
+                    curr_is_down = bool((curr_key == GPIO.LOW) if active_low else (curr_key == GPIO.HIGH))
+
+                    if curr_is_down != prev_is_down and (now - key_last_edge_at) >= encoder_key_debounce_s:
+                        key_last_edge_at = now
+                        if curr_is_down:
+                            key_is_down = True
+                            key_down_at = now
+                            key_long_sent = False
+                        else:
+                            if key_is_down and not key_long_sent:
+                                ev = Click()
+                            key_is_down = False
+                            key_down_at = 0.0
+                            key_long_sent = False
                     prev_key = curr_key
                 except Exception:
                     pass
+
+            if encoder_key_pin is not None and ev is None and key_is_down and not key_long_sent:
+                if (now - key_down_at) >= encoder_key_long_press_s:
+                    ev = LongPress()
+                    key_long_sent = True
 
             if rotate_btn_ready and ev is None:
                 try:

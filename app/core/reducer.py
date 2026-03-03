@@ -502,11 +502,18 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         return state
 
     if isinstance(event, LongPress):
-        # Voice overlay stub: show listening overlay briefly, then return.
-        state.ui.voice_active = True
-        state.ui.voice_phase = "recording"
-        state.ui.voice_message = ""
-        state.ui.voice_due_at = now + 2.0
+        # Single-button policy:
+        # - HOME long press enters navigation menu
+        # - Any other screen long press returns to HOME
+        if state.ui.screen == Screen.HOME:
+            state.ui.screen = Screen.MENU
+            return state
+
+        state.ui.screen = Screen.HOME
+        if variant == "kitchen":
+            _clamp_focus_kitchen(state, theme)
+        else:
+            _clamp_focus_home(state, items_per_page)
         return state
 
     if isinstance(event, RotateButton):

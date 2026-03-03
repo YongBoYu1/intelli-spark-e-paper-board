@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.core.reducer import Back, Click, Rotate, Tick, reduce
+from app.core.reducer import Back, Click, LongPress, Rotate, Tick, reduce
 from app.core.state import AppState, DashboardModel, MenuItemId, Screen, WidgetMode
 
 
@@ -85,6 +85,20 @@ class TimerReducerTests(unittest.TestCase):
         self.state.ui.screen = Screen.TIMER
 
         reduce(self.state, Back())
+
+        self.assertEqual(self.state.ui.screen, Screen.HOME)
+
+    def test_long_press_on_home_opens_menu(self) -> None:
+        self.state.ui.screen = Screen.HOME
+
+        reduce(self.state, LongPress())
+
+        self.assertEqual(self.state.ui.screen, Screen.MENU)
+
+    def test_long_press_on_detail_returns_home(self) -> None:
+        self.state.ui.screen = Screen.WEATHER
+
+        reduce(self.state, LongPress())
 
         self.assertEqual(self.state.ui.screen, Screen.HOME)
 
