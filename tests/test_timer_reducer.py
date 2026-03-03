@@ -96,6 +96,15 @@ class TimerReducerTests(unittest.TestCase):
         self.assertEqual(self.state.ui.screen, Screen.HOME)
         self.assertTrue(self.state.ui.menu_overlay_active)
 
+    def test_long_press_on_home_when_overlay_active_closes_menu(self) -> None:
+        self.state.ui.screen = Screen.HOME
+        self.state.ui.menu_overlay_active = True
+
+        reduce(self.state, LongPress())
+
+        self.assertEqual(self.state.ui.screen, Screen.HOME)
+        self.assertFalse(self.state.ui.menu_overlay_active)
+
     def test_long_press_on_detail_returns_home(self) -> None:
         self.state.ui.screen = Screen.WEATHER
 

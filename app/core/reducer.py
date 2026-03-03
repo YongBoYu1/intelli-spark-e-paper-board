@@ -527,10 +527,10 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
 
     if isinstance(event, LongPress):
         # Single-button policy:
-        # - HOME long press enters navigation menu
+        # - HOME long press toggles navigation overlay
         # - Any other screen long press returns to HOME
         if state.ui.screen == Screen.HOME:
-            state.ui.menu_overlay_active = True
+            state.ui.menu_overlay_active = not bool(state.ui.menu_overlay_active)
             return state
 
         state.ui.screen = Screen.HOME
