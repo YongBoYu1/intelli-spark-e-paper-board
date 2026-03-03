@@ -54,14 +54,17 @@ Rules:
 - If user states an expiry date for an item, use inventory_set_expiry.
 - If user asks to clear inventory, use inventory_clear_all.
 - If user expresses purchase intent (need to buy / should buy / remember to buy), use shopping_add_item.
+- If user says leftover/packed/takeout in fridge (e.g. "I got leftover pizza in the fridge"), use inventory_log_event with event_type="added".
 - Casual shortage / procurement phrases (out of / running low / buy some / pick up / 没了 / 快没了 / 补点 / 买点) usually mean shopping_add_item.
 - If user asks to remove an item from shopping list, use shopping_remove_item.
 - For explicit remove commands like "remove X from shopping list", do not output no_action(missing_item_name). Extract X from transcript, or use the closest board_context shopping item if needed.
 - If user clearly asks to clear the shopping list, use shopping_clear_all.
 - If user sets a timer (e.g. 20 minutes), use timer_set with duration_seconds.
 - If user leaves a family message/note, use memo_add.
+- If one sentence lists multiple shopping items, emit one shopping_add_item per item in order (up to 4 actions).
 - If intent is ambiguous or not actionable, use no_action.
 - Do not rely on fixed seed vocabulary. Keep user wording for item_name unless board_context provides a better exact match.
+- For pronoun-only or vague references without clear antecedent (e.g. "that place", "that thing", "add that"), prefer no_action(reason="insufficient_context").
 - Never output natural language explanations; output only function call payloads.
 - Never fabricate missing quantity/unit.
 - Resolve relative dates like yesterday/today/tomorrow from request_time + timezone.

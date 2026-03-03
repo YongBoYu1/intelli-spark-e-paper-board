@@ -514,18 +514,37 @@ def _repair_context_reference_no_action(
     first = actions[0]
     if not isinstance(first, dict):
         return plan
-    if str(first.get("tool") or "").strip() != "no_action":
-        return plan
-
+    first_tool = str(first.get("tool") or "").strip()
     txt = str(transcript or "").strip()
     if not txt:
+        return plan
+    txt_low = txt.lower()
+    same_for_item = _extract_same_for_item_name(txt)
+
+    if first_tool == "no_action":
+        pass
+    elif first_tool in {"undo_last_action_group", "redo_last_action_group"}:
+        # Minimal local guard: model can over-trigger undo/redo on vague "do that again" style context.
+        if not (
+            _looks_like_remove_last_phrase(txt_low)
+            or _looks_like_repeat_last_phrase(txt_low)
+            or bool(same_for_item)
+        ):
+            if _looks_like_explicit_undo_or_redo_phrase(txt_low):
+                return plan
+            out = dict(plan)
+            out["actions"] = [_no_action("insufficient_context")]
+            out["needs_clarification"] = False
+            out["clarification"] = ""
+            if not str(out.get("response_copy") or "").strip():
+                out["response_copy"] = "I need more detail to know what to change."
+            return out
+    else:
         return plan
 
     recent = _recent_action_group_actions(board_context)
     if not recent:
         return plan
-
-    txt_low = txt.lower()
 
     if _looks_like_remove_last_phrase(txt_low):
         removal_actions = _build_remove_last_actions_from_recent(recent=recent, request_time=request_time)
@@ -538,7 +557,6 @@ def _repair_context_reference_no_action(
             out["clarification"] = ""
             return out
 
-    same_for_item = _extract_same_for_item_name(txt)
     if same_for_item:
         same_actions = _build_same_for_actions_from_recent(
             recent=recent,
@@ -571,6 +589,22 @@ def _repair_context_reference_no_action(
             return out
 
     return plan
+
+
+def _looks_like_explicit_undo_or_redo_phrase(transcript_lower: str) -> bool:
+    txt = str(transcript_lower or "").strip().lower()
+    if not txt:
+        return False
+    patterns = (
+        "undo",
+        "redo",
+        "revert",
+        "roll back",
+        "cancel last",
+        "撤销",
+        "重做",
+    )
+    return any(p in txt for p in patterns)
 
 
 def _recent_action_group_actions(board_context: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -848,6 +882,12 @@ def _call_gemini_for_action(
         "Important: transcript below is already ASR output. Do NOT claim transcript is missing.",
         "Return function calls only (no plain text).",
         "For multi-intent utterances, return 2-4 function calls in order.",
+        "Use undo_last_action_group / redo_last_action_group only when user explicitly says undo/redo/revert.",
+        "Phrases like 'do that again', 'same again', 'one more time' usually mean repeat recent_action_groups, not redo.",
+        "For vague pronouns (it/that/one/thing) without clear referent in context, prefer no_action(reason='insufficient_context').",
+        "If one sentence lists multiple shopping items, emit one shopping_add_item per item in order (max 4).",
+        "Treat casual leftover-in-fridge phrasing as inventory_log_event(event_type='added').",
+        "Do not infer timer_set from bare numbers unless timer intent is explicit.",
     ]
     context_lines.append(f"transcript: {transcript}")
     if board_context:
@@ -911,6 +951,12 @@ def _call_gemini_for_action_from_audio(
             "Transcribe and interpret this audio.",
             "Return function calls only (no plain text).",
             "For multi-intent utterances, return 2-4 function calls in order.",
+            "Use undo_last_action_group / redo_last_action_group only when user explicitly says undo/redo/revert.",
+            "Phrases like 'do that again', 'same again', 'one more time' usually mean repeat recent_action_groups, not redo.",
+            "For vague pronouns (it/that/one/thing) without clear referent in context, prefer no_action(reason='insufficient_context').",
+            "If one sentence lists multiple shopping items, emit one shopping_add_item per item in order (max 4).",
+            "Treat casual leftover-in-fridge phrasing as inventory_log_event(event_type='added').",
+            "Do not infer timer_set from bare numbers unless timer intent is explicit.",
             "If not actionable, call no_action.",
         ]
     )

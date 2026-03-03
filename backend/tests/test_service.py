@@ -312,6 +312,85 @@ class VoiceServiceNormalizeTests(unittest.TestCase):
         )
         self.assertEqual(repaired["actions"], [{"tool": "shopping_remove_item", "args": {"item_name": "bananas"}}])
 
+    def test_context_reference_redo_misfire_repaired_to_repeat_actions(self) -> None:
+        plan = {
+            "actions": [{"tool": "redo_last_action_group", "args": {}}],
+            "needs_clarification": False,
+            "clarification": "",
+            "response_copy": "",
+        }
+        board_context = {
+            "recent_action_groups": [
+                {
+                    "actions": [
+                        {"tool": "shopping_add_item", "args": {"item_name": "milk"}},
+                        {"tool": "shopping_add_item", "args": {"item_name": "cookies"}},
+                    ]
+                }
+            ]
+        }
+        repaired = _repair_context_reference_no_action(
+            plan,
+            transcript="do that again",
+            board_context=board_context,
+            request_time="2026-03-03T13:55:00-05:00",
+        )
+        self.assertEqual(repaired["actions"], board_context["recent_action_groups"][0]["actions"])
+
+    def test_context_reference_undo_misfire_repaired_to_remove_last(self) -> None:
+        plan = {
+            "actions": [{"tool": "undo_last_action_group", "args": {}}],
+            "needs_clarification": False,
+            "clarification": "",
+            "response_copy": "",
+        }
+        board_context = {
+            "recent_action_groups": [
+                {
+                    "actions": [
+                        {"tool": "shopping_add_item", "args": {"item_name": "coke"}},
+                    ]
+                }
+            ]
+        }
+        repaired = _repair_context_reference_no_action(
+            plan,
+            transcript="actually remove that",
+            board_context=board_context,
+            request_time="2026-03-03T13:55:00-05:00",
+        )
+        self.assertEqual(repaired["actions"], [{"tool": "shopping_remove_item", "args": {"item_name": "coke"}}])
+
+    def test_vague_undo_redo_misfire_becomes_no_action(self) -> None:
+        plan = {
+            "actions": [{"tool": "redo_last_action_group", "args": {}}],
+            "needs_clarification": False,
+            "clarification": "",
+            "response_copy": "",
+        }
+        repaired = _repair_context_reference_no_action(
+            plan,
+            transcript="uhhh do the thing",
+            board_context={"recent_action_groups": []},
+            request_time="2026-03-03T13:55:00-05:00",
+        )
+        self.assertEqual(repaired["actions"], [{"tool": "no_action", "args": {"reason": "insufficient_context"}}])
+
+    def test_explicit_undo_phrase_keeps_undo_action(self) -> None:
+        plan = {
+            "actions": [{"tool": "undo_last_action_group", "args": {}}],
+            "needs_clarification": False,
+            "clarification": "",
+            "response_copy": "",
+        }
+        repaired = _repair_context_reference_no_action(
+            plan,
+            transcript="undo that",
+            board_context={"recent_action_groups": []},
+            request_time="2026-03-03T13:55:00-05:00",
+        )
+        self.assertEqual(repaired["actions"], [{"tool": "undo_last_action_group", "args": {}}])
+
 
 if __name__ == "__main__":
     unittest.main()
