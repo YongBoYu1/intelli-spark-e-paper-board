@@ -70,6 +70,7 @@ Settings page scope and behavior are documented in:
 Refresh strategy standard for this board and future UI pages:
 
 - `docs/EPD_REFRESH_STRATEGY_PLAYBOOK.md`
+- This document is the board-level refresh standard and the source of truth for new page integration.
 - Tracking issue: `#18`  
   `https://github.com/YongBoYu1/intelli-spark-e-paper-board/issues/18`
 

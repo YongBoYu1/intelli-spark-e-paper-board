@@ -6,9 +6,9 @@ This is the missing piece that makes the app non-static on hardware:
 - Keyboard maps to encoder-like events (rotate/click/back/long press)
 - Periodic Tick drives idle + timer + delayed reorder
 
-Note: Uses mixed refresh strategy:
-- Settings page updates prefer partial-rect refresh.
-- Other page updates use full/fast full refresh for stability.
+Note: Uses unified refresh strategy:
+- All screens go through one refresh-policy pipeline.
+- Policy chooses no-refresh / partial / fast full / full clean at runtime.
 """
 
 from __future__ import annotations
@@ -35,6 +35,18 @@ from app.core.reducer import reduce, Rotate, Click, LongPress, RotateButton, Bac
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
 from app.render.epd import init_epd
 from app.render.panel import build_panel_theme, quantize_for_panel
+from app.render.refresh_policy import (
+    RefreshPolicyRuntime,
+    align_rect_for_partial,
+    build_ui_snapshot,
+    effective_full_refresh_every,
+    infer_dirty_rects_with_reasons,
+    merge_rects,
+    mode_params,
+    rect_area_ratio,
+    rect_contains,
+    screen_partial_area_limit,
+)
 from app.shared.env import load_repo_dotenv
 from app.shared.fonts import FontBook
 from app.shared.paths import find_repo_root
@@ -267,6 +279,21 @@ def _read_key_nonblocking() -> str:
     return "\x1b"
 
 
+def _drain_stdin_nonblocking(*, max_chars: int = 256) -> str:
+    drained: list[str] = []
+    remaining = max(0, int(max_chars))
+    while remaining > 0:
+        r, _, _ = select.select([sys.stdin], [], [], 0)
+        if not r:
+            break
+        ch = sys.stdin.read(1)
+        if not ch:
+            break
+        drained.append(ch)
+        remaining -= 1
+    return "".join(drained)
+
+
 def _warn_missing_fonts(fonts: FontBook) -> None:
     missing = fonts.missing_font_paths()
     if not missing:
@@ -302,6 +329,7 @@ def _state_render_sig(state: AppState):
         state.ui.page,
         state.ui.idle,
         state.ui.widget_mode,
+        state.ui.clock_minute_bucket,
         state.ui.timer_seconds,
         state.ui.timer_running,
         state.ui.timer_focused_index,
@@ -309,9 +337,15 @@ def _state_render_sig(state: AppState):
         state.ui.voice_phase,
         state.ui.voice_message,
         state.ui.menu_focused,
+        state.ui.menu_overlay_active,
         state.ui.active_menu,
         state.ui.settings_focused_index,
         state.ui.font_size,
+        state.ui.weather_day_index,
+        state.ui.calendar_offset_days,
+        state.ui.calendar_mode,
+        state.ui.calendar_selected_index,
+        state.ui.memo_index,
         state.ui.partial_refresh_mode,
         state.ui.full_refresh_every,
         state.ui.wifi_enabled,
@@ -321,6 +355,9 @@ def _state_render_sig(state: AppState):
         state.ui.rotation_deg,
         state.ui.settings_notice,
         tuple((r.rid, r.completed, r.title, r.right, r.category) for r in state.model.reminders),
+        tuple((w.dow, w.icon, w.hi, w.lo, w.humidity, w.feels_like, w.wind_kmh, w.uv_index) for w in state.model.weather),
+        tuple((c.eid, c.title, c.when) for c in state.model.calendar),
+        tuple((m.mid, m.text, m.author, int(m.timestamp), m.is_new) for m in state.model.memos),
     )
 
 
@@ -343,24 +380,6 @@ def _blit_full(epd, image: Image.Image, current_mode: str, *, fast: bool) -> str
     return current_mode
 
 
-def _settings_partial_area_limit(mode: str) -> float:
-    normalized = str(mode or "balanced").strip().lower()
-    if normalized == "slow":
-        return 0.40
-    if normalized == "fast":
-        return 0.85
-    return 0.65
-
-
-def _screen_partial_area_limit(screen: Screen, mode: str) -> float:
-    # Timer can tolerate a larger partial rect than settings because updates are
-    # concentrated around the central countdown and control row.
-    base = _settings_partial_area_limit(mode)
-    if screen == Screen.TIMER:
-        return min(0.95, base + 0.20)
-    return base
-
-
 def _timer_partial_full_every(theme: dict) -> int:
     # Avoid forcing full refresh too frequently during active countdown ticks.
     try:
@@ -370,20 +389,120 @@ def _timer_partial_full_every(theme: dict) -> int:
     return max(60, value)
 
 
-def _align_partial_rect(rect: tuple[int, int, int, int], width: int, height: int, *, pad: int = 2) -> tuple[int, int, int, int] | None:
-    x0, y0, x1, y1 = rect
-    x0 = max(0, int(x0) - pad)
-    y0 = max(0, int(y0) - pad)
-    x1 = min(int(width), int(x1) + pad)
-    y1 = min(int(height), int(y1) + pad)
-    if x1 <= x0 or y1 <= y0:
-        return None
-    x0 = (x0 // 8) * 8
-    x1 = ((x1 + 7) // 8) * 8
-    x1 = max(x0 + 8, min(int(width), x1))
-    if x1 <= x0 or y1 <= y0:
-        return None
-    return (x0, y0, x1, y1)
+def _screen_area_limit_with_theme(screen: Screen, mode: str, theme: dict) -> float:
+    default_value = screen_partial_area_limit(screen, mode)
+    key = f"refresh_area_limit_{str(screen.value if isinstance(screen, Screen) else screen)}"
+    raw = theme.get(key, theme.get("refresh_area_limit", default_value))
+    try:
+        value = float(raw)
+    except Exception:
+        return default_value
+    return max(0.05, min(0.98, value))
+
+
+def _screen_mode_with_theme(screen: Screen, mode: str, theme: dict) -> str:
+    screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
+    key = f"refresh_mode_{screen_name}"
+    override = str(theme.get(key, "") or "").strip().lower()
+    if override in ("slow", "balanced", "fast"):
+        return override
+    base = str(mode or "balanced").strip().lower()
+    if base in ("slow", "balanced", "fast"):
+        return base
+    return "balanced"
+
+
+def _mode_gap_with_theme(mode: str, theme: dict) -> int:
+    params = mode_params(mode)
+    key = f"refresh_min_gap_ms_{str(mode or 'balanced').strip().lower()}"
+    raw = theme.get(key, theme.get("refresh_min_gap_ms", params.min_refresh_gap_ms))
+    try:
+        value = int(raw)
+    except Exception:
+        return params.min_refresh_gap_ms
+    return max(0, value)
+
+
+def _home_family_area_limit_with_theme(theme: dict) -> float:
+    raw = theme.get("refresh_area_limit_home_family_board", 0.30)
+    try:
+        value = float(raw)
+    except Exception:
+        value = 0.30
+    return max(0.05, min(0.98, value))
+
+
+def _home_menu_overlay_area_limit_with_theme(theme: dict) -> float:
+    raw = theme.get("refresh_area_limit_home_menu_overlay", 0.60)
+    try:
+        value = float(raw)
+    except Exception:
+        value = 0.60
+    return max(0.05, min(0.98, value))
+
+
+def _fast_full_enabled(theme: dict) -> bool:
+    return bool(theme.get("refresh_enable_fast_full", False))
+
+
+def _partial_budget_enabled_with_theme(theme: dict) -> bool:
+    return bool(theme.get("refresh_partial_budget_enabled", True))
+
+
+def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
+    if bool(theme.get("refresh_partial_enable_all", False)):
+        return True
+
+    default_screens = "settings,timer"
+    raw = theme.get("refresh_partial_screens", default_screens)
+    if isinstance(raw, str):
+        names = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, (list, tuple)):
+        names = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
+
+    screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
+    return screen_name in set(names)
+
+
+def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
+    if screen != Screen.HOME or not reasons:
+        return False
+    allowed = {
+        "home.focus_move_row",
+        "home.focus_to_left_panel",
+        "home.focus_from_left_panel",
+        "home.focus_left_panel_only",
+        "home.menu_overlay_focus",
+        "home.focus_priority_drop_family",
+        "diff_fallback",
+    }
+    has_focus_reason = any(r.startswith("home.focus_") or r == "home.menu_overlay_focus" for r in reasons)
+    return has_focus_reason and all(r in allowed for r in reasons)
+
+
+def _prioritize_home_focus_dirty(
+    screen: Screen,
+    rects: list[tuple[int, int, int, int]],
+    reasons: list[str],
+    *,
+    width: int,
+) -> tuple[list[tuple[int, int, int, int]], list[str]]:
+    if screen != Screen.HOME:
+        return rects, reasons
+    if "home.focus_move_row" not in reasons or "home.family_board_update" not in reasons:
+        return rects, reasons
+
+    right_threshold = max(0, int(width * 0.45))
+    focus_rects = [r for r in rects if int(r[0]) >= right_threshold]
+    if not focus_rects:
+        return rects, reasons
+
+    next_reasons = [r for r in reasons if r != "home.family_board_update"]
+    if "home.focus_priority_drop_family" not in next_reasons:
+        next_reasons.append("home.focus_priority_drop_family")
+    return focus_rects, next_reasons
 
 
 def _partial_buffer_from_frame(frame: Image.Image, rect: tuple[int, int, int, int]) -> bytearray:
@@ -405,6 +524,108 @@ def _blit_partial(epd, frame: Image.Image, rect: tuple[int, int, int, int], curr
     part_buf = _partial_buffer_from_frame(frame, rect)
     epd.display_Partial(part_buf, x0, y0, x1, y1)
     return current_mode
+
+
+def _voice_overlay_rect_for_partial(width: int, height: int, theme: dict, *, rotation_deg: int = 0) -> tuple[int, int, int, int]:
+    w = max(1, int(width))
+    h = max(1, int(height))
+    margin = int(theme.get("voice_zone_margin", 14) or 14)
+    zone_w = int(theme.get("voice_zone_width", min(380, max(300, int(w * 0.46)))) or 340)
+    zone_w = max(220, min(zone_w, max(220, w - margin * 2)))
+    lane_h = int(theme.get("voice_zone_lane_h", 29) or 29)
+
+    x0 = margin
+    y1 = h - margin
+    y0 = max(margin, y1 - lane_h)
+    x1 = x0 + zone_w
+    rect = (x0, y0 - 1, x1, y1 + 1)
+
+    if int(rotation_deg or 0) == 180:
+        rx0, ry0, rx1, ry1 = rect
+        rect = (w - rx1, h - ry1, w - rx0, h - ry0)
+    return rect
+
+
+def _render_voice_overlay_step(
+    *,
+    epd,
+    state: AppState,
+    fonts: FontBook,
+    theme: dict,
+    panel_threshold: int,
+    panel_muted: int,
+    panel_gamma: float,
+    panel_dither: bool,
+    current_mode: str,
+    supports_partial: bool,
+    refresh_debug: bool,
+) -> tuple[str, bool]:
+    frame = _render_frame(
+        epd,
+        state,
+        fonts,
+        theme,
+        panel_threshold=panel_threshold,
+        panel_muted=panel_muted,
+        panel_gamma=panel_gamma,
+        panel_dither=panel_dither,
+    )
+
+    voice_partial_enabled = bool(theme.get("refresh_voice_partial", True))
+    if supports_partial and voice_partial_enabled:
+        rect = _voice_overlay_rect_for_partial(
+            epd.width,
+            epd.height,
+            theme,
+            rotation_deg=int(state.ui.rotation_deg or 0),
+        )
+        aligned = align_rect_for_partial(rect, epd.width, epd.height, pad=2)
+        if aligned is not None:
+            try:
+                next_mode = _blit_partial(epd, frame, aligned, current_mode)
+                if refresh_debug:
+                    x0, y0, x1, y1 = aligned
+                    print(f"[refresh] VOICE_PARTIAL_RECT rect=({x0},{y0},{x1},{y1})")
+                return next_mode, False
+            except Exception as e:
+                if refresh_debug:
+                    print(f"[refresh] VOICE_PARTIAL_FAIL reason={e}")
+
+    next_mode = _blit_full(epd, frame, current_mode, fast=_fast_full_enabled(theme))
+    if refresh_debug:
+        print("[refresh] VOICE_FULL_FALLBACK")
+    return next_mode, True
+
+
+def _render_to_epd(
+    epd,
+    state: AppState,
+    fonts: FontBook,
+    theme: dict,
+    *,
+    panel_threshold: int,
+    panel_muted: int,
+    panel_gamma: float,
+    panel_dither: bool,
+) -> None:
+    frame = _render_frame(
+        epd,
+        state,
+        fonts,
+        theme,
+        panel_threshold=panel_threshold,
+        panel_muted=panel_muted,
+        panel_gamma=panel_gamma,
+        panel_dither=panel_dither,
+    )
+    if _fast_full_enabled(theme):
+        try:
+            epd.init_fast()
+        except Exception:
+            epd.init()
+    else:
+        epd.init()
+    epd.display(epd.getbuffer(frame))
 
 
 def _set_voice_overlay(state: AppState, phase: str, message: str = "", hold_s: float = 0.0) -> None:
@@ -481,25 +702,34 @@ def _run_voice_flow(
     voice_audio_device: str,
     voice_audio_rate: int,
     voice_audio_channels: int,
-) -> None:
+    current_mode: str,
+    supports_partial: bool,
+    refresh_debug: bool,
+) -> tuple[str, bool]:
     state.ui.idle = False
     state.ui.last_interaction_at = time.time()
+    did_render_step = False
+    driver_mode = current_mode
 
     fd, audio_path = tempfile.mkstemp(prefix="voice_", suffix=".wav", dir="/tmp")
     os.close(fd)
 
     try:
         _set_voice_overlay(state, "recording", f"Speak within {max(1, int(voice_max_sec))}s")
-        _render_to_epd(
-            epd,
-            state,
-            fonts,
-            theme,
+        driver_mode, _ = _render_voice_overlay_step(
+            epd=epd,
+            state=state,
+            fonts=fonts,
+            theme=theme,
             panel_threshold=panel_threshold,
             panel_muted=panel_muted,
             panel_gamma=panel_gamma,
             panel_dither=panel_dither,
+            current_mode=driver_mode,
+            supports_partial=supports_partial,
+            refresh_debug=refresh_debug,
         )
+        did_render_step = True
 
         audio = _record_audio_fixed(
             audio_path=audio_path,
@@ -510,29 +740,37 @@ def _run_voice_flow(
         )
         if not audio:
             _set_voice_overlay(state, "error", "Recording failed", hold_s=2.0)
-            _render_to_epd(
-                epd,
-                state,
-                fonts,
-                theme,
+            driver_mode, _ = _render_voice_overlay_step(
+                epd=epd,
+                state=state,
+                fonts=fonts,
+                theme=theme,
                 panel_threshold=panel_threshold,
                 panel_muted=panel_muted,
                 panel_gamma=panel_gamma,
                 panel_dither=panel_dither,
+                current_mode=driver_mode,
+                supports_partial=supports_partial,
+                refresh_debug=refresh_debug,
             )
-            return
+            did_render_step = True
+            return driver_mode, did_render_step
 
         _set_voice_overlay(state, "processing", "Interpreting command")
-        _render_to_epd(
-            epd,
-            state,
-            fonts,
-            theme,
+        driver_mode, _ = _render_voice_overlay_step(
+            epd=epd,
+            state=state,
+            fonts=fonts,
+            theme=theme,
             panel_threshold=panel_threshold,
             panel_muted=panel_muted,
             panel_gamma=panel_gamma,
             panel_dither=panel_dither,
+            current_mode=driver_mode,
+            supports_partial=supports_partial,
+            refresh_debug=refresh_debug,
         )
+        did_render_step = True
 
         meta = build_request_meta(locale=voice_locale, tz_name=voice_timezone)
         payload = interpret_audio_via_backend(
@@ -561,45 +799,58 @@ def _run_voice_flow(
             remaining_confirm_s = max(0.0, float(state.ui.voice_confirm_due_at or 0.0) - time.time())
             hold_s = max(hold_s, remaining_confirm_s + 0.2)
         _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
-        _render_to_epd(
-            epd,
-            state,
-            fonts,
-            theme,
+        driver_mode, _ = _render_voice_overlay_step(
+            epd=epd,
+            state=state,
+            fonts=fonts,
+            theme=theme,
             panel_threshold=panel_threshold,
             panel_muted=panel_muted,
             panel_gamma=panel_gamma,
             panel_dither=panel_dither,
+            current_mode=driver_mode,
+            supports_partial=supports_partial,
+            refresh_debug=refresh_debug,
         )
+        did_render_step = True
     except VoiceClientError as e:
         _set_voice_overlay(state, "error", str(e), hold_s=2.5)
-        _render_to_epd(
-            epd,
-            state,
-            fonts,
-            theme,
+        driver_mode, _ = _render_voice_overlay_step(
+            epd=epd,
+            state=state,
+            fonts=fonts,
+            theme=theme,
             panel_threshold=panel_threshold,
             panel_muted=panel_muted,
             panel_gamma=panel_gamma,
             panel_dither=panel_dither,
+            current_mode=driver_mode,
+            supports_partial=supports_partial,
+            refresh_debug=refresh_debug,
         )
+        did_render_step = True
     except Exception as e:
         _set_voice_overlay(state, "error", f"Voice failed: {e}", hold_s=2.5)
-        _render_to_epd(
-            epd,
-            state,
-            fonts,
-            theme,
+        driver_mode, _ = _render_voice_overlay_step(
+            epd=epd,
+            state=state,
+            fonts=fonts,
+            theme=theme,
             panel_threshold=panel_threshold,
             panel_muted=panel_muted,
             panel_gamma=panel_gamma,
             panel_dither=panel_dither,
+            current_mode=driver_mode,
+            supports_partial=supports_partial,
+            refresh_debug=refresh_debug,
         )
+        did_render_step = True
     finally:
         try:
             os.remove(audio_path)
         except Exception:
             pass
+    return driver_mode, did_render_step
 
 
 def main() -> int:
@@ -651,6 +902,12 @@ def main() -> int:
         type=int,
         default=180,
         help="Debounce window for encoder KEY press in ms (default: 180)",
+    )
+    parser.add_argument(
+        "--encoder-key-long-press-ms",
+        type=int,
+        default=450,
+        help="Hold threshold for encoder KEY long-press event in ms (default: 450)",
     )
     parser.add_argument(
         "--encoder-flip-direction",
@@ -718,6 +975,7 @@ def main() -> int:
     if theme_path and not os.path.isabs(theme_path):
         theme_path = os.path.join(repo_root, theme_path)
     theme = _load_theme(theme_path) if theme_path else {}
+    refresh_debug = bool(theme.get("refresh_debug", False))
     panel_threshold = int(args.panel_threshold if args.panel_threshold is not None else theme.get("panel_threshold", 168))
     panel_muted = int(args.panel_muted if args.panel_muted is not None else theme.get("panel_muted", 150))
     panel_gamma = float(args.panel_gamma if args.panel_gamma is not None else theme.get("panel_gamma", 1.0))
@@ -729,8 +987,9 @@ def main() -> int:
         print("[warn] VOICE_API_URL not set. Voice flow will show network error until configured.")
 
     epd, _ = init_epd()
+    supports_partial = hasattr(epd, "init_part") and hasattr(epd, "display_Partial")
     driver_mode = "full"
-    last_render_frame = _render_frame(
+    committed_frame = _render_frame(
         epd,
         state,
         fonts,
@@ -740,13 +999,18 @@ def main() -> int:
         panel_gamma=panel_gamma,
         panel_dither=panel_dither,
     )
-    driver_mode = _blit_full(epd, last_render_frame, driver_mode, fast=False)
-    last_render_sig = _state_render_sig(state)
-    last_render_screen = state.ui.screen
-    last_render_rotation = int(state.ui.rotation_deg or 0)
-    last_render_font_size = str(state.ui.font_size or "medium")
-    settings_partial_count = 0
-    timer_partial_count = 0
+    driver_mode = _blit_full(epd, committed_frame, driver_mode, fast=False)
+    committed_sig = _state_render_sig(state)
+    committed_snapshot = build_ui_snapshot(state)
+    pending_frame: Image.Image | None = None
+    pending_sig = None
+    pending_snapshot = None
+    pending_reasons: list[str] = []
+
+    refresh_runtime = RefreshPolicyRuntime()
+    refresh_runtime.mark_full_clean(time.time())
+    if refresh_debug:
+        print(f"[refresh] debug=on supports_partial={bool(supports_partial)}")
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -756,12 +1020,18 @@ def main() -> int:
     prev_ab = None
     encoder_accum = 0
     prev_key = None
-    key_last_press_at = 0.0
+    key_is_down = False
+    key_down_at = 0.0
+    key_long_sent = False
+    key_last_edge_at = 0.0
     rotate_prev = None
     rotate_btn_last_press_at = 0.0
+    space_last_trigger_at = 0.0
     gpio_pins_in_use = set()
     encoder_key_debounce_s = max(0.0, float(args.encoder_key_debounce_ms) / 1000.0)
+    encoder_key_long_press_s = max(0.1, float(args.encoder_key_long_press_ms) / 1000.0)
     rotate_debounce_s = max(0.0, float(args.rotate_debounce_ms) / 1000.0)
+    voice_space_cooldown_s = max(0.2, float(theme.get("voice_space_cooldown_s", 1.2) or 1.2))
 
     if GPIO is None:
         if encoder_pin_s1 is not None or encoder_pin_s2 is not None or encoder_key_pin is not None or rotate_pin is not None:
@@ -782,6 +1052,10 @@ def main() -> int:
             if encoder_key_pin is not None:
                 GPIO.setup(int(encoder_key_pin), GPIO.IN, pull_up_down=pull_encoder)
                 prev_key = GPIO.input(int(encoder_key_pin))
+                active_low = str(args.encoder_key_active).lower() == "low"
+                key_is_down = bool((prev_key == GPIO.LOW) if active_low else (prev_key == GPIO.HIGH))
+                if key_is_down:
+                    key_down_at = time.time()
                 gpio_pins_in_use.add(int(encoder_key_pin))
 
             if rotate_pin is not None:
@@ -812,7 +1086,7 @@ def main() -> int:
             rotate_btn_ready = False
 
     try:
-        print("Controls: Left/Right rotate, Enter click, R rotate screen, S settings, W weather, Space long press, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice, R rotate screen, S settings, W weather, B/Esc back, Q quit")
         next_tick = time.time()
         while True:
             now = time.time()
@@ -820,6 +1094,7 @@ def main() -> int:
             key = _read_key_nonblocking()
 
             ev = None
+            voice_flow_ran = False
             if encoder_ready:
                 try:
                     curr_ab = (GPIO.input(int(encoder_pin_s1)) << 1) | GPIO.input(int(encoder_pin_s2))
@@ -848,16 +1123,34 @@ def main() -> int:
                 try:
                     curr_key = GPIO.input(int(encoder_key_pin))
                     active_low = str(args.encoder_key_active).lower() == "low"
-                    is_press_edge = (
-                        (active_low and prev_key == GPIO.HIGH and curr_key == GPIO.LOW)
-                        or ((not active_low) and prev_key == GPIO.LOW and curr_key == GPIO.HIGH)
-                    )
-                    if is_press_edge and (now - key_last_press_at) >= encoder_key_debounce_s:
-                        ev = Click()
-                        key_last_press_at = now
+                    prev_is_down = bool((prev_key == GPIO.LOW) if active_low else (prev_key == GPIO.HIGH))
+                    curr_is_down = bool((curr_key == GPIO.LOW) if active_low else (curr_key == GPIO.HIGH))
+
+                    if curr_is_down != prev_is_down:
+                        if curr_is_down:
+                            # Debounce only on press edge so short click release is not swallowed.
+                            if (now - key_last_edge_at) >= encoder_key_debounce_s:
+                                key_last_edge_at = now
+                                key_is_down = True
+                                key_down_at = now
+                                key_long_sent = False
+                        else:
+                            if key_is_down:
+                                press_dur = max(0.0, now - key_down_at)
+                                if (not key_long_sent) and press_dur < encoder_key_long_press_s:
+                                    ev = Click()
+                            key_is_down = False
+                            key_down_at = 0.0
+                            key_long_sent = False
+                            key_last_edge_at = now
                     prev_key = curr_key
                 except Exception:
                     pass
+
+            if encoder_key_pin is not None and ev is None and key_is_down and not key_long_sent:
+                if (now - key_down_at) >= encoder_key_long_press_s:
+                    ev = LongPress()
+                    key_long_sent = True
 
             if rotate_btn_ready and ev is None:
                 try:
@@ -878,6 +1171,8 @@ def main() -> int:
                 ev = Rotate(-1)
             elif key in ("\x1b[C", "l"):  # right
                 ev = Rotate(+1)
+            elif key == "\x03":  # Ctrl+C in raw mode
+                return 0
             elif key in ("\r", "\n"):  # enter
                 pending_tool = str(state.ui.voice_confirm_tool or "").strip()
                 confirmed = confirm_pending_voice_action(state, now=now)
@@ -895,8 +1190,17 @@ def main() -> int:
                 else:
                     ev = Click()
             elif key == " ":
+                if (
+                    state.ui.voice_active
+                    or (now - float(space_last_trigger_at)) < voice_space_cooldown_s
+                ):
+                    ev = None
+                    if refresh_debug:
+                        why = "voice_active" if state.ui.voice_active else "space_cooldown"
+                        print(f"[voice] ignore space trigger reason={why}")
+                    continue
                 # Voice record + send flow on keyboard space.
-                _run_voice_flow(
+                driver_mode, voice_flow_ran = _run_voice_flow(
                     state=state,
                     epd=epd,
                     fonts=fonts,
@@ -913,7 +1217,14 @@ def main() -> int:
                     voice_audio_device=str(args.voice_audio_device or "default"),
                     voice_audio_rate=max(8000, int(args.voice_audio_rate)),
                     voice_audio_channels=max(1, int(args.voice_audio_channels)),
+                    current_mode=driver_mode,
+                    supports_partial=bool(supports_partial),
+                    refresh_debug=bool(refresh_debug),
                 )
+                space_last_trigger_at = time.time()
+                buffered = _drain_stdin_nonblocking(max_chars=512)
+                if "\x03" in buffered or "q" in buffered.lower():
+                    return 0
                 ev = None
             elif key in ("p", "P"):
                 # Keep a manual way to trigger legacy long-press behavior in console.
@@ -938,9 +1249,30 @@ def main() -> int:
                 reduce(state, Tick(now=now), theme=theme)
                 next_tick = now + float(args.tick)
 
-            # Only re-render if state that affects UI changed.
+            # Voice flow renders directly to EPD; resync committed snapshot/frame.
+            if voice_flow_ran:
+                committed_frame = _render_frame(
+                    epd,
+                    state,
+                    fonts,
+                    theme,
+                    panel_threshold=panel_threshold,
+                    panel_muted=panel_muted,
+                    panel_gamma=panel_gamma,
+                    panel_dither=panel_dither,
+                )
+                committed_sig = _state_render_sig(state)
+                committed_snapshot = build_ui_snapshot(state)
+                pending_frame = None
+                pending_sig = None
+                pending_snapshot = None
+                pending_reasons = []
+                refresh_runtime.clear_pending()
+                refresh_runtime.mark_fast_full(now)
+
+            # Stage updates against the last committed frame.
             sig = _state_render_sig(state)
-            if sig != last_render_sig:
+            if sig != committed_sig:
                 frame = _render_frame(
                     epd,
                     state,
@@ -951,84 +1283,194 @@ def main() -> int:
                     panel_gamma=panel_gamma,
                     panel_dither=panel_dither,
                 )
-                committed = False
-                diff_box = ImageChops.difference(last_render_frame, frame).getbbox()
-                if diff_box is not None:
-                    curr_screen = state.ui.screen
-                    curr_rotation = int(state.ui.rotation_deg or 0)
-                    curr_font_size = str(state.ui.font_size or "medium")
-                    screen_changed = curr_screen != last_render_screen
-                    rotation_changed = curr_rotation != last_render_rotation
-                    font_size_changed = curr_font_size != last_render_font_size
-                    if screen_changed or rotation_changed:
-                        driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                        settings_partial_count = 0
-                        timer_partial_count = 0
-                        committed = True
-                    if curr_screen == Screen.SETTINGS and font_size_changed and not committed:
-                        # Font size changes reflow most rows; prefer stable full refresh.
-                        driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                        settings_partial_count = 0
-                        timer_partial_count = 0
-                        committed = True
-                    in_partial_screen = (
-                        curr_screen in (Screen.SETTINGS, Screen.TIMER)
-                        and last_render_screen == curr_screen
-                        and curr_rotation == last_render_rotation
+                curr_snapshot = build_ui_snapshot(state)
+                diff_box = ImageChops.difference(committed_frame, frame).getbbox()
+                if diff_box is None:
+                    pending_frame = None
+                    pending_sig = None
+                    pending_snapshot = None
+                    pending_reasons = []
+                    refresh_runtime.clear_pending()
+                    committed_sig = sig
+                    committed_snapshot = curr_snapshot
+                else:
+                    dirty_rects, dirty_reasons = infer_dirty_rects_with_reasons(
+                        committed_snapshot,
+                        curr_snapshot,
+                        epd.width,
+                        epd.height,
                     )
-                    if in_partial_screen and not committed:
-                        rect = _align_partial_rect(diff_box, epd.width, epd.height, pad=2)
-                        if rect is not None:
-                            x0, y0, x1, y1 = rect
-                            partial_area = (x1 - x0) * (y1 - y0)
-                            total_area = max(1, epd.width * epd.height)
-                            area_ratio = float(partial_area) / float(total_area)
-                            mode_limit = _screen_partial_area_limit(curr_screen, state.ui.partial_refresh_mode)
-                            if curr_screen == Screen.SETTINGS:
-                                full_every = max(1, int(state.ui.full_refresh_every or 15))
-                                force_full_clean = settings_partial_count >= full_every
+                    if dirty_rects:
+                        merged_dirty = merge_rects(dirty_rects, epd.width, epd.height)
+                        if merged_dirty is None or not rect_contains(merged_dirty, diff_box, slack=4):
+                            dirty_rects.append(diff_box)
+                            dirty_reasons.append("diff_fallback")
+                    else:
+                        dirty_rects = [diff_box]
+                        dirty_reasons = ["diff_only"]
+                    dirty_rects, dirty_reasons = _prioritize_home_focus_dirty(
+                        curr_snapshot.screen,
+                        dirty_rects,
+                        dirty_reasons,
+                        width=epd.width,
+                    )
+                    if _should_collapse_to_latest(curr_snapshot.screen, dirty_reasons):
+                        # Drop intermediate focus-transition frames; keep only latest target state.
+                        refresh_runtime.clear_pending()
+                    refresh_runtime.enqueue(dirty_rects)
+                    pending_frame = frame
+                    pending_sig = sig
+                    pending_snapshot = curr_snapshot
+                    pending_reasons = dirty_reasons
+
+            # Flush staged updates with policy-driven refresh level.
+            if pending_frame is not None and pending_snapshot is not None:
+                policy_mode = _screen_mode_with_theme(
+                    pending_snapshot.screen,
+                    pending_snapshot.partial_refresh_mode,
+                    theme,
+                )
+                min_gap_ms = _mode_gap_with_theme(policy_mode, theme)
+                full_every = effective_full_refresh_every(
+                    screen=pending_snapshot.screen,
+                    mode=policy_mode,
+                    ui_full_refresh_every=pending_snapshot.full_refresh_every,
+                    timer_full_refresh_every_override=_timer_partial_full_every(theme),
+                )
+                if not _partial_budget_enabled_with_theme(theme):
+                    full_every = 0
+                full_every_text = str(full_every) if int(full_every) > 0 else "off"
+                full_clean_reason = refresh_runtime.full_clean_reason(now, full_refresh_every=full_every)
+                force_full_clean = bool(full_clean_reason)
+                screen_changed = pending_snapshot.screen != committed_snapshot.screen
+                rotation_changed = pending_snapshot.rotation_deg != committed_snapshot.rotation_deg
+                font_size_changed = pending_snapshot.font_size != committed_snapshot.font_size
+                force_flush = force_full_clean or screen_changed or rotation_changed
+
+                if not refresh_runtime.should_throttle(now, min_gap_ms) or force_flush:
+                    fast_full = _fast_full_enabled(theme)
+                    try:
+                        if force_full_clean:
+                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=False)
+                            refresh_runtime.mark_full_clean(now)
+                            if refresh_debug:
+                                print(
+                                    f"[refresh] R3_FULL_CLEAN screen={pending_snapshot.screen.value} "
+                                    f"reason={full_clean_reason} partial_count={refresh_runtime.partial_count} "
+                                    f"full_every={full_every_text} mode={policy_mode} "
+                                    f"dirty={','.join(pending_reasons) or '-'}"
+                                )
+                        elif screen_changed or rotation_changed:
+                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
+                            refresh_runtime.mark_fast_full(now)
+                            if refresh_debug:
+                                reason = "screen_changed" if screen_changed else "rotation_changed"
+                                print(
+                                    f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} "
+                                    f"reason={reason} mode={policy_mode} "
+                                    f"fast={'on' if fast_full else 'off'}"
+                                )
+                        elif pending_snapshot.screen == Screen.SETTINGS and font_size_changed:
+                            # Font-size updates often trigger full layout reflow.
+                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=False)
+                            refresh_runtime.mark_full_clean(now)
+                            if refresh_debug:
+                                print(
+                                    f"[refresh] R3_FULL_CLEAN screen={pending_snapshot.screen.value} "
+                                    f"reason=settings.font_size_reflow mode={policy_mode}"
+                                )
+                        else:
+                            merged_pending = merge_rects(refresh_runtime.pending_dirty_rects, epd.width, epd.height)
+                            family_only = (
+                                pending_snapshot.screen == Screen.HOME
+                                and pending_reasons
+                                and all(r in ("home.family_board_update", "diff_fallback") for r in pending_reasons)
+                            )
+                            partial_pad = 1 if family_only else 2
+                            aligned = (
+                                align_rect_for_partial(merged_pending, epd.width, epd.height, pad=partial_pad)
+                                if merged_pending is not None
+                                else None
+                            )
+                            partial_enabled = _screen_partial_enabled_with_theme(pending_snapshot.screen, theme)
+                            mode_limit = _screen_area_limit_with_theme(
+                                pending_snapshot.screen,
+                                policy_mode,
+                                theme,
+                            )
+                            if pending_snapshot.screen == Screen.HOME and "home.family_board_update" in pending_reasons:
+                                mode_limit = max(mode_limit, _home_family_area_limit_with_theme(theme))
+                            if pending_snapshot.screen == Screen.HOME and any(
+                                r in ("home.menu_overlay_focus", "home.menu_overlay_toggle") for r in pending_reasons
+                            ):
+                                mode_limit = max(mode_limit, _home_menu_overlay_area_limit_with_theme(theme))
+                            area_ratio = (
+                                rect_area_ratio(aligned, epd.width, epd.height)
+                                if aligned is not None
+                                else 1.0
+                            )
+                            if (
+                                supports_partial
+                                and partial_enabled
+                                and aligned is not None
+                                and area_ratio <= mode_limit
+                            ):
+                                driver_mode = _blit_partial(epd, pending_frame, aligned, driver_mode)
+                                refresh_runtime.mark_partial(now)
+                                if refresh_debug:
+                                    ax0, ay0, ax1, ay1 = aligned
+                                    print(
+                                        f"[refresh] R1_PARTIAL_RECT screen={pending_snapshot.screen.value} "
+                                        f"rect=({ax0},{ay0},{ax1},{ay1}) area_ratio={area_ratio:.3f} "
+                                        f"limit={mode_limit:.3f} partial_count={refresh_runtime.partial_count}/{full_every_text} "
+                                        f"mode={policy_mode} dirty={','.join(pending_reasons) or '-'}"
+                                    )
                             else:
-                                full_every = _timer_partial_full_every(theme)
-                                force_full_clean = timer_partial_count >= full_every
-                            try:
-                                if force_full_clean:
-                                    driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                                    if curr_screen == Screen.SETTINGS:
-                                        settings_partial_count = 0
-                                    else:
-                                        timer_partial_count = 0
-                                elif area_ratio <= mode_limit:
-                                    driver_mode = _blit_partial(epd, frame, rect, driver_mode)
-                                    if curr_screen == Screen.SETTINGS:
-                                        settings_partial_count += 1
-                                    else:
-                                        timer_partial_count += 1
-                                else:
-                                    driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                                    if curr_screen == Screen.SETTINGS:
-                                        settings_partial_count = 0
-                                    else:
-                                        timer_partial_count = 0
-                                committed = True
-                            except Exception as e:
-                                screen_name = str(curr_screen.value if isinstance(curr_screen, Screen) else curr_screen)
-                                print(f"[warn] {screen_name} partial refresh failed, fallback to full refresh: {e}")
-                                driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                                if curr_screen == Screen.SETTINGS:
-                                    settings_partial_count = 0
-                                else:
-                                    timer_partial_count = 0
-                                committed = True
-                    if not committed:
-                        driver_mode = _blit_full(epd, frame, driver_mode, fast=True)
-                        settings_partial_count = 0
-                        timer_partial_count = 0
-                        committed = True
-                last_render_sig = sig
-                last_render_frame = frame
-                last_render_screen = state.ui.screen
-                last_render_rotation = int(state.ui.rotation_deg or 0)
-                last_render_font_size = str(state.ui.font_size or "medium")
+                                driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
+                                refresh_runtime.mark_fast_full(now)
+                                if refresh_debug:
+                                    why = "partial_unsupported"
+                                    if not partial_enabled:
+                                        why = "partial_disabled_for_screen"
+                                    elif aligned is None:
+                                        why = "no_aligned_rect"
+                                    elif area_ratio > mode_limit:
+                                        why = "area_over_limit"
+                                    print(
+                                        f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} reason={why} "
+                                        f"area_ratio={area_ratio:.3f} limit={mode_limit:.3f} "
+                                        f"mode={policy_mode} fast={'on' if fast_full else 'off'} "
+                                        f"dirty={','.join(pending_reasons) or '-'}"
+                                    )
+                    except Exception as e:
+                        screen_name = str(
+                            pending_snapshot.screen.value
+                            if isinstance(pending_snapshot.screen, Screen)
+                            else pending_snapshot.screen
+                        )
+                        print(f"[warn] {screen_name} refresh failed, fallback to full clean: {e}")
+                        driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=False)
+                        refresh_runtime.mark_full_clean(now)
+                        if refresh_debug:
+                            print(
+                                f"[refresh] R3_FULL_CLEAN screen={screen_name} reason=exception "
+                                f"mode={policy_mode}"
+                            )
+
+                    committed_frame = pending_frame
+                    committed_sig = pending_sig
+                    committed_snapshot = pending_snapshot
+                    pending_frame = None
+                    pending_sig = None
+                    pending_snapshot = None
+                    pending_reasons = []
+                    refresh_runtime.clear_pending()
+                elif refresh_debug:
+                    print(
+                        f"[refresh] HOLD screen={pending_snapshot.screen.value} "
+                        f"reason=throttle gap_ms={min_gap_ms} mode={policy_mode} "
+                        f"dirty={','.join(pending_reasons) or '-'}"
+                    )
 
             time.sleep(0.01)
     finally:

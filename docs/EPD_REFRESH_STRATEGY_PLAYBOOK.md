@@ -1,347 +1,197 @@
-# E-Paper Refresh Strategy Playbook (Issue #18)
+# E-Paper Refresh Strategy Playbook (Board Standard)
 
-## 1. 目标
+## 1. 标准声明
 
-解决当前「任意动作都会触发全局刷新」问题，并沉淀一套可复用刷新策略，供后续所有 UI 页面设计直接套用。
+本文件是当前板子（Waveshare 7.5" V2, 800x480）唯一生效的刷新标准。
 
 适用范围：
-- 本仓库当前板型与驱动：`waveshare_epd.epd7in5_V2`（`800x480`，黑白屏）。
-- 运行路径：`tools/run_epaper_console.py` + `app/ui/*` 渲染栈。
-- 页面：Home（kitchen/classic）、Menu、Weather、Calendar、Settings。
+- 运行入口：`tools/run_epaper_console.py`
+- 渲染栈：`app/ui/*` + `app/render/refresh_policy.py`
+- 页面：Home（kitchen/classic）、Home 内导航 Overlay、Settings、Timer、Weather、Calendar、Menu（兼容路径）
+
+执行原则：
+- 新页面与刷新相关改动，必须先对齐本标准。
+- 若现场硬件验证结果与本标准冲突，以硬件验证为准，并回写本文件。
 
 ---
 
-## 2. 板型与官方能力边界（必须先确认）
-
-### 2.1 当前代码确认到的板型
-
-- 驱动加载固定为 `epd7in5_V2`：`app/render/epd.py`
-- 驱动分辨率：`EPD_WIDTH=800`, `EPD_HEIGHT=480`：`third_party/waveshare_ePaper/.../epd7in5_V2.py`
-- 驱动提供三类初始化：
-  - `init()`：常规全刷
-  - `init_fast()`：快刷
-  - `init_part()` + `display_Partial(...)`：局刷
-
-### 2.2 官方资料关键约束（Waveshare）
-
-1. 7.5" V2 新旧批次差异  
-根据 Waveshare 官方 wiki FAQ：`7.5inch e-Paper V2` 在 2023 年 9 月前后存在版本差异，新版本使用 V2 程序，旧版本可能无法用新程序。  
-
-2. 刷新时延（官方参数）  
-Waveshare 官方 wiki（7.5" V2 对应参数）给出：
-- Full refresh time: `~4s`
-- Partial refresh time: `~0.4s`
-- Fast refresh time: `~1.5s`
-
-3. 使用限制（官方注意事项）  
-Waveshare 官方 wiki 建议：
-- 刷新间隔不小于 `180s`（针对“同一画面长时间静态场景”的维护建议）
-- 每次进入休眠前应清屏
-- 长期运行建议至少 `24h` 全刷一次，避免残影累积
-
-4. 局刷轮次建议（官方 FAQ）  
-Waveshare FAQ 给出保守建议：局刷约 `5` 轮后执行一次全刷，避免残影积累。
-
-### 2.3 实战含义
-
-- 不可把“局刷”当作无限次能力使用，必须设计“局刷预算 + 强制全刷回收”。
-- 必须支持能力退化：若板子批次或实测不稳定，自动回退到快刷/全刷。
-
----
-
-## 3. 当前项目问题诊断（针对本仓库）
-
-### 3.1 现状
-
-`tools/run_epaper_console.py` 当前渲染路径：
-- `_render_to_epd(...)` 内部最终调用 `display_image(...)`
-- `display_image(...)` 直接走 `epd.display(...)`（整屏）
-- 文件内注释明确写了“目前先全刷，局刷后续再加”
-
-结论：当前任意状态变化，只要触发重渲染，就会整屏刷新。
-
-### 3.2 直接后果
-
-- 闪烁重
-- 输入反馈慢（旋钮移动、焦点切换也触发整屏）
-- 功耗上升
-- 残影风险更难控（大量不必要全局波形）
-
----
-
-## 4. 刷新策略总设计
-
-采用四级刷新策略，不再单一“整屏刷新”。
-
-### 4.1 刷新等级定义
+## 2. 刷新等级
 
 1. `R0_NO_REFRESH`
-- 事件不引起可见像素变化
-- 不下发任何 EPD 刷新
+- 事件未产生可见像素变化，不下发刷新。
 
 2. `R1_PARTIAL_RECT`
-- 小范围局部变化（焦点、单行数据、时间数字）
-- 使用 `init_part()` + `display_Partial(...)`
-- 支持多脏区合并后一次提交
+- 小面积变化，走局部刷新：`init_part()` + `display_Partial(...)`。
+- 所有脏区在提交前做 merge + 8 像素对齐。
 
-3. `R2_FAST_FULL_SCREEN`
-- 页面内容大幅变化但可接受快刷残影（如页面切换、整卡片重排）
-- 使用 `init_fast()` + `display(...)`
+3. `R2_FAST_FULL`
+- 大面积变化或局刷不满足条件，走快刷整屏：`init_fast()` + `display(...)`（若主题允许）。
 
 4. `R3_FULL_CLEAN`
-- 强制消残影或异常恢复
-- 使用 `init()` + `display(...)`，必要时 `Clear()`
-
-### 4.2 选择原则（决策顺序）
-
-1. 能否不刷新：若像素无变化则 `R0`
-2. 能否局刷：若仅涉及有限区域且批次支持局刷则 `R1`
-3. 是否整页变化：整页变化优先 `R2`
-4. 是否到达维护阈值：满足任一条件升级到 `R3`
-
-### 4.3 强制全刷触发条件（建议默认）
-
-满足任一条件直接 `R3_FULL_CLEAN`：
-- `partial_count >= full_refresh_every`（策略参数）
-- 距上次全刷超过 `24h`
-- 连续局刷出现明显残影/错位（人工标记或检测）
-- 从局刷模式切回全刷模式（驱动状态切换边界）
-- 异常恢复（SPI 异常、busy 超时、显示错帧）
+- 清残影维护或异常恢复，走常规全刷：`init()` + `display(...)`。
 
 ---
 
-## 5. 脏区策略（Dirty Rect）
+## 3. 当前板子默认策略（已验证）
 
-### 5.1 脏区生成
+### 3.1 全局策略
 
-页面渲染层按“组件区块”输出脏区，不做逐像素 diff。
+- 主路径是 `partial-first`：先尝试 `R1`，失败再升级到 `R2/R3`。
+- 高频输入启用节流与中间帧丢弃（只保留最新目标态）。
+- 局刷区域按 X 方向 8px 对齐，避免边缘脏线。
 
-每次事件：
-- 记录受影响区块矩形
-- 对矩形做 union/merge（重叠合并）
-- 最后一次性提交 1~N 个局刷任务（通常建议 1~3 个）
+### 3.2 局刷屏幕白名单
 
-### 5.2 8 像素对齐（必须）
+默认白名单：
+- `settings,timer,home,menu`
 
-`epd7in5_V2.display_Partial(...)` 以字节对齐处理 X 坐标，所有脏区都要：
-- `x0` 向下对齐到 8 的倍数
-- `x1` 向上对齐到 8 的倍数
+对应主题键：
+- `refresh_partial_screens`
 
-否则容易出现错位、边缘脏线、局刷区域异常。
+### 3.3 Partial 计数预算（已默认关闭）
 
-### 5.3 刷新节流
+当前标准：默认关闭“按 partial 次数强制全刷”。
 
-建议：
-- `min_refresh_gap_ms = 120`（同一时段高频事件合并）
-- 高频旋钮事件只刷新“最终焦点态”，中间帧可丢弃
-- Tick 驱动（秒钟/倒计时）也走同一节流队列
+主题键：
+- `refresh_partial_budget_enabled: false`
 
----
+行为说明：
+- 关闭后不会因为“第 N 次局刷”触发 `R3_FULL_CLEAN`。
+- 仍保留 `full_age`（长期维护）触发条件。
 
-## 6. 页面级实战矩阵（本项目内容）
+### 3.4 面积门限升级
 
-下面策略基于当前页面内容结构：  
-Home（左侧时钟/天气+右侧列表）、Menu、Weather、Calendar、Settings。
+- 若合并后脏区面积超过页面门限，则从 `R1` 升级到 `R2_FAST_FULL`。
+- Home 的 family board 有单独更宽容门限：`refresh_area_limit_home_family_board`。
 
-### 6.1 Home（kitchen 变体，默认）
+### 3.5 Fast Full 开关
 
-建议区块拆分：
-- `H_LEFT_CLOCK`：时间/日期/语音覆盖层
-- `H_LEFT_MEMO`：左侧 memo 文本区
-- `H_LEFT_WEATHER_STRIP`：左下天气条
-- `H_RIGHT_LIST`：右侧 fridge + shopping 列表主体
-- `H_RIGHT_FOCUS_ROW`：当前焦点行
-
-事件到刷新建议：
-- 旋钮换焦点（同页）  
-  优先 `R1`，只刷“旧焦点行 + 新焦点行”或最小包围框
-- 秒钟更新时间（时钟模式）  
-  `R1`，只刷 `H_LEFT_CLOCK` 的数字区
-- 天气数据后台更新  
-  `R1`，刷 `H_LEFT_WEATHER_STRIP`（必要时附带右侧统计区）
-- 勾选任务（无重排）  
-  `R1`，刷单行 checkbox + 文本
-- 延迟 2s 触发重排  
-  可选 `R2`（刷右半屏更稳）；若残影可控可用 `R1` 刷 `H_RIGHT_LIST`
-- 进入/退出语音覆盖  
-  `R1`，刷 `H_LEFT_CLOCK` 覆盖区域
-- Home <-> 其他页面切换  
-  `R2`（快刷整屏），避免复杂跨页脏区管理
-
-### 6.2 Menu
-
-建议区块：
-- `M_PILLS_ROW`：中间菜单 pill 行
-
-事件：
-- 旋钮切换菜单项：`R1` 刷 `M_PILLS_ROW`
-- 进入菜单/退出菜单：`R2` 整屏快刷
-
-### 6.3 Weather Detail
-
-建议区块：
-- `W_HERO`：顶部主温度和天气描述
-- `W_METRICS`：湿度/体感/风速
-- `W_FORECAST_ROW`：底部 forecast 行
-
-事件：
-- 日索引切换：优先 `R1` 刷 `W_HERO + W_METRICS + W_FORECAST_ROW`
-- 首次进入页面：`R2`
-- 数据全量更新：`R2`（优先稳定）
-
-### 6.4 Calendar Detail
-
-建议区块：
-- `C_LEFT_GRID`：月历网格
-- `C_RIGHT_HEADER`
-- `C_RIGHT_AGENDA`
-
-事件：
-- 日期偏移变化：`R1` 刷 `C_LEFT_GRID + C_RIGHT_HEADER + C_RIGHT_AGENDA`
-- agenda 光标移动：`R1` 只刷 `C_RIGHT_AGENDA` 当前/上一项
-- 页面进入/退出：`R2`
-
-### 6.5 Settings
-
-建议区块：
-- `S_LIST_ROWS`
-- `S_FOOTER`（状态提示 + last sync）
-
-事件：
-- 旋钮移动焦点：`R1` 刷“前后两行”
-- 点击切换值：`R1` 刷当前行
-- `SYNC_NOW` / notice timeout：`R1` 刷 `S_FOOTER`
-- 旋转角度切换 0/180：`R2`（整屏重绘更稳）
+- 默认：`refresh_enable_fast_full: false`。
+- 开启时，`R2` 使用 `init_fast()`，可减轻闪烁但可能增加残影。
 
 ---
 
-## 7. 参数模板（Slow / Balanced / Fast）
+## 4. Home 页面标准（核心）
 
-建议将 `partial_refresh_mode` 映射为明确策略参数：
+### 4.1 导航模式改为 Home 内 Overlay（不换屏）
 
-| 模式 | `full_refresh_every` | `min_refresh_gap_ms` | 适用 |
-|---|---:|---:|---|
-| `slow` | 5 | 200 | 保守，最低残影 |
-| `balanced` | 10 | 120 | 默认推荐 |
-| `fast` | 15 | 80 | 交互优先 |
+当前标准不再通过 `home -> menu` 换屏进入导航。
 
-补充：
-- 现有设置项中的 `20` 可保留，但不建议默认；先以 `10/15` 为主。
-- 若现场屏幕残影敏感，直接降档到 `slow`。
+行为：
+- 在 `HOME` 长按：切换 `menu_overlay_active`（开/关）。
+- `HOME` + overlay 开启时：旋钮移动导航项，点击执行导航项。
+- `HOME` + overlay 开启时：`Back` 关闭 overlay。
+
+刷新收益：
+- 导航交互保持在 `HOME`，可走纯局部刷新。
+- 避免跨页面 `screen_changed` 带来的整屏刷新闪烁。
+
+### 4.2 Home 脏区规则
+
+- 焦点移动：优先行级脏区（`home.focus_move_row`）。
+- 左侧面板进出焦点：仅刷新最小指示区（`home.focus_to_left_panel` / `home.focus_from_left_panel`）。
+- family board 自动轮播：仅刷新 family board 区。
+- 语音条变化：仅刷新 voice overlay 区（不再映射到时钟区）。
+- 导航 overlay：
+  - 显隐：`home.menu_overlay_toggle`
+  - overlay 焦点移动：`home.menu_overlay_focus`
+  - 门限：`refresh_area_limit_home_menu_overlay`（默认 `0.60`，用于吸收 overlay 交互中的偶发 `diff_fallback` 合并）
+
+### 4.3 防叠加策略
+
+为避免远距离脏区合并导致大面积刷新：
+- 语音活跃时暂停 family board 自动轮播。
+- Home overlay 活跃时也暂停 family board 自动轮播。
+- overlay 导航场景启用更高面积门限（`refresh_area_limit_home_menu_overlay`），避免 `home.menu_overlay_focus + diff_fallback` 偶发升级为全屏刷新。
 
 ---
 
-## 8. 运行时状态机（建议实现）
+## 5. 语音刷新标准
 
-维护以下刷新状态：
-- `supports_partial: bool`
-- `partial_count: int`
-- `last_full_refresh_ts: float`
-- `last_refresh_ts: float`
-- `pending_dirty_rects: list[Rect]`
+### 5.1 语音流程渲染
 
-建议伪代码：
+语音流程（recording / processing / done / error）采用 `partial-first`：
+- 优先只刷 voice overlay 固定区域（`VOICE_PARTIAL_RECT`）。
+- 仅在局刷失败或不支持时回退整屏。
 
-```text
-on_event(event):
-  dirty = map_event_to_dirty(event, screen, state_before, state_after)
-  if dirty.empty:
-    return
-  enqueue(dirty)
+### 5.2 输入防连发
 
-flush():
-  if now - last_refresh_ts < min_refresh_gap_ms:
-    return
-  rect = merge_and_align8(pending_dirty_rects)
+- `Space` 触发语音带冷却窗口（`voice_space_cooldown_s`）。
+- 语音活跃期忽略重复 `Space`。
+- 每次语音流程后清空 stdin 缓冲，避免连发空格重复触发。
 
-  if must_full_refresh():
-    epd.init()
-    epd.display(full_frame)
-    partial_count = 0
-    last_full_refresh_ts = now
-  else if supports_partial and rect.is_local():
-    epd.init_part_if_needed()
-    epd.display_Partial(full_frame_buffer, rect.x0, rect.y0, rect.x1, rect.y1)
-    partial_count += 1
-  else:
-    epd.init_fast()
-    epd.display(full_frame)
+### 5.3 可退出性
 
-  last_refresh_ts = now
-  clear_pending_rects()
+- Raw 模式下显式识别 `Ctrl+C`（`\x03`）退出。
+- `Q/q` 仍可退出。
+
+---
+
+## 6. 运行时决策顺序
+
+每次状态变化按以下顺序决策：
+
+1. 生成脏区（页面规则 + diff fallback）
+2. 节流判定（`min_refresh_gap_ms`）
+3. 维护判定（`full_age`；若启用则含 `partial_budget`）
+4. 屏幕/旋转变更判定（必要时整屏）
+5. 面积门限判定（`R1` 或升级 `R2`）
+6. 提交刷新并更新 runtime 计数/时间戳
+
+---
+
+## 7. 标准主题基线（推荐）
+
+`ui_tuner_theme.json` 推荐基线：
+
+```json
+{
+  "refresh_debug": true,
+  "refresh_partial_screens": "settings,timer,home,menu",
+  "refresh_mode_menu": "fast",
+  "refresh_partial_budget_enabled": false,
+  "refresh_area_limit_home": 0.24,
+  "refresh_area_limit_home_family_board": 0.30,
+  "refresh_area_limit_home_menu_overlay": 0.60,
+  "refresh_enable_fast_full": false,
+  "memo_rotate_s": 8,
+  "voice_space_cooldown_s": 1.2
+}
 ```
 
----
-
-## 9. 新页面接入模板（以后直接照这个做）
-
-每新增一个 UI 页面，必须补齐以下 6 项：
-
-1. 页面区块图  
-列出静态区、动态区、可局刷区（矩形坐标）
-
-2. 事件矩阵  
-列出“事件 -> 影响区 -> 刷新等级（R0/R1/R2/R3）”
-
-3. 模式参数  
-slow/balanced/fast 对应阈值
-
-4. 强制全刷规则  
-局刷计数、定时维护、异常恢复规则
-
-5. 回退策略  
-局刷失败时如何退回快刷/全刷
-
-6. 验证记录  
-按第 10 节 checklist 记录结果
+说明：
+- `refresh_mode_menu=fast` 用于兼容真正 `Screen.MENU` 路径；Home overlay 路径不依赖该项。
 
 ---
 
-## 10. 验证 Checklist（实战验收）
+## 8. 新页面接入要求（强制）
 
-### 10.1 功能正确性
+新增页面必须补齐：
 
-- 焦点移动只刷新必要区域，不再整屏闪烁
-- 页面切换稳定，无黑块/残缺/错位
-- 局刷边界无明显脏线（8px 对齐生效）
+1. 页面分区图（静态区 / 动态区 / 可局刷区）
+2. 事件矩阵（事件 -> 脏区 -> 刷新等级）
+3. 面积门限与节流参数
+4. 失败回退路径（局刷失败 -> 快刷/全刷）
+5. 硬件验证记录（日志 + 实拍）
 
-### 10.2 体验指标
-
-- 交互延迟（旋钮到可见变化）目标 `< 200ms`
-- Home 秒钟更新不影响右侧列表
-- 高频旋钮下无明显连闪
-
-### 10.3 画质与寿命
-
-- 连续局刷 `N` 次后触发全刷可有效清残影
-- 连续运行 24h 后仍可恢复到干净状态
-- 睡眠前执行清理流程（按官方建议）
-
-### 10.4 异常场景
-
-- busy 超时可恢复
-- SPI 短故障后可回退全刷
-- 局刷不可用时自动降级（不阻塞交互）
+未满足以上项，不得宣称“刷新策略完成”。
 
 ---
 
-## 11. 对当前代码的最小改造建议
+## 9. 验收口径
 
-优先级按从快到慢：
+以下全部满足才算通过：
 
-1. 把 `tools/run_epaper_console.py` 的 `_render_to_epd(...)` 从“仅全刷”升级为“策略调度入口”
-2. 新增 `app/render/refresh_policy.py`（或同等模块）维护状态机和阈值
-3. 在 `app/ui/*` 增加页面级脏区定义（先做 Home + Settings）
-4. 接入 `partial_refresh_mode` / `full_refresh_every` 到真实策略，而不是仅显示
-5. 增加一份硬件回归脚本：焦点移动、秒钟更新、任务勾选、跨页切换
+- 导航交互无明显整屏闪烁（Home overlay 仅局部刷）。
+- 语音状态变化主要为 `VOICE_PARTIAL_RECT`，不应连续整屏刷。
+- 高频旋钮下，中间帧可丢弃但最终焦点准确。
+- 不因 partial 次数阈值触发全刷（默认配置下）。
+- 长时间运行仍可通过 `full_age` 维护恢复画面洁净。
 
 ---
 
-## 12. 参考资料（官方）
+## 10. 参考
 
 - Waveshare wiki: [E-Paper Driver HAT Manual](https://www.waveshare.com/wiki/E-Paper_Driver_HAT_Manual)
-- Waveshare wiki FAQ（同页）: 7.5 V2 新旧版本差异、局刷轮次建议、维护建议
-- Waveshare product: [7.5inch e-Paper HAT](https://www.waveshare.com/7.5inch-e-paper-hat.htm)
-- Waveshare product: [7.5inch e-Paper HAT (H)](https://www.waveshare.com/7.5inch-e-paper-hat-h.htm)
-- 本仓库驱动实现：`third_party/waveshare_ePaper/RaspberryPi_JetsonNano/python/lib/waveshare_epd/epd7in5_V2.py`
-
+- 本仓库驱动：`third_party/waveshare_ePaper/RaspberryPi_JetsonNano/python/lib/waveshare_epd/epd7in5_V2.py`
+- 本仓库策略实现：`app/render/refresh_policy.py` + `tools/run_epaper_console.py`

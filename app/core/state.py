@@ -91,9 +91,13 @@ class UiState:
     # MENU state (TSX: Back from dashboard opens the menu).
     menu_focused: MenuItemId = MenuItemId.LIST
     active_menu: Optional[MenuItemId] = None
+    # HOME overlay navigation layer (no screen switch, partial-refresh friendly).
+    menu_overlay_active: bool = False
 
     # Widget slot state (TSX: top-left is a widget slot that can show CLOCK or TIMER).
     widget_mode: WidgetMode = WidgetMode.CLOCK
+    # Home clock render source (minute bucket, local timezone). Updated on Tick.
+    clock_minute_bucket: int = field(default_factory=lambda: int(time.time() // 60))
     timer_seconds: int = 0
     timer_running: bool = False
     timer_last_tick_at: float = field(default_factory=lambda: time.time())
@@ -146,7 +150,7 @@ class UiState:
     settings_focused_index: int = 0
     font_size: str = "medium"  # small | medium | large
     partial_refresh_mode: str = "balanced"  # slow | balanced | fast
-    full_refresh_every: int = 15  # trigger a full refresh after N partial refreshes
+    full_refresh_every: int = 30  # trigger a full refresh after N partial refreshes
     wifi_enabled: bool = True
     bluetooth_enabled: bool = False
     auto_sync_enabled: bool = True
