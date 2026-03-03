@@ -55,14 +55,13 @@ Rules:
 - If user asks to clear inventory, use inventory_clear_all.
 - If user expresses purchase intent (need to buy / should buy / remember to buy), use shopping_add_item.
 - Casual shortage / procurement phrases (out of / running low / buy some / pick up / 没了 / 快没了 / 补点 / 买点) usually mean shopping_add_item.
-- Distinguish weak vs strong shortage phrasing when possible:
-  - weak shortage (running low / low on / 快没了 / 不够了) -> shopping_add_item only
-  - strong shortage (out of / no ... left / 没了 / 没有了) -> shopping_add_item (system may also update inventory state)
 - If user asks to remove an item from shopping list, use shopping_remove_item.
+- For explicit remove commands like "remove X from shopping list", do not output no_action(missing_item_name). Extract X from transcript, or use the closest board_context shopping item if needed.
 - If user clearly asks to clear the shopping list, use shopping_clear_all.
 - If user sets a timer (e.g. 20 minutes), use timer_set with duration_seconds.
 - If user leaves a family message/note, use memo_add.
 - If intent is ambiguous or not actionable, use no_action.
+- Do not rely on fixed seed vocabulary. Keep user wording for item_name unless board_context provides a better exact match.
 - Never output natural language explanations; output only a function call payload.
 - Never fabricate missing quantity/unit.
 - Resolve relative dates like yesterday/today/tomorrow from request_time + timezone.
@@ -208,5 +207,5 @@ Expected tool:
 - inventory_set_expiry(item_name="salad", expiry_date="<tomorrow>")
 
 ## Notes
-- Normalize item names to canonical English where confident (milk, eggs, pizza).
-- If not confident in canonicalization, keep original language item text.
+- Prefer user wording for item names; avoid hard-coded canonical mapping.
+- If board_context has an exact or very close item title, align to that title.

@@ -28,96 +28,6 @@ _ALLOWED_TOOLS = {
 _ALLOWED_EVENT_TYPES = {"consumed", "used", "added", "restocked", "finished"}
 _MAX_PLAN_ACTIONS = 4
 
-_ITEM_CANONICAL = {
-    "milk": "milk",
-    "牛奶": "milk",
-    "pizza": "pizza",
-    "披萨": "pizza",
-    "chicken": "chicken",
-    "marinated chicken": "chicken",
-    "鸡肉": "chicken",
-    "salad": "salad",
-    "沙拉": "salad",
-    "curry": "leftover curry",
-    "leftover curry": "leftover curry",
-    "咖喱": "leftover curry",
-    "剩咖喱": "leftover curry",
-    "egg": "eggs",
-    "eggs": "eggs",
-    "鸡蛋": "eggs",
-    "bread": "bread",
-    "面包": "bread",
-    "yoghurt": "yoghurt",
-    "yogurt": "yoghurt",
-    "酸奶": "yoghurt",
-}
-
-_SHOPPING_NEED_PHRASES = (
-    "没了",
-    "没有了",
-    "没有",
-    "快没了",
-    "不够了",
-    "缺",
-    "需要",
-    "要买",
-    "买点",
-    "补点",
-    "补上",
-    "补货",
-    "need ",
-    "we need",
-    "need more",
-    "buy ",
-    "buy some",
-    "pick up",
-    "get some",
-    "restock ",
-    "out of",
-    "running low",
-    "ran out",
-    "run out",
-    "low on",
-)
-_SHOPPING_DONE_PHRASES = (
-    "买了",
-    "已经买了",
-    "刚买了",
-    "i bought",
-    "bought ",
-    "already bought",
-    "just bought",
-    "picked up",
-    "got ",
-)
-_STRONG_SHORTAGE_PHRASES = (
-    "没了",
-    "没有了",
-    "没有",
-    "out of",
-    "no milk left",
-    "no left",
-    "ran out",
-    "run out",
-    "is gone",
-)
-_WEAK_SHORTAGE_PHRASES = (
-    "快没了",
-    "快没有了",
-    "不够了",
-    "running low",
-    "low on",
-    "almost out",
-)
-_INVENTORY_PRESENCE_PHRASES = (
-    "冰箱里有",
-    "in the fridge",
-    "leftover",
-    "过期",
-    "expires",
-    "expiring",
-)
-
 _SYSTEM_PROMPT_FALLBACK = (
     "You are a voice-command interpreter for a smart fridge magnet. "
     "Return one function call only. Prefer plan_actions with actions[1..4] for multi-intent commands. "
@@ -178,7 +88,6 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
         )
         if correction_plan is not None:
             plan = normalize_plan(correction_plan, request_time=request_time)
-            plan = _align_plan_with_transcript(plan, transcript=transcript)
             if not _validate_plan_against_schema(plan):
                 no_plan = _single_action_plan(_no_action("schema_validation_failed"))
                 return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": transcript_raw}
@@ -196,14 +105,7 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
                 board_context=board_context,
             )
             plan = normalize_plan(raw_plan, request_time=request_time)
-            plan = _align_plan_with_transcript(plan, transcript=transcript)
             plan = _repair_context_reference_no_action(
-                plan,
-                transcript=transcript,
-                board_context=board_context,
-                request_time=request_time,
-            )
-            plan = _repair_missing_item_name_no_action(
                 plan,
                 transcript=transcript,
                 board_context=board_context,
@@ -225,14 +127,7 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
         plan = normalize_plan(raw_plan, request_time=request_time)
-        plan = _align_plan_with_transcript(plan, transcript=transcript)
         plan = _repair_context_reference_no_action(
-            plan,
-            transcript=transcript,
-            board_context=board_context,
-            request_time=request_time,
-        )
-        plan = _repair_missing_item_name_no_action(
             plan,
             transcript=transcript,
             board_context=board_context,
@@ -423,60 +318,6 @@ def _first_action_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
             if isinstance(row, dict):
                 return row
     return _no_action("missing_action")
-
-
-def _align_plan_with_transcript(plan: dict[str, Any], *, transcript: str) -> dict[str, Any]:
-    if not isinstance(plan, dict):
-        return _single_action_plan(_no_action("invalid_plan_object"))
-    actions = plan.get("actions")
-    if not isinstance(actions, list):
-        actions = []
-
-    out_actions: list[dict[str, Any]] = []
-    for row in actions[: _MAX_PLAN_ACTIONS]:
-        if not isinstance(row, dict):
-            continue
-        out_actions.append(_align_action_with_transcript(dict(row), transcript=transcript))
-
-    if not out_actions:
-        out_actions = [_no_action("missing_action")]
-
-    out = dict(plan)
-    out["actions"] = out_actions[: _MAX_PLAN_ACTIONS]
-    return out
-
-
-def _align_action_with_transcript(action: dict[str, Any], *, transcript: str) -> dict[str, Any]:
-    if not isinstance(action, dict):
-        return action
-    txt = str(transcript or "").strip().lower()
-    if not txt:
-        return action
-    tool = str(action.get("tool") or "").strip()
-    if tool not in {"inventory_log_event", "shopping_add_item"}:
-        return action
-    args = action.get("args") if isinstance(action.get("args"), dict) else {}
-    item_name = _canonical_item_name(str(args.get("item_name") or "").strip())
-    if not item_name:
-        return action
-
-    # If Gemini already picked shopping_add_item, still apply shortage hints so final behavior
-    # does not depend on whether the model first chose shopping_add_item vs inventory_log_event.
-    if tool == "shopping_add_item":
-        out_args = {"item_name": item_name}
-        if _looks_like_strong_shortage_phrase(txt) and not _looks_like_inventory_presence_phrase(txt):
-            out_args["inventory_remove_if_generic_match"] = True
-        return {"tool": "shopping_add_item", "args": out_args}
-
-    # Shortage / procurement phrasing should prefer shopping list intent.
-    if _looks_like_shopping_need_phrase(txt) and not _looks_like_inventory_presence_phrase(txt):
-        out_args: dict[str, Any] = {"item_name": item_name}
-        if _looks_like_strong_shortage_phrase(txt):
-            # Let local policy/handler decide whether inventory can be safely removed
-            # (e.g. remove generic Fresh Milk, but keep specific Marinated Chicken).
-            out_args["inventory_remove_if_generic_match"] = True
-        return {"tool": "shopping_add_item", "args": out_args}
-    return action
 
 
 def _correction_scope_from_request(*, req: dict[str, Any], board_context: dict[str, Any] | None) -> str:
@@ -984,188 +825,6 @@ def _rebuild_context_action(*, tool: str, args: dict[str, Any], request_time: st
     return None
 
 
-def _repair_missing_item_name_no_action(
-    plan: dict[str, Any],
-    *,
-    transcript: str,
-    board_context: dict[str, Any] | None,
-    request_time: str,
-) -> dict[str, Any]:
-    if not isinstance(plan, dict):
-        return plan
-    actions = plan.get("actions")
-    if not isinstance(actions, list) or not actions:
-        return plan
-    first = actions[0]
-    if not isinstance(first, dict):
-        return plan
-    if str(first.get("tool") or "").strip() != "no_action":
-        return plan
-    args = first.get("args") if isinstance(first.get("args"), dict) else {}
-    if str(args.get("reason") or "").strip() != "missing_item_name":
-        return plan
-
-    txt = str(transcript or "").strip().lower()
-    guessed_item = ""
-    if _looks_like_shopping_done_phrase(txt):
-        guessed_item = _guess_item_name_for_completed_purchase(transcript=txt, board_context=board_context)
-    elif _looks_like_shopping_remove_phrase(txt):
-        guessed_item = _guess_item_name_for_shopping_remove(transcript=txt, board_context=board_context)
-    if not guessed_item:
-        return plan
-
-    out = dict(plan)
-    out["actions"] = [{"tool": "shopping_remove_item", "args": {"item_name": guessed_item}}]
-    if not str(out.get("response_copy") or "").strip():
-        out["response_copy"] = f"Removed {guessed_item} from shopping list."
-    return out
-
-
-def _guess_item_name_for_completed_purchase(*, transcript: str, board_context: dict[str, Any] | None) -> str:
-    txt = str(transcript or "").strip().lower()
-    if not txt:
-        return ""
-
-    matched: list[str] = []
-    seen: set[str] = set()
-    for candidate in _shopping_item_candidates(board_context):
-        canonical = _canonical_item_name(candidate)
-        if not canonical or canonical in seen:
-            continue
-        if _contains_term(txt, canonical):
-            matched.append(canonical)
-            seen.add(canonical)
-
-    for canonical in sorted(set(_ITEM_CANONICAL.values()), key=len, reverse=True):
-        if not canonical or canonical in seen:
-            continue
-        if _contains_term(txt, canonical):
-            matched.append(canonical)
-            seen.add(canonical)
-
-    if len(matched) == 1:
-        return matched[0]
-    return ""
-
-
-def _looks_like_shopping_remove_phrase(transcript_lower: str) -> bool:
-    txt = str(transcript_lower or "").strip().lower()
-    if not txt:
-        return False
-    remove_markers = (
-        "remove ",
-        "delete ",
-        "take ",
-        "drop ",
-        "cross off",
-        "删",
-        "删除",
-        "去掉",
-        "移除",
-    )
-    has_remove = any(p in txt for p in remove_markers)
-    if not has_remove:
-        return False
-    has_list = ("shopping list" in txt) or ("shopping" in txt and "list" in txt) or ("购物清单" in txt)
-    return has_list
-
-
-def _guess_item_name_for_shopping_remove(*, transcript: str, board_context: dict[str, Any] | None) -> str:
-    txt = str(transcript or "").strip().lower()
-    if not txt:
-        return ""
-
-    extracted = _extract_shopping_remove_item_name(txt)
-    if extracted:
-        normalized = _canonical_item_name(extracted)
-        if normalized:
-            return normalized
-
-    matched: list[str] = []
-    seen: set[str] = set()
-    for candidate in _shopping_item_candidates(board_context):
-        canonical = _canonical_item_name(candidate)
-        if not canonical or canonical in seen:
-            continue
-        if _contains_term(txt, canonical):
-            matched.append(canonical)
-            seen.add(canonical)
-
-    if len(matched) == 1:
-        return matched[0]
-    return ""
-
-
-def _extract_shopping_remove_item_name(transcript_lower: str) -> str:
-    txt = str(transcript_lower or "").strip().lower()
-    if not txt:
-        return ""
-    patterns = [
-        r"(?:remove|delete|drop)\s+(?P<item>.+?)\s+from\s+(?:the\s+)?shopping list",
-        r"(?:remove|delete|drop)\s+(?P<item>.+?)\s+off\s+(?:the\s+)?shopping list",
-        r"take\s+(?P<item>.+?)\s+off\s+(?:the\s+)?shopping list",
-        r"从购物清单(?:里)?(?:删掉|删除|去掉|移除)\s*(?P<item>.+)$",
-        r"(?:删掉|删除|去掉|移除)\s*(?P<item>.+?)\s*(?:从)?购物清单(?:里)?",
-    ]
-    for p in patterns:
-        m = re.search(p, txt, flags=re.IGNORECASE)
-        if not m:
-            continue
-        candidate = _clean_item_candidate_for_context(m.group("item"))
-        if not candidate:
-            continue
-        if candidate in {"it", "that", "this", "one", "last one", "那个", "这个"}:
-            continue
-        return candidate
-    return ""
-
-
-def _shopping_item_candidates(board_context: dict[str, Any] | None) -> list[str]:
-    if not isinstance(board_context, dict):
-        return []
-    shopping = board_context.get("shopping")
-    rows = shopping.get("items") if isinstance(shopping, dict) else []
-    if not isinstance(rows, list):
-        return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for row in rows:
-        if isinstance(row, dict):
-            title = str(row.get("title") or "").strip()
-        else:
-            title = str(row or "").strip()
-        if not title:
-            continue
-        variants = [title]
-        title_low = title.lower()
-        for prefix in ("buy ", "get ", "pick up ", "need ", "add "):
-            if title_low.startswith(prefix):
-                variants.append(title[len(prefix) :].strip())
-        for suffix in (" expires",):
-            if title_low.endswith(suffix):
-                variants.append(title[: -len(suffix)].strip())
-        for v in variants:
-            vv = str(v or "").strip()
-            if not vv:
-                continue
-            key = vv.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(vv)
-    return out
-
-
-def _contains_term(text: str, term: str) -> bool:
-    hay = str(text or "").strip().lower()
-    needle = str(term or "").strip().lower()
-    if not hay or not needle:
-        return False
-    if re.fullmatch(r"[a-z0-9 ]+", needle):
-        return bool(re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", hay))
-    return needle in hay
-
-
 def _call_gemini_for_action(
     *,
     api_key: str,
@@ -1560,50 +1219,10 @@ def _coerce_duration_seconds(args: dict[str, Any]) -> int:
     return max(0, min(total, 24 * 3600))
 
 
-def _looks_like_shopping_need_phrase(transcript_lower: str) -> bool:
-    txt = str(transcript_lower or "").strip().lower()
-    if not txt:
-        return False
-    if any(p in txt for p in _SHOPPING_DONE_PHRASES):
-        return False
-    if ("shopping list" in txt or "购物清单" in txt) and (" add " in f" {txt} " or "加" in txt):
-        return True
-    return any(p in txt for p in _SHOPPING_NEED_PHRASES)
-
-
-def _looks_like_shopping_done_phrase(transcript_lower: str) -> bool:
-    txt = str(transcript_lower or "").strip().lower()
-    if not txt:
-        return False
-    return any(p in txt for p in _SHOPPING_DONE_PHRASES)
-
-
-def _looks_like_strong_shortage_phrase(transcript_lower: str) -> bool:
-    txt = str(transcript_lower or "").strip().lower()
-    if not txt:
-        return False
-    # Weak shortage phrases (running low / 快没了) should not be treated as strong shortage.
-    if any(p in txt for p in _WEAK_SHORTAGE_PHRASES):
-        return False
-    return any(p in txt for p in _STRONG_SHORTAGE_PHRASES)
-
-
-def _looks_like_inventory_presence_phrase(transcript_lower: str) -> bool:
-    txt = str(transcript_lower or "").strip().lower()
-    if not txt:
-        return False
-    return any(p in txt for p in _INVENTORY_PRESENCE_PHRASES)
-
-
 def _canonical_item_name(item_name: str) -> str:
     raw = str(item_name or "").strip()
     if not raw:
         return ""
-    key = raw.lower()
-    if raw in _ITEM_CANONICAL:
-        return _ITEM_CANONICAL[raw]
-    if key in _ITEM_CANONICAL:
-        return _ITEM_CANONICAL[key]
     return " ".join(raw.split())
 
 
