@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.core.reducer import Back, Click, LongPress, Rotate, Tick, reduce
-from app.core.state import AppState, DashboardModel, MenuItemId, Screen, WidgetMode
+from app.core.state import AppState, DashboardModel, MemoItem, MenuItemId, Screen, WidgetMode
 
 
 class TimerReducerTests(unittest.TestCase):
@@ -101,6 +101,23 @@ class TimerReducerTests(unittest.TestCase):
         reduce(self.state, LongPress())
 
         self.assertEqual(self.state.ui.screen, Screen.HOME)
+
+    def test_tick_pauses_home_memo_rotation_while_voice_active(self) -> None:
+        self.state.ui.screen = Screen.HOME
+        self.state.ui.focused_index = 2
+        self.state.ui.idle = False
+        self.state.ui.voice_active = True
+        self.state.ui.memo_last_rotated_at = 100.0
+        self.state.ui.memo_index = 0
+        self.state.model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=1, is_new=False),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=2, is_new=False),
+        ]
+
+        reduce(self.state, Tick(now=112.0), theme={"home_variant": "kitchen", "memo_rotate_s": 8})
+
+        self.assertEqual(self.state.ui.memo_index, 0)
+        self.assertEqual(self.state.ui.memo_last_rotated_at, 112.0)
 
 
 if __name__ == "__main__":

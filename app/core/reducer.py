@@ -348,7 +348,11 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         # Mood memo auto-rotation (kitchen home only)
         if state.ui.screen == Screen.HOME and variant == "kitchen":
             interval_s = float(theme.get("memo_rotate_s", 6.0) or 6.0)
-            if state.ui.focused_index != 0 and not state.ui.idle:
+            # While voice overlay is active, pause memo auto-rotation so it does not
+            # merge with voice dirty regions and force a large full refresh.
+            if state.ui.voice_active:
+                state.ui.memo_last_rotated_at = now
+            elif state.ui.focused_index != 0 and not state.ui.idle:
                 if (now - float(state.ui.memo_last_rotated_at or now)) >= interval_s and state.model.memos:
                     state.ui.memo_index = (int(state.ui.memo_index or 0) + 1) % max(1, len(state.model.memos))
                     state.ui.memo_last_rotated_at = now
