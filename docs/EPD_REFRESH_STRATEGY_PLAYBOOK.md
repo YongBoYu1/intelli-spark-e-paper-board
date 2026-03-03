@@ -95,12 +95,14 @@
 - 导航 overlay：
   - 显隐：`home.menu_overlay_toggle`
   - overlay 焦点移动：`home.menu_overlay_focus`
+  - 门限：`refresh_area_limit_home_menu_overlay`（默认 `0.60`，用于吸收 overlay 交互中的偶发 `diff_fallback` 合并）
 
 ### 4.3 防叠加策略
 
 为避免远距离脏区合并导致大面积刷新：
 - 语音活跃时暂停 family board 自动轮播。
 - Home overlay 活跃时也暂停 family board 自动轮播。
+- overlay 导航场景启用更高面积门限（`refresh_area_limit_home_menu_overlay`），避免 `home.menu_overlay_focus + diff_fallback` 偶发升级为全屏刷新。
 
 ---
 
@@ -150,6 +152,7 @@
   "refresh_partial_budget_enabled": false,
   "refresh_area_limit_home": 0.24,
   "refresh_area_limit_home_family_board": 0.30,
+  "refresh_area_limit_home_menu_overlay": 0.60,
   "refresh_enable_fast_full": false,
   "memo_rotate_s": 8,
   "voice_space_cooldown_s": 1.2
