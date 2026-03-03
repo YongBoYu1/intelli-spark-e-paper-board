@@ -30,7 +30,7 @@ _MAX_PLAN_ACTIONS = 4
 
 _SYSTEM_PROMPT_FALLBACK = (
     "You are a voice-command interpreter for a smart fridge magnet. "
-    "Return one function call only. Prefer plan_actions with actions[1..4] for multi-intent commands. "
+    "Return 1-4 function calls in order for actionable intents. "
     "Available action tools: inventory_log_event, inventory_set_expiry, inventory_clear_all, "
     "shopping_add_item, shopping_remove_item, shopping_clear_all, timer_set, memo_add, "
     "undo_last_action_group, redo_last_action_group, no_action."
@@ -846,8 +846,8 @@ def _call_gemini_for_action(
         f"timezone: {timezone_name}",
         f"locale: {locale}",
         "Important: transcript below is already ASR output. Do NOT claim transcript is missing.",
-        "Return one function call only.",
-        "Prefer function `plan_actions` for multi-intent or context-reference utterances.",
+        "Return function calls only (no plain text).",
+        "For multi-intent utterances, return 2-4 function calls in order.",
     ]
     context_lines.append(f"transcript: {transcript}")
     if board_context:
@@ -866,9 +866,11 @@ def _call_gemini_for_action(
         ),
     )
 
-    action = _extract_first_function_call(response)
-    if action:
-        return action
+    actions = _extract_function_call_actions(response)
+    if actions:
+        if len(actions) == 1:
+            return actions[0]
+        return {"actions": actions[:_MAX_PLAN_ACTIONS]}
 
     # Fallback path: if model returned text JSON instead of a function call.
     text = str(getattr(response, "text", "") or "").strip()
@@ -907,8 +909,8 @@ def _call_gemini_for_action_from_audio(
             f"locale: {locale}",
             _board_context_line(board_context),
             "Transcribe and interpret this audio.",
-            "Return one function call only.",
-            "Prefer function `plan_actions` for multi-intent or context-reference utterances.",
+            "Return function calls only (no plain text).",
+            "For multi-intent utterances, return 2-4 function calls in order.",
             "If not actionable, call no_action.",
         ]
     )
@@ -924,9 +926,11 @@ def _call_gemini_for_action_from_audio(
             ),
         ),
     )
-    action = _extract_first_function_call(response)
-    if action:
-        return action
+    actions = _extract_function_call_actions(response)
+    if actions:
+        if len(actions) == 1:
+            return actions[0]
+        return {"actions": actions[:_MAX_PLAN_ACTIONS]}
     return _no_action("no_function_call")
 
 
@@ -976,11 +980,12 @@ def _wait_for_file_ready(client: Any, uploaded_file: Any, timeout_s: float = 8.0
     return last_file
 
 
-def _extract_first_function_call(response: Any) -> dict[str, Any] | None:
+def _extract_function_call_actions(response: Any) -> list[dict[str, Any]]:
     cands = list(getattr(response, "candidates", None) or [])
     for cand in cands:
         content = getattr(cand, "content", None)
         parts = list(getattr(content, "parts", None) or [])
+        out: list[dict[str, Any]] = []
         for part in parts:
             fn = getattr(part, "function_call", None)
             if not fn:
@@ -992,55 +997,16 @@ def _extract_first_function_call(response: Any) -> dict[str, Any] | None:
             else:
                 args = {}
             if name:
-                return {"tool": name, "args": args}
-    return None
+                out.append({"tool": name, "args": args})
+        if out:
+            return out[:_MAX_PLAN_ACTIONS]
+    return []
 
 
 def _tool_declarations() -> list[dict[str, Any]]:
     return [
         {
             "functionDeclarations": [
-                {
-                    "name": "plan_actions",
-                    "description": "Build an ordered execution plan with 1-4 actions. Use this for multi-intent and context-aware commands.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "actions": {
-                                "type": "ARRAY",
-                                "minItems": 1,
-                                "maxItems": _MAX_PLAN_ACTIONS,
-                                "items": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "tool": {
-                                            "type": "STRING",
-                                            "enum": [
-                                                "inventory_log_event",
-                                                "inventory_set_expiry",
-                                                "inventory_clear_all",
-                                                "shopping_add_item",
-                                                "shopping_remove_item",
-                                                "shopping_clear_all",
-                                                "timer_set",
-                                                "memo_add",
-                                                "undo_last_action_group",
-                                                "redo_last_action_group",
-                                                "no_action",
-                                            ],
-                                        },
-                                        "args": {"type": "OBJECT"},
-                                    },
-                                    "required": ["tool", "args"],
-                                },
-                            },
-                            "needs_clarification": {"type": "BOOLEAN"},
-                            "clarification": {"type": "STRING"},
-                            "response_copy": {"type": "STRING"},
-                        },
-                        "required": ["actions"],
-                    },
-                },
                 {
                     "name": "inventory_log_event",
                     "description": "Log an inventory event from voice",
