@@ -91,6 +91,5 @@ class RefreshPolicyTests(unittest.TestCase):
         _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("menu.focus_move", reasons)
 
-
 if __name__ == "__main__":
     unittest.main()

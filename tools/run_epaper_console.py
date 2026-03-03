@@ -394,6 +394,23 @@ def _mode_gap_with_theme(mode: str, theme: dict) -> int:
     return max(0, value)
 
 
+def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
+    if bool(theme.get("refresh_partial_enable_all", False)):
+        return True
+
+    default_screens = "settings,timer"
+    raw = theme.get("refresh_partial_screens", default_screens)
+    if isinstance(raw, str):
+        names = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, (list, tuple)):
+        names = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
+
+    screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
+    return screen_name in set(names)
+
+
 def _partial_buffer_from_frame(frame: Image.Image, rect: tuple[int, int, int, int]) -> bytearray:
     x0, y0, x1, y1 = rect
     crop = frame.crop((x0, y0, x1, y1)).convert("1")
@@ -1101,6 +1118,7 @@ def main() -> int:
                                 if merged_pending is not None
                                 else None
                             )
+                            partial_enabled = _screen_partial_enabled_with_theme(pending_snapshot.screen, theme)
                             mode_limit = _screen_area_limit_with_theme(
                                 pending_snapshot.screen,
                                 pending_snapshot.partial_refresh_mode,
@@ -1113,6 +1131,7 @@ def main() -> int:
                             )
                             if (
                                 supports_partial
+                                and partial_enabled
                                 and aligned is not None
                                 and area_ratio <= mode_limit
                             ):
@@ -1131,7 +1150,9 @@ def main() -> int:
                                 refresh_runtime.mark_fast_full(now)
                                 if refresh_debug:
                                     why = "partial_unsupported"
-                                    if aligned is None:
+                                    if not partial_enabled:
+                                        why = "partial_disabled_for_screen"
+                                    elif aligned is None:
                                         why = "no_aligned_rect"
                                     elif area_ratio > mode_limit:
                                         why = "area_over_limit"
