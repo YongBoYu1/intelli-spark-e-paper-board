@@ -424,6 +424,20 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     return screen_name in set(names)
 
 
+def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
+    if screen != Screen.HOME or not reasons:
+        return False
+    allowed = {
+        "home.focus_move_row",
+        "home.focus_to_left_panel",
+        "home.focus_from_left_panel",
+        "home.focus_left_panel_only",
+        "diff_fallback",
+    }
+    has_focus_reason = any(r.startswith("home.focus_") for r in reasons)
+    return has_focus_reason and all(r in allowed for r in reasons)
+
+
 def _partial_buffer_from_frame(frame: Image.Image, rect: tuple[int, int, int, int]) -> bytearray:
     x0, y0, x1, y1 = rect
     crop = frame.crop((x0, y0, x1, y1)).convert("1")
@@ -1075,6 +1089,9 @@ def main() -> int:
                     else:
                         dirty_rects = [diff_box]
                         dirty_reasons = ["diff_only"]
+                    if _should_collapse_to_latest(curr_snapshot.screen, dirty_reasons):
+                        # Drop intermediate focus-transition frames; keep only latest target state.
+                        refresh_runtime.clear_pending()
                     refresh_runtime.enqueue(dirty_rects)
                     pending_frame = frame
                     pending_sig = sig

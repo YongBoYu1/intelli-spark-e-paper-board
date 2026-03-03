@@ -189,7 +189,7 @@ def _handle_settings_click(state: AppState, now: float) -> None:
         return
 
     if item == SettingsItem.FULL_REFRESH:
-        state.ui.full_refresh_every = int(_cycle_value(int(state.ui.full_refresh_every or 15), [10, 15, 20]))
+        state.ui.full_refresh_every = int(_cycle_value(int(state.ui.full_refresh_every or 30), [10, 20, 30]))
         return
 
     if item == SettingsItem.CONNECTIVITY:

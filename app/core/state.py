@@ -146,7 +146,7 @@ class UiState:
     settings_focused_index: int = 0
     font_size: str = "medium"  # small | medium | large
     partial_refresh_mode: str = "balanced"  # slow | balanced | fast
-    full_refresh_every: int = 15  # trigger a full refresh after N partial refreshes
+    full_refresh_every: int = 30  # trigger a full refresh after N partial refreshes
     wifi_enabled: bool = True
     bluetooth_enabled: bool = False
     auto_sync_enabled: bool = True
