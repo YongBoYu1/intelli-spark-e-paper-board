@@ -431,6 +431,15 @@ def _home_family_area_limit_with_theme(theme: dict) -> float:
     return max(0.05, min(0.98, value))
 
 
+def _home_menu_overlay_area_limit_with_theme(theme: dict) -> float:
+    raw = theme.get("refresh_area_limit_home_menu_overlay", 0.60)
+    try:
+        value = float(raw)
+    except Exception:
+        value = 0.60
+    return max(0.05, min(0.98, value))
+
+
 def _fast_full_enabled(theme: dict) -> bool:
     return bool(theme.get("refresh_enable_fast_full", False))
 
@@ -1354,6 +1363,10 @@ def main() -> int:
                             )
                             if pending_snapshot.screen == Screen.HOME and "home.family_board_update" in pending_reasons:
                                 mode_limit = max(mode_limit, _home_family_area_limit_with_theme(theme))
+                            if pending_snapshot.screen == Screen.HOME and any(
+                                r in ("home.menu_overlay_focus", "home.menu_overlay_toggle") for r in pending_reasons
+                            ):
+                                mode_limit = max(mode_limit, _home_menu_overlay_area_limit_with_theme(theme))
                             area_ratio = (
                                 rect_area_ratio(aligned, epd.width, epd.height)
                                 if aligned is not None

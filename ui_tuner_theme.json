@@ -78,6 +78,7 @@
   "refresh_partial_budget_enabled": false,
   "refresh_area_limit_home": 0.24,
   "refresh_area_limit_home_family_board": 0.30,
+  "refresh_area_limit_home_menu_overlay": 0.60,
   "refresh_enable_fast_full": false,
   "memo_rotate_s": 8
 }
