@@ -956,18 +956,23 @@ def main() -> int:
                     prev_is_down = bool((prev_key == GPIO.LOW) if active_low else (prev_key == GPIO.HIGH))
                     curr_is_down = bool((curr_key == GPIO.LOW) if active_low else (curr_key == GPIO.HIGH))
 
-                    if curr_is_down != prev_is_down and (now - key_last_edge_at) >= encoder_key_debounce_s:
-                        key_last_edge_at = now
+                    if curr_is_down != prev_is_down:
                         if curr_is_down:
-                            key_is_down = True
-                            key_down_at = now
-                            key_long_sent = False
+                            # Debounce only on press edge so short click release is not swallowed.
+                            if (now - key_last_edge_at) >= encoder_key_debounce_s:
+                                key_last_edge_at = now
+                                key_is_down = True
+                                key_down_at = now
+                                key_long_sent = False
                         else:
-                            if key_is_down and not key_long_sent:
-                                ev = Click()
+                            if key_is_down:
+                                press_dur = max(0.0, now - key_down_at)
+                                if (not key_long_sent) and press_dur < encoder_key_long_press_s:
+                                    ev = Click()
                             key_is_down = False
                             key_down_at = 0.0
                             key_long_sent = False
+                            key_last_edge_at = now
                     prev_key = curr_key
                 except Exception:
                     pass
