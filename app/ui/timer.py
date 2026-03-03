@@ -77,18 +77,7 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     icon_size = max(38, int(round(title_h * 0.84)))
     icon_x = 24
     icon_y = max(4, title_mid_y - (icon_size // 2) - 2)
-    focus = int(state.ui.timer_focused_index or 0) % 5
-    home_focused = (focus == 0)
     _draw_home_icon(image, icon_x, icon_y, icon_size, ink)
-    if home_focused:
-        pad = 2
-        draw.rectangle(
-            (icon_x - pad, icon_y - pad, icon_x + icon_size + pad, icon_y + icon_size + pad),
-            outline=ink,
-            width=2,
-            fill=None,
-        )
-        draw.text((icon_x - 15, icon_y + max(2, icon_size // 4)), ">", font=status_font, fill=ink)
 
     title_x = icon_x + icon_size + 14
     draw.text((title_x, title_y), title_text, font=title_font, fill=ink)
@@ -125,6 +114,7 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
         "RESET",
     ]
 
+    focus = int(state.ui.timer_focused_index or 0) % len(controls)
     btn_gap = 12
     btn_h = 60
     btn_w = max(100, (w - 48 - (btn_gap * (len(controls) - 1))) // len(controls))
@@ -173,7 +163,7 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     for idx, label in enumerate(controls):
         x0 = 24 + idx * (btn_w + btn_gap)
         x1 = x0 + btn_w
-        is_focus = (idx + 1) == focus
+        is_focus = idx == focus
         fill = ink if is_focus else bg
         text_fill = bg if is_focus else ink
         draw.rounded_rectangle((x0, row_y, x1, row_y + btn_h), radius=radius, outline=ink, width=border_w, fill=fill)

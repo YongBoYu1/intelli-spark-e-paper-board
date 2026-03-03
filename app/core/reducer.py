@@ -245,7 +245,7 @@ def _timer_max_s(theme: dict) -> int:
 
 
 def _clamp_timer_focus(state: AppState) -> None:
-    n = 5  # [HOME_ICON, DECREASE, INCREASE, START_PAUSE, RESET]
+    n = 4  # [DECREASE, INCREASE, START_PAUSE, RESET]
     state.ui.timer_focused_index = int(state.ui.timer_focused_index or 0) % n
 
 
@@ -267,22 +267,16 @@ def _handle_timer_click(state: AppState, now: float, *, theme: dict) -> None:
     state.ui.widget_mode = WidgetMode.TIMER
 
     if focus == 0:
-        state.ui.screen = Screen.HOME
-        state.ui.focused_index = 0
-        state.ui.timer_last_tick_at = now
-        return
-
-    if focus == 1:
         _adjust_timer_seconds(state, -step_s, max_s=max_s)
         state.ui.timer_last_tick_at = now
         return
 
-    if focus == 2:
+    if focus == 1:
         _adjust_timer_seconds(state, +step_s, max_s=max_s)
         state.ui.timer_last_tick_at = now
         return
 
-    if focus == 3:
+    if focus == 2:
         secs = int(state.ui.timer_seconds or 0)
         if bool(state.ui.timer_running):
             state.ui.timer_running = False
@@ -293,7 +287,7 @@ def _handle_timer_click(state: AppState, now: float, *, theme: dict) -> None:
         state.ui.timer_last_tick_at = now
         return
 
-    # focus == 4 => reset
+    # focus == 3 => reset
     state.ui.timer_seconds = 0
     state.ui.timer_running = False
     state.ui.timer_last_tick_at = now
@@ -435,7 +429,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                     state.ui.timer_seconds = _timer_default_s(theme)
                 state.ui.timer_running = False
                 state.ui.timer_last_tick_at = now
-                state.ui.timer_focused_index = 3
+                state.ui.timer_focused_index = 2
                 state.ui.screen = Screen.TIMER
             elif picked == MenuItemId.LIST:
                 state.ui.screen = Screen.HOME
@@ -498,11 +492,6 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                         _toggle_task_completed_by_index(state, task_idx)
         elif state.ui.screen == Screen.TIMER:
             _handle_timer_click(state, now, theme=theme)
-            if state.ui.screen == Screen.HOME:
-                if variant == "kitchen":
-                    _clamp_focus_kitchen(state, theme)
-                else:
-                    _clamp_focus_home(state, items_per_page)
         elif state.ui.screen == Screen.SETTINGS:
             _handle_settings_click(state, now)
         else:

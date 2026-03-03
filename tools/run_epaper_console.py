@@ -389,10 +389,11 @@ def _align_partial_rect(rect: tuple[int, int, int, int], width: int, height: int
 def _partial_buffer_from_frame(frame: Image.Image, rect: tuple[int, int, int, int]) -> bytearray:
     x0, y0, x1, y1 = rect
     crop = frame.crop((x0, y0, x1, y1)).convert("1")
-    # IMPORTANT: epd7in5_V2.display_Partial() internally applies bitwise NOT
-    # before sending data. So here we must provide raw mode "1" bytes directly
-    # (do not pre-invert like getbuffer()).
-    return bytearray(crop.tobytes("raw"))
+    buf = bytearray(crop.tobytes("raw"))
+    # Keep polarity aligned with waveshare getbuffer(): PIL 0=black/1=white.
+    for i in range(len(buf)):
+        buf[i] ^= 0xFF
+    return buf
 
 
 def _blit_partial(epd, frame: Image.Image, rect: tuple[int, int, int, int], current_mode: str) -> str:
@@ -746,7 +747,6 @@ def main() -> int:
     last_render_font_size = str(state.ui.font_size or "medium")
     settings_partial_count = 0
     timer_partial_count = 0
-    home_full_recovery_pending = False
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -964,10 +964,6 @@ def main() -> int:
                         driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
                         settings_partial_count = 0
                         timer_partial_count = 0
-                        home_full_recovery_pending = (
-                            curr_screen == Screen.HOME
-                            and last_render_screen in (Screen.SETTINGS, Screen.TIMER)
-                        )
                         committed = True
                     if curr_screen == Screen.SETTINGS and font_size_changed and not committed:
                         # Font size changes reflow most rows; prefer stable full refresh.
@@ -1024,12 +1020,7 @@ def main() -> int:
                                     timer_partial_count = 0
                                 committed = True
                     if not committed:
-                        # After returning from partial-refresh pages, one additional
-                        # clean full refresh on HOME improves stability on 7.5" V2.
-                        force_clean_home = home_full_recovery_pending and curr_screen == Screen.HOME
-                        driver_mode = _blit_full(epd, frame, driver_mode, fast=(not force_clean_home))
-                        if force_clean_home:
-                            home_full_recovery_pending = False
+                        driver_mode = _blit_full(epd, frame, driver_mode, fast=True)
                         settings_partial_count = 0
                         timer_partial_count = 0
                         committed = True
