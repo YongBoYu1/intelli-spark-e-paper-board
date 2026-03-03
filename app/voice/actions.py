@@ -388,7 +388,8 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
     if action.tool == "no_action":
         _clear_pending_voice_confirmation(state)
         reason = str(action.args.get("reason") or "no_action")
-        return VoiceApplyResult(changed=False, status="done", message=f"No action: {reason}")
+        status, message = _format_no_action_feedback(reason)
+        return VoiceApplyResult(changed=False, status=status, message=message)
 
     if action.tool == "undo_last_action_group":
         _clear_pending_voice_confirmation(state)
@@ -623,6 +624,32 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
     return VoiceApplyResult(changed=False, status="error", message="Unsupported voice action")
 
 
+def _format_no_action_feedback(reason: str) -> tuple[str, str]:
+    txt = str(reason or "no_action").strip()
+    key = txt.lower()
+    if key.startswith("gemini_error:"):
+        return "error", "Voice service is unavailable. Check network and try again."
+    if key in {"missing_google_api_key"}:
+        return "error", "Voice AI is not configured yet."
+    if key in {"missing_audio_or_transcript"}:
+        return "done", "I did not catch that. Hold to talk and try again."
+    if key in {"insufficient_context", "ambiguous_reference"}:
+        return "done", "I need more context. Say the full command."
+    if key in {"missing_item_name"}:
+        return "done", "Please include the item name."
+    if key in {"missing_expiry_date"}:
+        return "done", "Please include the expiry date."
+    if key in {"invalid_duration_seconds"}:
+        return "done", "Please include a timer duration, like 10 minutes."
+    if key in {"no_function_call", "schema_validation_failed", "invalid_response_shape"}:
+        return "done", "I could not interpret that. Please rephrase."
+    if key in {"invalid_payload", "invalid_plan", "missing_action", "unsupported_tool"}:
+        return "error", "Voice parser error. Please try again."
+    if key in {"no_action", "insufficient_intent"}:
+        return "done", "No actionable command heard."
+    return "done", f"No action: {txt}"
+
+
 def _capture_undo_snapshot(state: AppState) -> dict[str, Any]:
     reminders = [replace(r) for r in list(getattr(state.model, "reminders", []) or [])]
     memos = [replace(m) for m in list(getattr(state.model, "memos", []) or [])]
@@ -749,7 +776,7 @@ def _push_undo_history_from_confirm(
 def _undo_last_action_group(state: AppState) -> VoiceApplyResult:
     done_groups = list(getattr(state.ui, "voice_done_action_groups", []) or [])
     if not done_groups:
-        return VoiceApplyResult(changed=False, status="done", message="Nothing to undo")
+        return VoiceApplyResult(changed=False, status="done", message="Nothing to undo yet. Say a command first.")
 
     entry = dict(done_groups.pop(0) or {})
     before_snapshot = entry.get("before_snapshot")
@@ -766,7 +793,7 @@ def _undo_last_action_group(state: AppState) -> VoiceApplyResult:
 def _redo_last_action_group(state: AppState) -> VoiceApplyResult:
     redo_groups = list(getattr(state.ui, "voice_redo_action_groups", []) or [])
     if not redo_groups:
-        return VoiceApplyResult(changed=False, status="done", message="Nothing to redo")
+        return VoiceApplyResult(changed=False, status="done", message="Nothing to redo. Say the command again.")
 
     entry = dict(redo_groups.pop(0) or {})
     after_snapshot = entry.get("after_snapshot")
@@ -822,6 +849,14 @@ def _compose_voice_plan_message(
                 if msg:
                     base = msg
                     break
+            if not base:
+                for step in reversed(step_results):
+                    if str(step.action.tool or "").strip() != "no_action":
+                        continue
+                    msg = str(step.result.message or "").strip()
+                    if msg:
+                        base = msg
+                        break
             if not base:
                 base = "Skipped: no actionable command"
         elif step_results:
