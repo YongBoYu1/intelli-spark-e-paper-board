@@ -471,6 +471,77 @@ def _blit_partial(epd, frame: Image.Image, rect: tuple[int, int, int, int], curr
     return current_mode
 
 
+def _voice_overlay_rect_for_partial(width: int, height: int, theme: dict, *, rotation_deg: int = 0) -> tuple[int, int, int, int]:
+    w = max(1, int(width))
+    h = max(1, int(height))
+    margin = int(theme.get("voice_zone_margin", 14) or 14)
+    zone_w = int(theme.get("voice_zone_width", min(380, max(300, int(w * 0.46)))) or 340)
+    zone_w = max(220, min(zone_w, max(220, w - margin * 2)))
+    lane_h = int(theme.get("voice_zone_lane_h", 29) or 29)
+
+    x0 = margin
+    y1 = h - margin
+    y0 = max(margin, y1 - lane_h)
+    x1 = x0 + zone_w
+    rect = (x0, y0 - 1, x1, y1 + 1)
+
+    if int(rotation_deg or 0) == 180:
+        rx0, ry0, rx1, ry1 = rect
+        rect = (w - rx1, h - ry1, w - rx0, h - ry0)
+    return rect
+
+
+def _render_voice_overlay_step(
+    *,
+    epd,
+    state: AppState,
+    fonts: FontBook,
+    theme: dict,
+    panel_threshold: int,
+    panel_muted: int,
+    panel_gamma: float,
+    panel_dither: bool,
+    current_mode: str,
+    supports_partial: bool,
+    refresh_debug: bool,
+) -> tuple[str, bool]:
+    frame = _render_frame(
+        epd,
+        state,
+        fonts,
+        theme,
+        panel_threshold=panel_threshold,
+        panel_muted=panel_muted,
+        panel_gamma=panel_gamma,
+        panel_dither=panel_dither,
+    )
+
+    voice_partial_enabled = bool(theme.get("refresh_voice_partial", True))
+    if supports_partial and voice_partial_enabled:
+        rect = _voice_overlay_rect_for_partial(
+            epd.width,
+            epd.height,
+            theme,
+            rotation_deg=int(state.ui.rotation_deg or 0),
+        )
+        aligned = align_rect_for_partial(rect, epd.width, epd.height, pad=2)
+        if aligned is not None:
+            try:
+                next_mode = _blit_partial(epd, frame, aligned, current_mode)
+                if refresh_debug:
+                    x0, y0, x1, y1 = aligned
+                    print(f"[refresh] VOICE_PARTIAL_RECT rect=({x0},{y0},{x1},{y1})")
+                return next_mode, False
+            except Exception as e:
+                if refresh_debug:
+                    print(f"[refresh] VOICE_PARTIAL_FAIL reason={e}")
+
+    next_mode = _blit_full(epd, frame, current_mode, fast=_fast_full_enabled(theme))
+    if refresh_debug:
+        print("[refresh] VOICE_FULL_FALLBACK")
+    return next_mode, True
+
+
 def _render_to_epd(
     epd,
     state: AppState,
@@ -576,24 +647,32 @@ def _run_voice_flow(
     voice_audio_device: str,
     voice_audio_rate: int,
     voice_audio_channels: int,
-) -> None:
+    current_mode: str,
+    supports_partial: bool,
+    refresh_debug: bool,
+) -> tuple[str, bool]:
     state.ui.idle = False
     state.ui.last_interaction_at = time.time()
+    last_step_full = False
+    driver_mode = current_mode
 
     fd, audio_path = tempfile.mkstemp(prefix="voice_", suffix=".wav", dir="/tmp")
     os.close(fd)
 
     try:
         _set_voice_overlay(state, "recording", f"Speak within {max(1, int(voice_max_sec))}s")
-        _render_to_epd(
-            epd,
-            state,
-            fonts,
-            theme,
+        driver_mode, last_step_full = _render_voice_overlay_step(
+            epd=epd,
+            state=state,
+            fonts=fonts,
+            theme=theme,
             panel_threshold=panel_threshold,
             panel_muted=panel_muted,
             panel_gamma=panel_gamma,
             panel_dither=panel_dither,
+            current_mode=driver_mode,
+            supports_partial=supports_partial,
+            refresh_debug=refresh_debug,
         )
 
         audio = _record_audio_fixed(
@@ -605,28 +684,34 @@ def _run_voice_flow(
         )
         if not audio:
             _set_voice_overlay(state, "error", "Recording failed", hold_s=2.0)
-            _render_to_epd(
-                epd,
-                state,
-                fonts,
-                theme,
+            driver_mode, last_step_full = _render_voice_overlay_step(
+                epd=epd,
+                state=state,
+                fonts=fonts,
+                theme=theme,
                 panel_threshold=panel_threshold,
                 panel_muted=panel_muted,
                 panel_gamma=panel_gamma,
                 panel_dither=panel_dither,
+                current_mode=driver_mode,
+                supports_partial=supports_partial,
+                refresh_debug=refresh_debug,
             )
-            return
+            return driver_mode, last_step_full
 
         _set_voice_overlay(state, "processing", "Interpreting command")
-        _render_to_epd(
-            epd,
-            state,
-            fonts,
-            theme,
+        driver_mode, last_step_full = _render_voice_overlay_step(
+            epd=epd,
+            state=state,
+            fonts=fonts,
+            theme=theme,
             panel_threshold=panel_threshold,
             panel_muted=panel_muted,
             panel_gamma=panel_gamma,
             panel_dither=panel_dither,
+            current_mode=driver_mode,
+            supports_partial=supports_partial,
+            refresh_debug=refresh_debug,
         )
 
         meta = build_request_meta(locale=voice_locale, tz_name=voice_timezone)
@@ -656,45 +741,55 @@ def _run_voice_flow(
             remaining_confirm_s = max(0.0, float(state.ui.voice_confirm_due_at or 0.0) - time.time())
             hold_s = max(hold_s, remaining_confirm_s + 0.2)
         _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
-        _render_to_epd(
-            epd,
-            state,
-            fonts,
-            theme,
+        driver_mode, last_step_full = _render_voice_overlay_step(
+            epd=epd,
+            state=state,
+            fonts=fonts,
+            theme=theme,
             panel_threshold=panel_threshold,
             panel_muted=panel_muted,
             panel_gamma=panel_gamma,
             panel_dither=panel_dither,
+            current_mode=driver_mode,
+            supports_partial=supports_partial,
+            refresh_debug=refresh_debug,
         )
     except VoiceClientError as e:
         _set_voice_overlay(state, "error", str(e), hold_s=2.5)
-        _render_to_epd(
-            epd,
-            state,
-            fonts,
-            theme,
+        driver_mode, last_step_full = _render_voice_overlay_step(
+            epd=epd,
+            state=state,
+            fonts=fonts,
+            theme=theme,
             panel_threshold=panel_threshold,
             panel_muted=panel_muted,
             panel_gamma=panel_gamma,
             panel_dither=panel_dither,
+            current_mode=driver_mode,
+            supports_partial=supports_partial,
+            refresh_debug=refresh_debug,
         )
     except Exception as e:
         _set_voice_overlay(state, "error", f"Voice failed: {e}", hold_s=2.5)
-        _render_to_epd(
-            epd,
-            state,
-            fonts,
-            theme,
+        driver_mode, last_step_full = _render_voice_overlay_step(
+            epd=epd,
+            state=state,
+            fonts=fonts,
+            theme=theme,
             panel_threshold=panel_threshold,
             panel_muted=panel_muted,
             panel_gamma=panel_gamma,
             panel_dither=panel_dither,
+            current_mode=driver_mode,
+            supports_partial=supports_partial,
+            refresh_debug=refresh_debug,
         )
     finally:
         try:
             os.remove(audio_path)
         except Exception:
             pass
+    return driver_mode, last_step_full
 
 
 def main() -> int:
@@ -1031,7 +1126,7 @@ def main() -> int:
                     ev = Click()
             elif key == " ":
                 # Voice record + send flow on keyboard space.
-                _run_voice_flow(
+                driver_mode, voice_flow_ran = _run_voice_flow(
                     state=state,
                     epd=epd,
                     fonts=fonts,
@@ -1048,8 +1143,10 @@ def main() -> int:
                     voice_audio_device=str(args.voice_audio_device or "default"),
                     voice_audio_rate=max(8000, int(args.voice_audio_rate)),
                     voice_audio_channels=max(1, int(args.voice_audio_channels)),
+                    current_mode=driver_mode,
+                    supports_partial=bool(supports_partial),
+                    refresh_debug=bool(refresh_debug),
                 )
-                voice_flow_ran = True
                 ev = None
             elif key in ("p", "P"):
                 # Keep a manual way to trigger legacy long-press behavior in console.
