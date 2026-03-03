@@ -76,5 +76,5 @@
   "refresh_partial_screens": "settings,timer,home",
   "refresh_area_limit_home": 0.24,
   "refresh_enable_fast_full": false,
-  "memo_rotate_s": 3600
+  "memo_rotate_s": 8
 }
