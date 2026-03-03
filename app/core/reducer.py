@@ -528,6 +528,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         state.ui.voice_confirm_tool = ""
         state.ui.voice_confirm_payload_json = ""
         state.ui.voice_confirm_due_at = 0.0
+        state.ui.voice_confirm_before_snapshot = {}
 
         if state.ui.voice_active:
             state.ui.voice_active = False

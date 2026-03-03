@@ -7,9 +7,12 @@ from app.core.state import AppState, DashboardModel, Reminder, WidgetMode
 from app.core.reducer import Back, reduce
 from app.voice.actions import (
     VoiceAction,
+    VoicePlan,
     apply_voice_action,
+    apply_voice_plan,
     build_request_meta,
     confirm_pending_voice_action,
+    parse_voice_plan,
     parse_voice_action,
 )
 
@@ -80,6 +83,30 @@ class VoiceActionTests(unittest.TestCase):
         memo = parse_voice_action({"tool": "memo_add", "args": {"text": "晚点回家"}})
         self.assertEqual(timer.tool, "timer_set")
         self.assertEqual(memo.tool, "memo_add")
+
+    def test_parse_undo_redo_actions(self) -> None:
+        undo = parse_voice_action({"tool": "undo_last_action_group", "args": {"unexpected": True}})
+        redo = parse_voice_action({"tool": "redo_last_action_group", "args": {"count": 3}})
+        self.assertEqual(undo.tool, "undo_last_action_group")
+        self.assertEqual(redo.tool, "redo_last_action_group")
+        self.assertEqual(undo.args, {})
+        self.assertEqual(redo.args, {})
+
+    def test_parse_voice_plan_multi_actions(self) -> None:
+        payload = {
+            "plan": {
+                "actions": [
+                    {"tool": "shopping_add_item", "args": {"item_name": "milk"}},
+                    {"tool": "shopping_add_item", "args": {"item_name": "cookies"}},
+                ],
+                "response_copy": "Done.",
+            }
+        }
+        plan = parse_voice_plan(payload)
+        self.assertEqual(len(plan.actions), 2)
+        self.assertEqual(plan.actions[0].tool, "shopping_add_item")
+        self.assertEqual(plan.actions[1].args["item_name"], "cookies")
+        self.assertEqual(plan.response_copy, "Done.")
 
     def test_apply_inventory_used_removes_existing_item(self) -> None:
         before_fridge = len([r for r in self.state.model.reminders if r.category == "fridge"])
@@ -309,6 +336,139 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(result.status, "done")
         self.assertGreater(len(self.state.model.reminders), 0)
 
+    def test_apply_voice_plan_partial_success(self) -> None:
+        plan = VoicePlan(
+            actions=[
+                VoiceAction(tool="shopping_add_item", args={"item_name": "bread"}),
+                VoiceAction(tool="timer_set", args={"duration_seconds": -1}),
+                VoiceAction(tool="memo_add", args={"text": "晚点回家"}),
+            ]
+        )
+        result = apply_voice_plan(self.state, plan, transcript="add bread and set bad timer and memo")
+        self.assertEqual(result.status, "done")
+        self.assertEqual(result.success_count, 2)
+        self.assertEqual(result.failed_count, 1)
+        titles = [r.title.lower() for r in self.state.model.reminders if r.category != "fridge"]
+        self.assertIn("bread", titles)
+        self.assertTrue(any("晚点回家" == m.text for m in self.state.model.memos))
+
+    def test_apply_voice_plan_records_recent_action_groups(self) -> None:
+        plan = parse_voice_plan(
+            {
+                "plan": {
+                    "actions": [
+                        {"tool": "shopping_add_item", "args": {"item_name": "bread"}},
+                        {"tool": "memo_add", "args": {"text": "call mom"}},
+                    ]
+                }
+            }
+        )
+        result = apply_voice_plan(self.state, plan, transcript="add bread and leave memo")
+        self.assertEqual(result.status, "done")
+        groups = list(self.state.ui.voice_recent_action_groups or [])
+        self.assertGreaterEqual(len(groups), 1)
+        top = dict(groups[0] or {})
+        self.assertIn("actions", top)
+        self.assertEqual(str(top.get("transcript") or ""), "add bread and leave memo")
+
+    def test_no_action_does_not_use_action_like_response_copy(self) -> None:
+        plan = parse_voice_plan(
+            {
+                "plan": {
+                    "actions": [
+                        {"tool": "no_action", "args": {"reason": "missing_item_name"}},
+                    ],
+                    "response_copy": "OK. Milk has been removed from the shopping list.",
+                    "needs_clarification": True,
+                    "clarification": "Which milk?",
+                }
+            }
+        )
+        result = apply_voice_plan(self.state, plan, transcript="They have bought milk already.")
+        self.assertFalse(result.changed)
+        self.assertEqual(result.status, "done")
+        self.assertNotIn("removed from the shopping list", result.message.lower())
+        self.assertIn("which milk", result.message.lower())
+
+    def test_skipped_non_no_action_uses_step_message_instead_of_generic_copy(self) -> None:
+        plan = parse_voice_plan(
+            {
+                "plan": {
+                    "actions": [
+                        {"tool": "shopping_add_item", "args": {"item_name": "eggs"}},
+                    ],
+                }
+            }
+        )
+        result = apply_voice_plan(self.state, plan, transcript="add eggs again")
+        self.assertFalse(result.changed)
+        self.assertIn("already in shopping", result.message.lower())
+        self.assertNotIn("no actionable command", result.message.lower())
+
+    def test_undo_and_redo_last_action_group(self) -> None:
+        plan = parse_voice_plan(
+            {
+                "plan": {
+                    "actions": [
+                        {"tool": "shopping_add_item", "args": {"item_name": "bread"}},
+                        {"tool": "memo_add", "args": {"text": "check oven"}},
+                    ]
+                }
+            }
+        )
+        apply_voice_plan(self.state, plan, transcript="add bread and memo")
+        self.assertEqual(len(self.state.ui.voice_done_action_groups), 1)
+        self.assertEqual(len(self.state.ui.voice_redo_action_groups), 0)
+        self.assertIn("bread", [r.title.lower() for r in self.state.model.reminders if r.category != "fridge"])
+        self.assertTrue(any(m.text == "check oven" for m in self.state.model.memos))
+
+        undo_result = apply_voice_action(self.state, VoiceAction(tool="undo_last_action_group", args={}))
+        self.assertTrue(undo_result.changed)
+        self.assertEqual(len(self.state.ui.voice_done_action_groups), 0)
+        self.assertEqual(len(self.state.ui.voice_redo_action_groups), 1)
+        self.assertNotIn("bread", [r.title.lower() for r in self.state.model.reminders if r.category != "fridge"])
+        self.assertFalse(any(m.text == "check oven" for m in self.state.model.memos))
+
+        redo_result = apply_voice_action(self.state, VoiceAction(tool="redo_last_action_group", args={}))
+        self.assertTrue(redo_result.changed)
+        self.assertEqual(len(self.state.ui.voice_done_action_groups), 1)
+        self.assertEqual(len(self.state.ui.voice_redo_action_groups), 0)
+        self.assertIn("bread", [r.title.lower() for r in self.state.model.reminders if r.category != "fridge"])
+        self.assertTrue(any(m.text == "check oven" for m in self.state.model.memos))
+
+    def test_redo_stack_cleared_after_new_committed_action(self) -> None:
+        apply_voice_plan(
+            self.state,
+            parse_voice_plan({"plan": {"actions": [{"tool": "shopping_add_item", "args": {"item_name": "bread"}}]}}),
+            transcript="add bread",
+        )
+        apply_voice_action(self.state, VoiceAction(tool="undo_last_action_group", args={}))
+        self.assertEqual(len(self.state.ui.voice_redo_action_groups), 1)
+
+        apply_voice_plan(
+            self.state,
+            parse_voice_plan({"plan": {"actions": [{"tool": "shopping_add_item", "args": {"item_name": "yogurt"}}]}}),
+            transcript="add yogurt",
+        )
+        self.assertEqual(len(self.state.ui.voice_redo_action_groups), 0)
+        redo_result = apply_voice_action(self.state, VoiceAction(tool="redo_last_action_group", args={}))
+        self.assertFalse(redo_result.changed)
+        self.assertIn("nothing to redo", redo_result.message.lower())
+
+    def test_confirmed_clear_is_undoable(self) -> None:
+        before_right = len([r for r in self.state.model.reminders if r.category != "fridge"])
+        first = apply_voice_action(self.state, VoiceAction(tool="shopping_clear_all", args={}))
+        self.assertEqual(first.status, "confirm")
+        confirmed = confirm_pending_voice_action(self.state)
+        self.assertIsNotNone(confirmed)
+        self.assertTrue(bool(confirmed and confirmed.changed))
+        self.assertEqual(len([r for r in self.state.model.reminders if r.category != "fridge"]), 0)
+        self.assertEqual(len(self.state.ui.voice_done_action_groups), 1)
+
+        undo_result = apply_voice_action(self.state, VoiceAction(tool="undo_last_action_group", args={}))
+        self.assertTrue(undo_result.changed)
+        self.assertEqual(len([r for r in self.state.model.reminders if r.category != "fridge"]), before_right)
+
     def test_build_request_meta_uses_caller_timezone_for_request_time(self) -> None:
         meta = build_request_meta(locale="en-US", tz_name="Asia/Shanghai")
         self.assertEqual(meta.timezone, "Asia/Shanghai")
@@ -329,6 +489,7 @@ class VoiceActionTests(unittest.TestCase):
         self.state.ui.voice_confirm_tool = "shopping_clear_all"
         self.state.ui.voice_confirm_payload_json = "{}"
         self.state.ui.voice_confirm_due_at = 1771617000.0
+        self.state.ui.voice_confirm_before_snapshot = {"ui": {"timer_seconds": 10}}
 
         reduce(self.state, Back())
 
@@ -338,18 +499,21 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(self.state.ui.voice_confirm_tool, "")
         self.assertEqual(self.state.ui.voice_confirm_payload_json, "")
         self.assertEqual(self.state.ui.voice_confirm_due_at, 0.0)
+        self.assertEqual(self.state.ui.voice_confirm_before_snapshot, {})
 
     def test_reducer_back_cancels_pending_voice_confirmation_even_when_overlay_not_active(self) -> None:
         self.state.ui.voice_active = False
         self.state.ui.voice_confirm_tool = "inventory_clear_all"
         self.state.ui.voice_confirm_payload_json = "{}"
         self.state.ui.voice_confirm_due_at = 1771617000.0
+        self.state.ui.voice_confirm_before_snapshot = {"model": {"reminders": []}}
 
         reduce(self.state, Back())
 
         self.assertEqual(self.state.ui.voice_confirm_tool, "")
         self.assertEqual(self.state.ui.voice_confirm_payload_json, "")
         self.assertEqual(self.state.ui.voice_confirm_due_at, 0.0)
+        self.assertEqual(self.state.ui.voice_confirm_before_snapshot, {})
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import time
-from typing import Optional
+from typing import Any, Optional
 
 
 class Screen(str, Enum):
@@ -133,6 +133,14 @@ class UiState:
     voice_confirm_tool: str = ""
     voice_confirm_payload_json: str = ""
     voice_confirm_due_at: float = 0.0
+    voice_confirm_before_snapshot: dict[str, Any] = field(default_factory=dict)
+    # Recent voice action-group history for context resolution (bounded queue).
+    # Each entry is a JSON-like dict:
+    # {"at": <unix_ts>, "transcript": str, "actions": [{"tool": str, "args": {...}}], "status": str, "message": str}
+    voice_recent_action_groups: list[dict[str, Any]] = field(default_factory=list)
+    # Deterministic undo/redo stacks for voice action-groups.
+    voice_done_action_groups: list[dict[str, Any]] = field(default_factory=list)
+    voice_redo_action_groups: list[dict[str, Any]] = field(default_factory=list)
 
     # Settings page selection + values (V1).
     settings_focused_index: int = 0

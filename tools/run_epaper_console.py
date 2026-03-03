@@ -41,13 +41,14 @@ from app.shared.paths import find_repo_root
 from app.ui.app import render_app
 from app.voice import (
     VoiceClientError,
-    apply_voice_action,
+    apply_voice_plan,
     build_board_context,
     build_request_meta,
     confirm_pending_voice_action,
     describe_voice_action,
     expire_pending_voice_confirmation,
     interpret_audio_via_backend,
+    parse_voice_plan,
     parse_voice_action,
 )
 
@@ -551,22 +552,25 @@ def _run_voice_flow(
             timeout_s=float(voice_timeout_s),
             board_context=build_board_context(state),
         )
-        action = parse_voice_action(payload)
-        result = apply_voice_action(state, action)
         transcript = ""
         if isinstance(payload, dict):
             transcript = str(payload.get("transcript") or "").strip()
+        plan = parse_voice_plan(payload)
+        plan_result = apply_voice_plan(state, plan, transcript=transcript)
+        action_desc = ", ".join([describe_voice_action(a) for a in list(plan.actions or [])[:4]])
+        if not action_desc:
+            action_desc = describe_voice_action(parse_voice_action(payload))
         heard = transcript if transcript else "-"
         shown = (
             f"Heard: {heard}\n"
-            f"Action: {describe_voice_action(action)}\n"
-            f"Result: {result.message}"
+            f"Action: {action_desc}\n"
+            f"Result: {plan_result.message}"
         )
         hold_s = 2.2
-        if str(result.status or "") == "confirm":
+        if str(plan_result.status or "") == "confirm":
             remaining_confirm_s = max(0.0, float(state.ui.voice_confirm_due_at or 0.0) - time.time())
             hold_s = max(hold_s, remaining_confirm_s + 0.2)
-        _set_voice_overlay(state, result.status, shown, hold_s=hold_s)
+        _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
         _render_to_epd(
             epd,
             state,

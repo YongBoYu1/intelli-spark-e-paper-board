@@ -28,13 +28,14 @@ from app.shared.paths import find_repo_root
 from app.ui.app import render_app, _draw_mic_icon, _normalize_mic_style
 from app.voice import (
     VoiceClientError,
-    apply_voice_action,
+    apply_voice_plan,
     build_board_context,
     build_request_meta,
     confirm_pending_voice_action,
     describe_voice_action,
     expire_pending_voice_confirmation,
     interpret_audio_via_backend,
+    parse_voice_plan,
     parse_voice_action,
 )
 
@@ -1159,19 +1160,20 @@ class Simulator(tk.Tk):
             self.after(0, self._voice_done)
 
     def _apply_voice_payload(self, payload: dict) -> None:
-        action = parse_voice_action(payload)
-        before_snap = _debug_snapshot_for_action(self.state, action)
-        result = apply_voice_action(self.state, action)
-        after_snap = _debug_snapshot_for_action(self.state, action)
         transcript = ""
         request_id = ""
         if isinstance(payload, dict):
             transcript = str(payload.get("transcript") or "").strip()
             request_id = str(payload.get("_debug_request_id") or payload.get("request_id") or "").strip()
+        plan = parse_voice_plan(payload)
+        action = plan.actions[0] if list(plan.actions or []) else parse_voice_action(payload)
+        before_snap = _debug_snapshot_for_action(self.state, action)
+        result = apply_voice_plan(self.state, plan, transcript=transcript)
+        after_snap = _debug_snapshot_for_action(self.state, action)
         self.last_heard = transcript
-        self.last_tool = str(action.tool or "")
+        self.last_tool = ",".join([str(a.tool or "") for a in list(plan.actions or [])[:3]]) or str(action.tool or "")
         heard = transcript if transcript else "-"
-        action_desc = describe_voice_action(action)
+        action_desc = ", ".join([describe_voice_action(a) for a in list(plan.actions or [])[:4]]) or describe_voice_action(action)
         shown = (
             f"Heard: {heard}\n"
             f"Action: {action_desc}\n"
