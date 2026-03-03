@@ -207,5 +207,23 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.10)
 
+    def test_home_menu_overlay_focus_change_uses_compact_rect(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.HOME
+        prev.ui.menu_overlay_active = True
+        prev.ui.menu_focused = MenuItemId.LIST
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.HOME
+        curr.ui.menu_overlay_active = True
+        curr.ui.menu_focused = MenuItemId.SETTINGS
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.menu_overlay_focus", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.20)
+
 if __name__ == "__main__":
     unittest.main()

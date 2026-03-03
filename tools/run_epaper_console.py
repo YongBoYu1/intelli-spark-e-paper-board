@@ -336,6 +336,7 @@ def _state_render_sig(state: AppState):
         state.ui.voice_phase,
         state.ui.voice_message,
         state.ui.menu_focused,
+        state.ui.menu_overlay_active,
         state.ui.active_menu,
         state.ui.settings_focused_index,
         state.ui.font_size,
@@ -434,18 +435,6 @@ def _fast_full_enabled(theme: dict) -> bool:
     return bool(theme.get("refresh_enable_fast_full", False))
 
 
-def _screen_change_fast_full_with_theme(prev_screen: Screen, curr_screen: Screen, theme: dict) -> bool:
-    if _fast_full_enabled(theme):
-        return True
-    # Default: make HOME <-> MENU transitions less flickery even when global fast-full is off.
-    enabled = bool(theme.get("refresh_fast_full_home_menu_transition", True))
-    if not enabled:
-        return False
-    prev_name = str(prev_screen.value if isinstance(prev_screen, Screen) else prev_screen).strip().lower()
-    curr_name = str(curr_screen.value if isinstance(curr_screen, Screen) else curr_screen).strip().lower()
-    return (prev_name == "home" and curr_name == "menu") or (prev_name == "menu" and curr_name == "home")
-
-
 def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     if bool(theme.get("refresh_partial_enable_all", False)):
         return True
@@ -471,9 +460,10 @@ def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
         "home.focus_to_left_panel",
         "home.focus_from_left_panel",
         "home.focus_left_panel_only",
+        "home.menu_overlay_focus",
         "diff_fallback",
     }
-    has_focus_reason = any(r.startswith("home.focus_") for r in reasons)
+    has_focus_reason = any(r.startswith("home.focus_") or r == "home.menu_overlay_focus" for r in reasons)
     return has_focus_reason and all(r in allowed for r in reasons)
 
 
@@ -1306,11 +1296,6 @@ def main() -> int:
 
                 if not refresh_runtime.should_throttle(now, min_gap_ms) or force_flush:
                     fast_full = _fast_full_enabled(theme)
-                    transition_fast_full = _screen_change_fast_full_with_theme(
-                        committed_snapshot.screen,
-                        pending_snapshot.screen,
-                        theme,
-                    )
                     try:
                         if force_full_clean:
                             driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=False)
@@ -1323,15 +1308,14 @@ def main() -> int:
                                     f"dirty={','.join(pending_reasons) or '-'}"
                                 )
                         elif screen_changed or rotation_changed:
-                            fast_mode = bool(fast_full or transition_fast_full)
-                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_mode)
+                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
                             refresh_runtime.mark_fast_full(now)
                             if refresh_debug:
                                 reason = "screen_changed" if screen_changed else "rotation_changed"
                                 print(
                                     f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} "
                                     f"reason={reason} mode={policy_mode} "
-                                    f"fast={'on' if fast_mode else 'off'}"
+                                    f"fast={'on' if fast_full else 'off'}"
                                 )
                         elif pending_snapshot.screen == Screen.SETTINGS and font_size_changed:
                             # Font-size updates often trigger full layout reflow.

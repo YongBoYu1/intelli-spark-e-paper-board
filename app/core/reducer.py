@@ -62,6 +62,16 @@ def _home_variant(theme: dict) -> str:
     return str(theme.get("home_variant") or "kitchen").strip().lower()
 
 
+def _menu_order() -> list[MenuItemId]:
+    return [
+        MenuItemId.MEMO,
+        MenuItemId.LIST,
+        MenuItemId.TIMER,
+        MenuItemId.CALENDAR,
+        MenuItemId.SETTINGS,
+    ]
+
+
 def _kitchen_visible_task_indices(state: AppState, theme: Optional[dict] = None) -> list[int]:
     return kitchen_visible_task_indices(state, theme)
 
@@ -222,6 +232,34 @@ def _toggle_rotation(state: AppState) -> None:
     state.ui.rotation_deg = 180 if int(state.ui.rotation_deg or 0) == 0 else 0
 
 
+def _activate_menu_pick(state: AppState, picked: MenuItemId, now: float, *, theme: dict, items_per_page: int, variant: str) -> None:
+    state.ui.active_menu = picked
+    state.ui.menu_overlay_active = False
+    if picked == MenuItemId.CALENDAR:
+        state.ui.screen = Screen.CALENDAR
+        return
+    if picked == MenuItemId.TIMER:
+        state.ui.widget_mode = WidgetMode.TIMER
+        if int(state.ui.timer_seconds or 0) <= 0:
+            state.ui.timer_seconds = _timer_default_s(theme)
+        state.ui.timer_running = False
+        state.ui.timer_last_tick_at = now
+        state.ui.timer_focused_index = 2
+        state.ui.screen = Screen.TIMER
+        return
+    if picked == MenuItemId.LIST:
+        state.ui.screen = Screen.HOME
+        if variant == "kitchen":
+            _clamp_focus_kitchen(state, theme)
+        else:
+            _clamp_focus_home(state, items_per_page)
+        return
+    if picked == MenuItemId.SETTINGS:
+        state.ui.screen = Screen.SETTINGS
+        return
+    state.ui.screen = Screen.PLACEHOLDER
+
+
 def _timer_default_s(theme: dict) -> int:
     try:
         value = int(theme.get("timer_default_s", 5 * 60) or (5 * 60))
@@ -350,7 +388,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             interval_s = float(theme.get("memo_rotate_s", 6.0) or 6.0)
             # While voice overlay is active, pause memo auto-rotation so it does not
             # merge with voice dirty regions and force a large full refresh.
-            if state.ui.voice_active:
+            if state.ui.voice_active or state.ui.menu_overlay_active:
                 state.ui.memo_last_rotated_at = now
             elif state.ui.focused_index != 0 and not state.ui.idle:
                 if (now - float(state.ui.memo_last_rotated_at or now)) >= interval_s and state.model.memos:
@@ -369,22 +407,22 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
 
     if isinstance(event, Rotate):
         if state.ui.screen == Screen.MENU:
-            order = [
-                MenuItemId.MEMO,
-                MenuItemId.LIST,
-                MenuItemId.TIMER,
-                MenuItemId.CALENDAR,
-                MenuItemId.SETTINGS,
-            ]
+            order = _menu_order()
             idx = order.index(state.ui.menu_focused) if state.ui.menu_focused in order else 1
             idx = (idx + event.delta) % len(order)
             state.ui.menu_focused = order[idx]
         elif state.ui.screen == Screen.HOME:
-            state.ui.focused_index += event.delta
-            if variant == "kitchen":
-                _clamp_focus_kitchen(state, theme)
+            if state.ui.menu_overlay_active:
+                order = _menu_order()
+                idx = order.index(state.ui.menu_focused) if state.ui.menu_focused in order else 1
+                idx = (idx + event.delta) % len(order)
+                state.ui.menu_focused = order[idx]
             else:
-                _clamp_focus_home(state, items_per_page)
+                state.ui.focused_index += event.delta
+                if variant == "kitchen":
+                    _clamp_focus_kitchen(state, theme)
+                else:
+                    _clamp_focus_home(state, items_per_page)
         elif state.ui.screen == Screen.WEATHER:
             n = max(1, min(4, len(state.model.weather)))
             state.ui.weather_day_index = (int(state.ui.weather_day_index) + event.delta) % n
@@ -425,31 +463,13 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
 
     if isinstance(event, Click):
         if state.ui.screen == Screen.MENU:
-            picked = state.ui.menu_focused
-            state.ui.active_menu = picked
-            if picked == MenuItemId.CALENDAR:
-                state.ui.screen = Screen.CALENDAR
-            elif picked == MenuItemId.TIMER:
-                state.ui.widget_mode = WidgetMode.TIMER
-                if int(state.ui.timer_seconds or 0) <= 0:
-                    state.ui.timer_seconds = _timer_default_s(theme)
-                state.ui.timer_running = False
-                state.ui.timer_last_tick_at = now
-                state.ui.timer_focused_index = 2
-                state.ui.screen = Screen.TIMER
-            elif picked == MenuItemId.LIST:
-                state.ui.screen = Screen.HOME
-                if variant == "kitchen":
-                    _clamp_focus_kitchen(state, theme)
-                else:
-                    _clamp_focus_home(state, items_per_page)
-            elif picked == MenuItemId.SETTINGS:
-                state.ui.screen = Screen.SETTINGS
-            else:
-                state.ui.screen = Screen.PLACEHOLDER
+            _activate_menu_pick(state, state.ui.menu_focused, now, theme=theme, items_per_page=items_per_page, variant=variant)
             return state
 
         if state.ui.screen == Screen.HOME:
+            if state.ui.menu_overlay_active:
+                _activate_menu_pick(state, state.ui.menu_focused, now, theme=theme, items_per_page=items_per_page, variant=variant)
+                return state
             if variant == "kitchen":
                 if state.ui.focused_index == 0:
                     if state.ui.widget_mode == WidgetMode.TIMER:
@@ -510,10 +530,11 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         # - HOME long press enters navigation menu
         # - Any other screen long press returns to HOME
         if state.ui.screen == Screen.HOME:
-            state.ui.screen = Screen.MENU
+            state.ui.menu_overlay_active = True
             return state
 
         state.ui.screen = Screen.HOME
+        state.ui.menu_overlay_active = False
         if variant == "kitchen":
             _clamp_focus_kitchen(state, theme)
         else:
@@ -539,6 +560,9 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             return state
 
         if state.ui.screen == Screen.HOME:
+            if state.ui.menu_overlay_active:
+                state.ui.menu_overlay_active = False
+                return state
             # TSX: Back cancels timer when focused on clock, otherwise opens menu.
             if state.ui.widget_mode == WidgetMode.TIMER and state.ui.focused_index == 0:
                 state.ui.timer_running = False
@@ -546,11 +570,12 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 state.ui.timer_seconds = 0
                 state.ui.timer_last_tick_at = now
                 return state
-            state.ui.screen = Screen.MENU
+            state.ui.menu_overlay_active = True
             return state
 
         if state.ui.screen != Screen.HOME:
             state.ui.screen = Screen.HOME
+            state.ui.menu_overlay_active = False
             if variant == "kitchen":
                 _clamp_focus_kitchen(state, theme)
             else:

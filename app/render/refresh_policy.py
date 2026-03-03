@@ -184,6 +184,7 @@ class UiSnapshot:
     font_size: str
     focused_index: int
     menu_focused: str
+    menu_overlay_active: bool
     settings_focused_index: int
     settings_notice: str
     partial_refresh_mode: str
@@ -214,6 +215,7 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
         font_size=str(state.ui.font_size or "medium"),
         focused_index=int(state.ui.focused_index or 0),
         menu_focused=str(state.ui.menu_focused.value if hasattr(state.ui.menu_focused, "value") else state.ui.menu_focused),
+        menu_overlay_active=bool(state.ui.menu_overlay_active),
         settings_focused_index=int(state.ui.settings_focused_index or 0),
         settings_notice=str(state.ui.settings_notice or ""),
         partial_refresh_mode=str(state.ui.partial_refresh_mode or "balanced"),
@@ -304,6 +306,7 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             "right_agenda": (right_x, 90, w, h),
         }
     # HOME / fallback
+    menu_x0, menu_y0, menu_x1, menu_y1 = _home_menu_overlay_region(w, h)
     return {
         "left_clock": (ox0, oy0, left_split, min(oy1, oy0 + int((oy1 - oy0) * 0.42))),
         "left_memo": (ox0, oy0 + int((oy1 - oy0) * 0.35), left_split, oy1),
@@ -322,8 +325,25 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             oy0 + 36,
         ),
         "voice_overlay": _voice_overlay_region(w, h, rotation_deg=rotation_deg),
+        "home_menu_overlay": (menu_x0, menu_y0, menu_x1, menu_y1),
         "right_list": (left_split, oy0, ox1, oy1),
     }
+
+
+def _home_menu_overlay_region(width: int, height: int) -> Rect:
+    w = max(1, int(width))
+    h = max(1, int(height))
+    gap = 12
+    pill_h = 56
+    pill_w = 116
+    count = 5
+    total_w = (count * pill_w) + ((count - 1) * gap)
+    x0 = max(16, (w - total_w) // 2 - 14)
+    x1 = min(w - 16, x0 + total_w + 28)
+    cy = h // 2
+    y0 = max(80, cy - 46)
+    y1 = min(h - 80, y0 + 102)
+    return (x0, y0, x1, y1)
 
 
 def _home_focus_row_rect(width: int, height: int, focus_index: int) -> Rect | None:
@@ -443,6 +463,13 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         return rects, reasons
 
     # HOME and fallback.
+    if prev.menu_overlay_active != curr.menu_overlay_active:
+        rects.append(regions["home_menu_overlay"])
+        reasons.append("home.menu_overlay_toggle")
+    if curr.menu_overlay_active and prev.menu_focused != curr.menu_focused:
+        rects.append(regions["home_menu_overlay"])
+        reasons.append("home.menu_overlay_focus")
+
     if prev.focused_index != curr.focused_index:
         prev_row = _home_focus_row_rect(width, height, prev.focused_index)
         curr_row = _home_focus_row_rect(width, height, curr.focused_index)

@@ -91,6 +91,8 @@ class UiState:
     # MENU state (TSX: Back from dashboard opens the menu).
     menu_focused: MenuItemId = MenuItemId.LIST
     active_menu: Optional[MenuItemId] = None
+    # HOME overlay navigation layer (no screen switch, partial-refresh friendly).
+    menu_overlay_active: bool = False
 
     # Widget slot state (TSX: top-left is a widget slot that can show CLOCK or TIMER).
     widget_mode: WidgetMode = WidgetMode.CLOCK

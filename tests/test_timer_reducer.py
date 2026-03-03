@@ -93,7 +93,8 @@ class TimerReducerTests(unittest.TestCase):
 
         reduce(self.state, LongPress())
 
-        self.assertEqual(self.state.ui.screen, Screen.MENU)
+        self.assertEqual(self.state.ui.screen, Screen.HOME)
+        self.assertTrue(self.state.ui.menu_overlay_active)
 
     def test_long_press_on_detail_returns_home(self) -> None:
         self.state.ui.screen = Screen.WEATHER
@@ -101,6 +102,18 @@ class TimerReducerTests(unittest.TestCase):
         reduce(self.state, LongPress())
 
         self.assertEqual(self.state.ui.screen, Screen.HOME)
+        self.assertFalse(self.state.ui.menu_overlay_active)
+
+    def test_rotate_on_home_overlay_moves_menu_focus(self) -> None:
+        self.state.ui.screen = Screen.HOME
+        self.state.ui.menu_overlay_active = True
+        self.state.ui.menu_focused = MenuItemId.LIST
+        self.state.ui.focused_index = 3
+
+        reduce(self.state, Rotate(+1))
+
+        self.assertEqual(self.state.ui.menu_focused, MenuItemId.TIMER)
+        self.assertEqual(self.state.ui.focused_index, 3)
 
     def test_tick_pauses_home_memo_rotation_while_voice_active(self) -> None:
         self.state.ui.screen = Screen.HOME
