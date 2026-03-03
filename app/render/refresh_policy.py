@@ -241,7 +241,27 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
     )
 
 
-def _screen_regions(screen: Screen, width: int, height: int) -> dict[str, Rect]:
+def _voice_overlay_region(width: int, height: int, *, rotation_deg: int = 0) -> Rect:
+    w = max(1, int(width))
+    h = max(1, int(height))
+    margin = 14
+    zone_w = min(380, max(300, int(w * 0.46)))
+    zone_w = max(220, min(zone_w, max(220, w - margin * 2)))
+    lane_h = 29
+
+    x0 = margin
+    y1 = h - margin
+    y0 = max(margin, y1 - lane_h)
+    x1 = x0 + zone_w
+    rect = (x0, y0 - 1, x1, y1 + 1)
+
+    if int(rotation_deg or 0) == 180:
+        rx0, ry0, rx1, ry1 = rect
+        rect = (w - rx1, h - ry1, w - rx0, h - ry0)
+    return rect
+
+
+def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: int = 0) -> dict[str, Rect]:
     w = max(1, int(width))
     h = max(1, int(height))
     # Match home_kitchen.py defaults closely to reduce diff-fallback expansions.
@@ -301,6 +321,7 @@ def _screen_regions(screen: Screen, width: int, height: int) -> dict[str, Rect]:
             max(ox0 + 1, left_split - 2),
             oy0 + 36,
         ),
+        "voice_overlay": _voice_overlay_region(w, h, rotation_deg=rotation_deg),
         "right_list": (left_split, oy0, ox1, oy1),
     }
 
@@ -357,7 +378,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
     if int(prev.rotation_deg) != int(curr.rotation_deg):
         return [], []
 
-    regions = _screen_regions(curr.screen, width, height)
+    regions = _screen_regions(curr.screen, width, height, rotation_deg=curr.rotation_deg)
     rects: list[Rect] = []
     reasons: list[str] = []
 
@@ -477,6 +498,6 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         rects.append(regions["left_clock"])
         reasons.append("home.clock_or_timer_state")
     if prev.voice_active != curr.voice_active or prev.voice_phase != curr.voice_phase:
-        rects.append(regions["left_clock"])
+        rects.append(regions["voice_overlay"])
         reasons.append("home.voice_overlay")
     return rects, reasons

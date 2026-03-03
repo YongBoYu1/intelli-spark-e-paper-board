@@ -187,5 +187,25 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.24)
 
+    def test_home_voice_overlay_change_uses_voice_zone_rect(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.HOME
+        prev.ui.voice_active = False
+        prev.ui.voice_phase = "idle"
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.HOME
+        curr.ui.voice_active = True
+        curr.ui.voice_phase = "error"
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.voice_overlay", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        x0, y0, x1, y1 = merged or (0, 0, 0, 0)
+        self.assertGreater(y0, 360)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.10)
+
 if __name__ == "__main__":
     unittest.main()
