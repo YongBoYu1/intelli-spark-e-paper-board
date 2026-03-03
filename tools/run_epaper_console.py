@@ -394,6 +394,10 @@ def _mode_gap_with_theme(mode: str, theme: dict) -> int:
     return max(0, value)
 
 
+def _fast_full_enabled(theme: dict) -> bool:
+    return bool(theme.get("refresh_enable_fast_full", False))
+
+
 def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     if bool(theme.get("refresh_partial_enable_all", False)):
         return True
@@ -453,9 +457,12 @@ def _render_to_epd(
         panel_gamma=panel_gamma,
         panel_dither=panel_dither,
     )
-    try:
-        epd.init_fast()
-    except Exception:
+    if _fast_full_enabled(theme):
+        try:
+            epd.init_fast()
+        except Exception:
+            epd.init()
+    else:
         epd.init()
     epd.display(epd.getbuffer(frame))
 
@@ -1082,6 +1089,7 @@ def main() -> int:
                 force_flush = force_full_clean or screen_changed or rotation_changed
 
                 if not refresh_runtime.should_throttle(now, min_gap_ms) or force_flush:
+                    fast_full = _fast_full_enabled(theme)
                     try:
                         if force_full_clean:
                             driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=False)
@@ -1094,13 +1102,14 @@ def main() -> int:
                                     f"dirty={','.join(pending_reasons) or '-'}"
                                 )
                         elif screen_changed or rotation_changed:
-                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=True)
+                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
                             refresh_runtime.mark_fast_full(now)
                             if refresh_debug:
                                 reason = "screen_changed" if screen_changed else "rotation_changed"
                                 print(
                                     f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} "
-                                    f"reason={reason} mode={pending_snapshot.partial_refresh_mode}"
+                                    f"reason={reason} mode={pending_snapshot.partial_refresh_mode} "
+                                    f"fast={'on' if fast_full else 'off'}"
                                 )
                         elif pending_snapshot.screen == Screen.SETTINGS and font_size_changed:
                             # Font-size updates often trigger full layout reflow.
@@ -1146,7 +1155,7 @@ def main() -> int:
                                         f"mode={pending_snapshot.partial_refresh_mode} dirty={','.join(pending_reasons) or '-'}"
                                     )
                             else:
-                                driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=True)
+                                driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
                                 refresh_runtime.mark_fast_full(now)
                                 if refresh_debug:
                                     why = "partial_unsupported"
@@ -1159,7 +1168,8 @@ def main() -> int:
                                     print(
                                         f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} reason={why} "
                                         f"area_ratio={area_ratio:.3f} limit={mode_limit:.3f} "
-                                        f"mode={pending_snapshot.partial_refresh_mode} dirty={','.join(pending_reasons) or '-'}"
+                                        f"mode={pending_snapshot.partial_refresh_mode} fast={'on' if fast_full else 'off'} "
+                                        f"dirty={','.join(pending_reasons) or '-'}"
                                     )
                     except Exception as e:
                         screen_name = str(
