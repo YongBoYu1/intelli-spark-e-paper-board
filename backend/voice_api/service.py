@@ -544,6 +544,16 @@ def _repair_context_reference_no_action(
 
     recent = _recent_action_group_actions(board_context)
     if not recent:
+        if first_tool in {"undo_last_action_group", "redo_last_action_group"} and (
+            _looks_like_remove_last_phrase(txt_low) or _looks_like_repeat_last_phrase(txt_low) or bool(same_for_item)
+        ):
+            out = dict(plan)
+            out["actions"] = [_no_action("insufficient_context")]
+            out["needs_clarification"] = False
+            out["clarification"] = ""
+            if not str(out.get("response_copy") or "").strip():
+                out["response_copy"] = "I need more context. Say the full command."
+            return out
         return plan
 
     if _looks_like_remove_last_phrase(txt_low):

@@ -361,6 +361,36 @@ class VoiceServiceNormalizeTests(unittest.TestCase):
         )
         self.assertEqual(repaired["actions"], [{"tool": "shopping_remove_item", "args": {"item_name": "coke"}}])
 
+    def test_context_reference_redo_misfire_without_recent_becomes_no_action(self) -> None:
+        plan = {
+            "actions": [{"tool": "redo_last_action_group", "args": {}}],
+            "needs_clarification": False,
+            "clarification": "",
+            "response_copy": "",
+        }
+        repaired = _repair_context_reference_no_action(
+            plan,
+            transcript="do that again",
+            board_context={"recent_action_groups": []},
+            request_time="2026-03-03T13:55:00-05:00",
+        )
+        self.assertEqual(repaired["actions"], [{"tool": "no_action", "args": {"reason": "insufficient_context"}}])
+
+    def test_context_reference_remove_misfire_without_recent_becomes_no_action(self) -> None:
+        plan = {
+            "actions": [{"tool": "undo_last_action_group", "args": {}}],
+            "needs_clarification": False,
+            "clarification": "",
+            "response_copy": "",
+        }
+        repaired = _repair_context_reference_no_action(
+            plan,
+            transcript="remove the last one",
+            board_context={"recent_action_groups": []},
+            request_time="2026-03-03T13:55:00-05:00",
+        )
+        self.assertEqual(repaired["actions"], [{"tool": "no_action", "args": {"reason": "insufficient_context"}}])
+
     def test_vague_undo_redo_misfire_becomes_no_action(self) -> None:
         plan = {
             "actions": [{"tool": "redo_last_action_group", "args": {}}],
