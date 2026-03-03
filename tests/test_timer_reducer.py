@@ -20,14 +20,14 @@ class TimerReducerTests(unittest.TestCase):
         self.assertEqual(self.state.ui.widget_mode, WidgetMode.TIMER)
         self.assertEqual(self.state.ui.timer_seconds, 300)
         self.assertFalse(self.state.ui.timer_running)
-        self.assertEqual(self.state.ui.timer_focused_index, 2)
+        self.assertEqual(self.state.ui.timer_focused_index, 3)
 
     def test_timer_rotate_cycles_focus(self) -> None:
         self.state.ui.screen = Screen.TIMER
         self.state.ui.timer_focused_index = 0
 
         reduce(self.state, Rotate(-1))
-        self.assertEqual(self.state.ui.timer_focused_index, 3)
+        self.assertEqual(self.state.ui.timer_focused_index, 4)
 
         reduce(self.state, Rotate(+1))
         self.assertEqual(self.state.ui.timer_focused_index, 0)
@@ -37,7 +37,7 @@ class TimerReducerTests(unittest.TestCase):
         self.state.ui.widget_mode = WidgetMode.TIMER
         self.state.ui.timer_seconds = 120
 
-        self.state.ui.timer_focused_index = 0
+        self.state.ui.timer_focused_index = 1
         reduce(self.state, Click(), theme={"timer_step_s": 60})
         self.assertEqual(self.state.ui.timer_seconds, 60)
 
@@ -45,7 +45,7 @@ class TimerReducerTests(unittest.TestCase):
         self.assertEqual(self.state.ui.timer_seconds, 0)
         self.assertFalse(self.state.ui.timer_running)
 
-        self.state.ui.timer_focused_index = 1
+        self.state.ui.timer_focused_index = 2
         reduce(self.state, Click(), theme={"timer_step_s": 60})
         self.assertEqual(self.state.ui.timer_seconds, 60)
 
@@ -54,7 +54,7 @@ class TimerReducerTests(unittest.TestCase):
         self.state.ui.widget_mode = WidgetMode.TIMER
         self.state.ui.timer_seconds = 0
 
-        self.state.ui.timer_focused_index = 2
+        self.state.ui.timer_focused_index = 3
         reduce(self.state, Click(), theme={"timer_default_s": 180})
         self.assertEqual(self.state.ui.timer_seconds, 180)
         self.assertTrue(self.state.ui.timer_running)
@@ -62,10 +62,20 @@ class TimerReducerTests(unittest.TestCase):
         reduce(self.state, Click(), theme={"timer_default_s": 180})
         self.assertFalse(self.state.ui.timer_running)
 
-        self.state.ui.timer_focused_index = 3
+        self.state.ui.timer_focused_index = 4
         reduce(self.state, Click())
         self.assertEqual(self.state.ui.timer_seconds, 0)
         self.assertFalse(self.state.ui.timer_running)
+
+    def test_timer_click_home_icon_returns_home(self) -> None:
+        self.state.ui.screen = Screen.TIMER
+        self.state.ui.timer_focused_index = 0
+        self.state.ui.widget_mode = WidgetMode.TIMER
+
+        reduce(self.state, Click())
+
+        self.assertEqual(self.state.ui.screen, Screen.HOME)
+        self.assertEqual(self.state.ui.focused_index, 0)
 
     def test_tick_counts_down_and_auto_stops_at_zero(self) -> None:
         self.state.ui.widget_mode = WidgetMode.TIMER

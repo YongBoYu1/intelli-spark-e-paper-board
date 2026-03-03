@@ -772,7 +772,7 @@ class Simulator(tk.Tk):
             self.state.ui.timer_seconds = max(1, default_s)
         self.state.ui.timer_running = False
         self.state.ui.timer_last_tick_at = time.time()
-        self.state.ui.timer_focused_index = 2
+        self.state.ui.timer_focused_index = 3
         self.state.ui.screen = Screen.TIMER
         self._render()
 
