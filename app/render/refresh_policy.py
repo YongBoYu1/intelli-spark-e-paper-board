@@ -35,7 +35,8 @@ def screen_partial_area_limit(screen: Screen, mode: str) -> float:
     if screen == Screen.WEATHER:
         return max(0.50, min(base, 0.78))
     if screen == Screen.HOME:
-        return max(0.45, min(base, 0.75))
+        # Home is artifact-prone on large partial updates; keep default conservative.
+        return max(0.12, min(base, 0.22))
     return base
 
 
@@ -243,7 +244,11 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
 def _screen_regions(screen: Screen, width: int, height: int) -> dict[str, Rect]:
     w = max(1, int(width))
     h = max(1, int(height))
-    left_split = int(w * 0.44)
+    # Match home_kitchen.py defaults closely to reduce diff-fallback expansions.
+    margin = 18
+    ox0, oy0, ox1, oy1 = margin, margin, max(margin + 1, w - margin), max(margin + 1, h - margin)
+    split_x = ox0 + int((ox1 - ox0) * 0.60)
+    left_split = split_x
     if screen == Screen.SETTINGS:
         footer_h = 40
         return {
@@ -280,11 +285,52 @@ def _screen_regions(screen: Screen, width: int, height: int) -> dict[str, Rect]:
         }
     # HOME / fallback
     return {
-        "left_clock": (0, 0, left_split, min(h, int(h * 0.42))),
-        "left_memo": (0, int(h * 0.35), left_split, h),
-        "left_weather": (0, int(h * 0.22), left_split, int(h * 0.62)),
-        "right_list": (left_split, 0, w, h),
+        "left_clock": (ox0, oy0, left_split, min(oy1, oy0 + int((oy1 - oy0) * 0.42))),
+        "left_memo": (ox0, oy0 + int((oy1 - oy0) * 0.35), left_split, oy1),
+        "left_weather": (ox0, oy0 + int((oy1 - oy0) * 0.22), left_split, oy0 + int((oy1 - oy0) * 0.62)),
+        "right_list": (left_split, oy0, ox1, oy1),
     }
+
+
+def _home_focus_row_rect(width: int, height: int, focus_index: int) -> Rect | None:
+    # Approximate row geometry from app/ui/home_kitchen.py theme defaults.
+    if int(focus_index) <= 0:
+        return None
+
+    w = max(1, int(width))
+    h = max(1, int(height))
+    margin = 18
+    ox0, oy0, ox1, oy1 = margin, margin, max(margin + 1, w - margin), max(margin + 1, h - margin)
+    split_x = ox0 + int((ox1 - ox0) * 0.60)
+    right_pad = 22
+    inner_x0 = split_x + 1 + right_pad
+    inner_x1 = ox1 - right_pad
+
+    if inner_x1 <= inner_x0:
+        return None
+
+    inv_start_y = oy0 + max(8, right_pad - 6) + 34
+    inv_row_h = 40
+    inv_max = 3
+    shop_start_y = oy0 + int((oy1 - oy0) * 0.62)
+    shop_row_h = 40
+    row_h = 56
+
+    pos = int(focus_index) - 1
+    if pos < 0:
+        return None
+    if pos < inv_max:
+        cy = inv_start_y + (pos * inv_row_h) + (inv_row_h // 2)
+    else:
+        cy = shop_start_y + ((pos - inv_max) * shop_row_h) + (shop_row_h // 2)
+
+    y0 = max(oy0, cy - (row_h // 2))
+    y1 = min(oy1, y0 + row_h)
+    x0 = max(0, inner_x0 - 10)
+    x1 = min(w, inner_x1 + 6)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return (x0, y0, x1, y1)
 
 
 def infer_dirty_rects(prev: UiSnapshot, curr: UiSnapshot, width: int, height: int) -> list[Rect]:
@@ -364,8 +410,16 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
 
     # HOME and fallback.
     if prev.focused_index != curr.focused_index:
-        rects.append(regions["right_list"])
-        reasons.append("home.focus_move")
+        prev_row = _home_focus_row_rect(width, height, prev.focused_index)
+        curr_row = _home_focus_row_rect(width, height, curr.focused_index)
+        if prev_row is not None and curr_row is not None:
+            rects.append(prev_row)
+            if curr_row != prev_row:
+                rects.append(curr_row)
+            reasons.append("home.focus_move_row")
+        else:
+            rects.append(regions["right_list"])
+            reasons.append("home.focus_move")
         if prev.focused_index == 0 or curr.focused_index == 0:
             rects.append(regions["left_clock"])
             reasons.append("home.left_focus_transition")

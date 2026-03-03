@@ -10,6 +10,8 @@ from app.render.refresh_policy import (
     effective_full_refresh_every,
     infer_dirty_rects,
     infer_dirty_rects_with_reasons,
+    merge_rects,
+    rect_area_ratio,
     mode_params,
 )
 
@@ -90,6 +92,22 @@ class RefreshPolicyTests(unittest.TestCase):
 
         _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("menu.focus_move", reasons)
+
+    def test_home_focus_move_prefers_row_dirty_rect(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 1
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 2
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.focus_move_row", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.20)
 
 if __name__ == "__main__":
     unittest.main()
