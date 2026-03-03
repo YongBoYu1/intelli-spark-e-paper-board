@@ -104,7 +104,9 @@ def _clamp_focus_kitchen(state: AppState, theme: Optional[dict] = None) -> None:
     if n <= 0:
         state.ui.focused_index = 0
         return
-    state.ui.focused_index %= n
+    # Clamp instead of wrapping to avoid top<->bottom jumps that trigger large refresh regions.
+    cur = int(state.ui.focused_index or 0)
+    state.ui.focused_index = max(0, min(cur, n - 1))
     state.ui.page = 1
 
 
