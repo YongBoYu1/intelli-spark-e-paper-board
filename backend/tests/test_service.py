@@ -306,6 +306,32 @@ class VoiceServiceNormalizeTests(unittest.TestCase):
         self.assertEqual(repaired["actions"][0]["tool"], "shopping_remove_item")
         self.assertEqual(repaired["actions"][0]["args"]["item_name"], "milk")
 
+    def test_missing_item_name_remove_from_shopping_list_is_repaired(self) -> None:
+        plan = {
+            "actions": [
+                {"tool": "no_action", "args": {"reason": "missing_item_name"}},
+            ],
+            "needs_clarification": False,
+            "clarification": "",
+            "response_copy": "",
+        }
+        board_context = {
+            "shopping": {
+                "items": [
+                    {"title": "Yoghurt Expires"},
+                    {"title": "Buy Milk"},
+                ]
+            }
+        }
+        repaired = _repair_missing_item_name_no_action(
+            plan,
+            transcript="Remove yogurt from the shopping list.",
+            board_context=board_context,
+            request_time="2026-03-03T14:30:00-05:00",
+        )
+        self.assertEqual(repaired["actions"][0]["tool"], "shopping_remove_item")
+        self.assertEqual(repaired["actions"][0]["args"]["item_name"], "yoghurt")
+
     def test_extract_explicit_correction_phrase(self) -> None:
         got = _extract_explicit_correction("不是酒戒，是街道的街，酒街")
         self.assertEqual(got, ("酒戒", "酒街"))

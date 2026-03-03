@@ -47,6 +47,9 @@ _ITEM_CANONICAL = {
     "鸡蛋": "eggs",
     "bread": "bread",
     "面包": "bread",
+    "yoghurt": "yoghurt",
+    "yogurt": "yoghurt",
+    "酸奶": "yoghurt",
 }
 
 _SHOPPING_NEED_PHRASES = (
@@ -1003,9 +1006,11 @@ def _repair_missing_item_name_no_action(
         return plan
 
     txt = str(transcript or "").strip().lower()
-    if not _looks_like_shopping_done_phrase(txt):
-        return plan
-    guessed_item = _guess_item_name_for_completed_purchase(transcript=txt, board_context=board_context)
+    guessed_item = ""
+    if _looks_like_shopping_done_phrase(txt):
+        guessed_item = _guess_item_name_for_completed_purchase(transcript=txt, board_context=board_context)
+    elif _looks_like_shopping_remove_phrase(txt):
+        guessed_item = _guess_item_name_for_shopping_remove(transcript=txt, board_context=board_context)
     if not guessed_item:
         return plan
 
@@ -1040,6 +1045,78 @@ def _guess_item_name_for_completed_purchase(*, transcript: str, board_context: d
 
     if len(matched) == 1:
         return matched[0]
+    return ""
+
+
+def _looks_like_shopping_remove_phrase(transcript_lower: str) -> bool:
+    txt = str(transcript_lower or "").strip().lower()
+    if not txt:
+        return False
+    remove_markers = (
+        "remove ",
+        "delete ",
+        "take ",
+        "drop ",
+        "cross off",
+        "删",
+        "删除",
+        "去掉",
+        "移除",
+    )
+    has_remove = any(p in txt for p in remove_markers)
+    if not has_remove:
+        return False
+    has_list = ("shopping list" in txt) or ("shopping" in txt and "list" in txt) or ("购物清单" in txt)
+    return has_list
+
+
+def _guess_item_name_for_shopping_remove(*, transcript: str, board_context: dict[str, Any] | None) -> str:
+    txt = str(transcript or "").strip().lower()
+    if not txt:
+        return ""
+
+    extracted = _extract_shopping_remove_item_name(txt)
+    if extracted:
+        normalized = _canonical_item_name(extracted)
+        if normalized:
+            return normalized
+
+    matched: list[str] = []
+    seen: set[str] = set()
+    for candidate in _shopping_item_candidates(board_context):
+        canonical = _canonical_item_name(candidate)
+        if not canonical or canonical in seen:
+            continue
+        if _contains_term(txt, canonical):
+            matched.append(canonical)
+            seen.add(canonical)
+
+    if len(matched) == 1:
+        return matched[0]
+    return ""
+
+
+def _extract_shopping_remove_item_name(transcript_lower: str) -> str:
+    txt = str(transcript_lower or "").strip().lower()
+    if not txt:
+        return ""
+    patterns = [
+        r"(?:remove|delete|drop)\s+(?P<item>.+?)\s+from\s+(?:the\s+)?shopping list",
+        r"(?:remove|delete|drop)\s+(?P<item>.+?)\s+off\s+(?:the\s+)?shopping list",
+        r"take\s+(?P<item>.+?)\s+off\s+(?:the\s+)?shopping list",
+        r"从购物清单(?:里)?(?:删掉|删除|去掉|移除)\s*(?P<item>.+)$",
+        r"(?:删掉|删除|去掉|移除)\s*(?P<item>.+?)\s*(?:从)?购物清单(?:里)?",
+    ]
+    for p in patterns:
+        m = re.search(p, txt, flags=re.IGNORECASE)
+        if not m:
+            continue
+        candidate = _clean_item_candidate_for_context(m.group("item"))
+        if not candidate:
+            continue
+        if candidate in {"it", "that", "this", "one", "last one", "那个", "这个"}:
+            continue
+        return candidate
     return ""
 
 
