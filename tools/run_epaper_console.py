@@ -6,9 +6,9 @@ This is the missing piece that makes the app non-static on hardware:
 - Keyboard maps to encoder-like events (rotate/click/back/long press)
 - Periodic Tick drives idle + timer + delayed reorder
 
-Note: Uses mixed refresh strategy:
-- Settings page updates prefer partial-rect refresh.
-- Other page updates use full/fast full refresh for stability.
+Note: Uses unified refresh strategy:
+- All screens go through one refresh-policy pipeline.
+- Policy chooses no-refresh / partial / fast full / full clean at runtime.
 """
 
 from __future__ import annotations
@@ -35,6 +35,18 @@ from app.core.reducer import reduce, Rotate, Click, LongPress, RotateButton, Bac
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
 from app.render.epd import init_epd
 from app.render.panel import build_panel_theme, quantize_for_panel
+from app.render.refresh_policy import (
+    RefreshPolicyRuntime,
+    align_rect_for_partial,
+    build_ui_snapshot,
+    effective_full_refresh_every,
+    infer_dirty_rects_with_reasons,
+    merge_rects,
+    mode_params,
+    rect_area_ratio,
+    rect_contains,
+    screen_partial_area_limit,
+)
 from app.shared.env import load_repo_dotenv
 from app.shared.fonts import FontBook
 from app.shared.paths import find_repo_root
@@ -312,6 +324,11 @@ def _state_render_sig(state: AppState):
         state.ui.active_menu,
         state.ui.settings_focused_index,
         state.ui.font_size,
+        state.ui.weather_day_index,
+        state.ui.calendar_offset_days,
+        state.ui.calendar_mode,
+        state.ui.calendar_selected_index,
+        state.ui.memo_index,
         state.ui.partial_refresh_mode,
         state.ui.full_refresh_every,
         state.ui.wifi_enabled,
@@ -321,6 +338,9 @@ def _state_render_sig(state: AppState):
         state.ui.rotation_deg,
         state.ui.settings_notice,
         tuple((r.rid, r.completed, r.title, r.right, r.category) for r in state.model.reminders),
+        tuple((w.dow, w.icon, w.hi, w.lo, w.humidity, w.feels_like, w.wind_kmh, w.uv_index) for w in state.model.weather),
+        tuple((c.eid, c.title, c.when) for c in state.model.calendar),
+        tuple((m.mid, m.text, m.author, int(m.timestamp), m.is_new) for m in state.model.memos),
     )
 
 
@@ -343,24 +363,6 @@ def _blit_full(epd, image: Image.Image, current_mode: str, *, fast: bool) -> str
     return current_mode
 
 
-def _settings_partial_area_limit(mode: str) -> float:
-    normalized = str(mode or "balanced").strip().lower()
-    if normalized == "slow":
-        return 0.40
-    if normalized == "fast":
-        return 0.85
-    return 0.65
-
-
-def _screen_partial_area_limit(screen: Screen, mode: str) -> float:
-    # Timer can tolerate a larger partial rect than settings because updates are
-    # concentrated around the central countdown and control row.
-    base = _settings_partial_area_limit(mode)
-    if screen == Screen.TIMER:
-        return min(0.95, base + 0.20)
-    return base
-
-
 def _timer_partial_full_every(theme: dict) -> int:
     # Avoid forcing full refresh too frequently during active countdown ticks.
     try:
@@ -370,20 +372,26 @@ def _timer_partial_full_every(theme: dict) -> int:
     return max(60, value)
 
 
-def _align_partial_rect(rect: tuple[int, int, int, int], width: int, height: int, *, pad: int = 2) -> tuple[int, int, int, int] | None:
-    x0, y0, x1, y1 = rect
-    x0 = max(0, int(x0) - pad)
-    y0 = max(0, int(y0) - pad)
-    x1 = min(int(width), int(x1) + pad)
-    y1 = min(int(height), int(y1) + pad)
-    if x1 <= x0 or y1 <= y0:
-        return None
-    x0 = (x0 // 8) * 8
-    x1 = ((x1 + 7) // 8) * 8
-    x1 = max(x0 + 8, min(int(width), x1))
-    if x1 <= x0 or y1 <= y0:
-        return None
-    return (x0, y0, x1, y1)
+def _screen_area_limit_with_theme(screen: Screen, mode: str, theme: dict) -> float:
+    default_value = screen_partial_area_limit(screen, mode)
+    key = f"refresh_area_limit_{str(screen.value if isinstance(screen, Screen) else screen)}"
+    raw = theme.get(key, theme.get("refresh_area_limit", default_value))
+    try:
+        value = float(raw)
+    except Exception:
+        return default_value
+    return max(0.05, min(0.98, value))
+
+
+def _mode_gap_with_theme(mode: str, theme: dict) -> int:
+    params = mode_params(mode)
+    key = f"refresh_min_gap_ms_{str(mode or 'balanced').strip().lower()}"
+    raw = theme.get(key, theme.get("refresh_min_gap_ms", params.min_refresh_gap_ms))
+    try:
+        value = int(raw)
+    except Exception:
+        return params.min_refresh_gap_ms
+    return max(0, value)
 
 
 def _partial_buffer_from_frame(frame: Image.Image, rect: tuple[int, int, int, int]) -> bytearray:
@@ -405,6 +413,34 @@ def _blit_partial(epd, frame: Image.Image, rect: tuple[int, int, int, int], curr
     part_buf = _partial_buffer_from_frame(frame, rect)
     epd.display_Partial(part_buf, x0, y0, x1, y1)
     return current_mode
+
+
+def _render_to_epd(
+    epd,
+    state: AppState,
+    fonts: FontBook,
+    theme: dict,
+    *,
+    panel_threshold: int,
+    panel_muted: int,
+    panel_gamma: float,
+    panel_dither: bool,
+) -> None:
+    frame = _render_frame(
+        epd,
+        state,
+        fonts,
+        theme,
+        panel_threshold=panel_threshold,
+        panel_muted=panel_muted,
+        panel_gamma=panel_gamma,
+        panel_dither=panel_dither,
+    )
+    try:
+        epd.init_fast()
+    except Exception:
+        epd.init()
+    epd.display(epd.getbuffer(frame))
 
 
 def _set_voice_overlay(state: AppState, phase: str, message: str = "", hold_s: float = 0.0) -> None:
@@ -718,6 +754,7 @@ def main() -> int:
     if theme_path and not os.path.isabs(theme_path):
         theme_path = os.path.join(repo_root, theme_path)
     theme = _load_theme(theme_path) if theme_path else {}
+    refresh_debug = bool(theme.get("refresh_debug", False))
     panel_threshold = int(args.panel_threshold if args.panel_threshold is not None else theme.get("panel_threshold", 168))
     panel_muted = int(args.panel_muted if args.panel_muted is not None else theme.get("panel_muted", 150))
     panel_gamma = float(args.panel_gamma if args.panel_gamma is not None else theme.get("panel_gamma", 1.0))
@@ -729,8 +766,9 @@ def main() -> int:
         print("[warn] VOICE_API_URL not set. Voice flow will show network error until configured.")
 
     epd, _ = init_epd()
+    supports_partial = hasattr(epd, "init_part") and hasattr(epd, "display_Partial")
     driver_mode = "full"
-    last_render_frame = _render_frame(
+    committed_frame = _render_frame(
         epd,
         state,
         fonts,
@@ -740,13 +778,18 @@ def main() -> int:
         panel_gamma=panel_gamma,
         panel_dither=panel_dither,
     )
-    driver_mode = _blit_full(epd, last_render_frame, driver_mode, fast=False)
-    last_render_sig = _state_render_sig(state)
-    last_render_screen = state.ui.screen
-    last_render_rotation = int(state.ui.rotation_deg or 0)
-    last_render_font_size = str(state.ui.font_size or "medium")
-    settings_partial_count = 0
-    timer_partial_count = 0
+    driver_mode = _blit_full(epd, committed_frame, driver_mode, fast=False)
+    committed_sig = _state_render_sig(state)
+    committed_snapshot = build_ui_snapshot(state)
+    pending_frame: Image.Image | None = None
+    pending_sig = None
+    pending_snapshot = None
+    pending_reasons: list[str] = []
+
+    refresh_runtime = RefreshPolicyRuntime()
+    refresh_runtime.mark_full_clean(time.time())
+    if refresh_debug:
+        print(f"[refresh] debug=on supports_partial={bool(supports_partial)}")
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -820,6 +863,7 @@ def main() -> int:
             key = _read_key_nonblocking()
 
             ev = None
+            voice_flow_ran = False
             if encoder_ready:
                 try:
                     curr_ab = (GPIO.input(int(encoder_pin_s1)) << 1) | GPIO.input(int(encoder_pin_s2))
@@ -914,6 +958,7 @@ def main() -> int:
                     voice_audio_rate=max(8000, int(args.voice_audio_rate)),
                     voice_audio_channels=max(1, int(args.voice_audio_channels)),
                 )
+                voice_flow_ran = True
                 ev = None
             elif key in ("p", "P"):
                 # Keep a manual way to trigger legacy long-press behavior in console.
@@ -938,9 +983,30 @@ def main() -> int:
                 reduce(state, Tick(now=now), theme=theme)
                 next_tick = now + float(args.tick)
 
-            # Only re-render if state that affects UI changed.
+            # Voice flow renders directly to EPD; resync committed snapshot/frame.
+            if voice_flow_ran:
+                committed_frame = _render_frame(
+                    epd,
+                    state,
+                    fonts,
+                    theme,
+                    panel_threshold=panel_threshold,
+                    panel_muted=panel_muted,
+                    panel_gamma=panel_gamma,
+                    panel_dither=panel_dither,
+                )
+                committed_sig = _state_render_sig(state)
+                committed_snapshot = build_ui_snapshot(state)
+                pending_frame = None
+                pending_sig = None
+                pending_snapshot = None
+                pending_reasons = []
+                refresh_runtime.clear_pending()
+                refresh_runtime.mark_fast_full(now)
+
+            # Stage updates against the last committed frame.
             sig = _state_render_sig(state)
-            if sig != last_render_sig:
+            if sig != committed_sig:
                 frame = _render_frame(
                     epd,
                     state,
@@ -951,84 +1017,158 @@ def main() -> int:
                     panel_gamma=panel_gamma,
                     panel_dither=panel_dither,
                 )
-                committed = False
-                diff_box = ImageChops.difference(last_render_frame, frame).getbbox()
-                if diff_box is not None:
-                    curr_screen = state.ui.screen
-                    curr_rotation = int(state.ui.rotation_deg or 0)
-                    curr_font_size = str(state.ui.font_size or "medium")
-                    screen_changed = curr_screen != last_render_screen
-                    rotation_changed = curr_rotation != last_render_rotation
-                    font_size_changed = curr_font_size != last_render_font_size
-                    if screen_changed or rotation_changed:
-                        driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                        settings_partial_count = 0
-                        timer_partial_count = 0
-                        committed = True
-                    if curr_screen == Screen.SETTINGS and font_size_changed and not committed:
-                        # Font size changes reflow most rows; prefer stable full refresh.
-                        driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                        settings_partial_count = 0
-                        timer_partial_count = 0
-                        committed = True
-                    in_partial_screen = (
-                        curr_screen in (Screen.SETTINGS, Screen.TIMER)
-                        and last_render_screen == curr_screen
-                        and curr_rotation == last_render_rotation
+                curr_snapshot = build_ui_snapshot(state)
+                diff_box = ImageChops.difference(committed_frame, frame).getbbox()
+                if diff_box is None:
+                    pending_frame = None
+                    pending_sig = None
+                    pending_snapshot = None
+                    pending_reasons = []
+                    refresh_runtime.clear_pending()
+                    committed_sig = sig
+                    committed_snapshot = curr_snapshot
+                else:
+                    dirty_rects, dirty_reasons = infer_dirty_rects_with_reasons(
+                        committed_snapshot,
+                        curr_snapshot,
+                        epd.width,
+                        epd.height,
                     )
-                    if in_partial_screen and not committed:
-                        rect = _align_partial_rect(diff_box, epd.width, epd.height, pad=2)
-                        if rect is not None:
-                            x0, y0, x1, y1 = rect
-                            partial_area = (x1 - x0) * (y1 - y0)
-                            total_area = max(1, epd.width * epd.height)
-                            area_ratio = float(partial_area) / float(total_area)
-                            mode_limit = _screen_partial_area_limit(curr_screen, state.ui.partial_refresh_mode)
-                            if curr_screen == Screen.SETTINGS:
-                                full_every = max(1, int(state.ui.full_refresh_every or 15))
-                                force_full_clean = settings_partial_count >= full_every
+                    if dirty_rects:
+                        merged_dirty = merge_rects(dirty_rects, epd.width, epd.height)
+                        if merged_dirty is None or not rect_contains(merged_dirty, diff_box, slack=4):
+                            dirty_rects.append(diff_box)
+                            dirty_reasons.append("diff_fallback")
+                    else:
+                        dirty_rects = [diff_box]
+                        dirty_reasons = ["diff_only"]
+                    refresh_runtime.enqueue(dirty_rects)
+                    pending_frame = frame
+                    pending_sig = sig
+                    pending_snapshot = curr_snapshot
+                    pending_reasons = dirty_reasons
+
+            # Flush staged updates with policy-driven refresh level.
+            if pending_frame is not None and pending_snapshot is not None:
+                min_gap_ms = _mode_gap_with_theme(pending_snapshot.partial_refresh_mode, theme)
+                full_every = effective_full_refresh_every(
+                    screen=pending_snapshot.screen,
+                    mode=pending_snapshot.partial_refresh_mode,
+                    ui_full_refresh_every=pending_snapshot.full_refresh_every,
+                    timer_full_refresh_every_override=_timer_partial_full_every(theme),
+                )
+                full_clean_reason = refresh_runtime.full_clean_reason(now, full_refresh_every=full_every)
+                force_full_clean = bool(full_clean_reason)
+                screen_changed = pending_snapshot.screen != committed_snapshot.screen
+                rotation_changed = pending_snapshot.rotation_deg != committed_snapshot.rotation_deg
+                font_size_changed = pending_snapshot.font_size != committed_snapshot.font_size
+                force_flush = force_full_clean or screen_changed or rotation_changed
+
+                if not refresh_runtime.should_throttle(now, min_gap_ms) or force_flush:
+                    try:
+                        if force_full_clean:
+                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=False)
+                            refresh_runtime.mark_full_clean(now)
+                            if refresh_debug:
+                                print(
+                                    f"[refresh] R3_FULL_CLEAN screen={pending_snapshot.screen.value} "
+                                    f"reason={full_clean_reason} partial_count={refresh_runtime.partial_count} "
+                                    f"full_every={full_every} mode={pending_snapshot.partial_refresh_mode} "
+                                    f"dirty={','.join(pending_reasons) or '-'}"
+                                )
+                        elif screen_changed or rotation_changed:
+                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=True)
+                            refresh_runtime.mark_fast_full(now)
+                            if refresh_debug:
+                                reason = "screen_changed" if screen_changed else "rotation_changed"
+                                print(
+                                    f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} "
+                                    f"reason={reason} mode={pending_snapshot.partial_refresh_mode}"
+                                )
+                        elif pending_snapshot.screen == Screen.SETTINGS and font_size_changed:
+                            # Font-size updates often trigger full layout reflow.
+                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=False)
+                            refresh_runtime.mark_full_clean(now)
+                            if refresh_debug:
+                                print(
+                                    f"[refresh] R3_FULL_CLEAN screen={pending_snapshot.screen.value} "
+                                    f"reason=settings.font_size_reflow mode={pending_snapshot.partial_refresh_mode}"
+                                )
+                        else:
+                            merged_pending = merge_rects(refresh_runtime.pending_dirty_rects, epd.width, epd.height)
+                            aligned = (
+                                align_rect_for_partial(merged_pending, epd.width, epd.height, pad=2)
+                                if merged_pending is not None
+                                else None
+                            )
+                            mode_limit = _screen_area_limit_with_theme(
+                                pending_snapshot.screen,
+                                pending_snapshot.partial_refresh_mode,
+                                theme,
+                            )
+                            area_ratio = (
+                                rect_area_ratio(aligned, epd.width, epd.height)
+                                if aligned is not None
+                                else 1.0
+                            )
+                            if (
+                                supports_partial
+                                and aligned is not None
+                                and area_ratio <= mode_limit
+                            ):
+                                driver_mode = _blit_partial(epd, pending_frame, aligned, driver_mode)
+                                refresh_runtime.mark_partial(now)
+                                if refresh_debug:
+                                    ax0, ay0, ax1, ay1 = aligned
+                                    print(
+                                        f"[refresh] R1_PARTIAL_RECT screen={pending_snapshot.screen.value} "
+                                        f"rect=({ax0},{ay0},{ax1},{ay1}) area_ratio={area_ratio:.3f} "
+                                        f"limit={mode_limit:.3f} partial_count={refresh_runtime.partial_count}/{full_every} "
+                                        f"mode={pending_snapshot.partial_refresh_mode} dirty={','.join(pending_reasons) or '-'}"
+                                    )
                             else:
-                                full_every = _timer_partial_full_every(theme)
-                                force_full_clean = timer_partial_count >= full_every
-                            try:
-                                if force_full_clean:
-                                    driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                                    if curr_screen == Screen.SETTINGS:
-                                        settings_partial_count = 0
-                                    else:
-                                        timer_partial_count = 0
-                                elif area_ratio <= mode_limit:
-                                    driver_mode = _blit_partial(epd, frame, rect, driver_mode)
-                                    if curr_screen == Screen.SETTINGS:
-                                        settings_partial_count += 1
-                                    else:
-                                        timer_partial_count += 1
-                                else:
-                                    driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                                    if curr_screen == Screen.SETTINGS:
-                                        settings_partial_count = 0
-                                    else:
-                                        timer_partial_count = 0
-                                committed = True
-                            except Exception as e:
-                                screen_name = str(curr_screen.value if isinstance(curr_screen, Screen) else curr_screen)
-                                print(f"[warn] {screen_name} partial refresh failed, fallback to full refresh: {e}")
-                                driver_mode = _blit_full(epd, frame, driver_mode, fast=False)
-                                if curr_screen == Screen.SETTINGS:
-                                    settings_partial_count = 0
-                                else:
-                                    timer_partial_count = 0
-                                committed = True
-                    if not committed:
-                        driver_mode = _blit_full(epd, frame, driver_mode, fast=True)
-                        settings_partial_count = 0
-                        timer_partial_count = 0
-                        committed = True
-                last_render_sig = sig
-                last_render_frame = frame
-                last_render_screen = state.ui.screen
-                last_render_rotation = int(state.ui.rotation_deg or 0)
-                last_render_font_size = str(state.ui.font_size or "medium")
+                                driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=True)
+                                refresh_runtime.mark_fast_full(now)
+                                if refresh_debug:
+                                    why = "partial_unsupported"
+                                    if aligned is None:
+                                        why = "no_aligned_rect"
+                                    elif area_ratio > mode_limit:
+                                        why = "area_over_limit"
+                                    print(
+                                        f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} reason={why} "
+                                        f"area_ratio={area_ratio:.3f} limit={mode_limit:.3f} "
+                                        f"mode={pending_snapshot.partial_refresh_mode} dirty={','.join(pending_reasons) or '-'}"
+                                    )
+                    except Exception as e:
+                        screen_name = str(
+                            pending_snapshot.screen.value
+                            if isinstance(pending_snapshot.screen, Screen)
+                            else pending_snapshot.screen
+                        )
+                        print(f"[warn] {screen_name} refresh failed, fallback to full clean: {e}")
+                        driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=False)
+                        refresh_runtime.mark_full_clean(now)
+                        if refresh_debug:
+                            print(
+                                f"[refresh] R3_FULL_CLEAN screen={screen_name} reason=exception "
+                                f"mode={pending_snapshot.partial_refresh_mode}"
+                            )
+
+                    committed_frame = pending_frame
+                    committed_sig = pending_sig
+                    committed_snapshot = pending_snapshot
+                    pending_frame = None
+                    pending_sig = None
+                    pending_snapshot = None
+                    pending_reasons = []
+                    refresh_runtime.clear_pending()
+                elif refresh_debug:
+                    print(
+                        f"[refresh] HOLD screen={pending_snapshot.screen.value} "
+                        f"reason=throttle gap_ms={min_gap_ms} mode={pending_snapshot.partial_refresh_mode} "
+                        f"dirty={','.join(pending_reasons) or '-'}"
+                    )
 
             time.sleep(0.01)
     finally:
