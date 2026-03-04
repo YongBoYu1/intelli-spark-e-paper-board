@@ -246,9 +246,11 @@ def _activate_menu_pick(state: AppState, picked: MenuItemId, now: float, *, them
         state.ui.widget_mode = WidgetMode.TIMER
         if int(state.ui.timer_seconds or 0) <= 0:
             state.ui.timer_seconds = _timer_default_s(theme)
+        state.ui.timer_target_seconds = int(state.ui.timer_seconds or 0)
         state.ui.timer_running = False
         state.ui.timer_last_tick_at = now
         state.ui.timer_focused_index = 2
+        _clear_timer_alert(state)
         state.ui.screen = Screen.TIMER
         return
     if picked == MenuItemId.LIST:
@@ -288,6 +290,51 @@ def _timer_max_s(theme: dict) -> int:
     return max(1, value)
 
 
+def _timer_alert_show_s(theme: dict) -> float:
+    try:
+        value = float(theme.get("timer_alert_show_s", 6.0) or 6.0)
+    except Exception:
+        value = 6.0
+    return max(0.6, value)
+
+
+def _timer_alert_blink_period_s(theme: dict) -> float:
+    try:
+        value = float(theme.get("timer_alert_blink_period_s", 0.45) or 0.45)
+    except Exception:
+        value = 0.45
+    return max(0.12, value)
+
+
+def _clear_timer_alert(state: AppState) -> None:
+    state.ui.timer_alert_active = False
+    state.ui.timer_alert_blink_on = True
+    state.ui.timer_alert_started_at = 0.0
+    state.ui.timer_alert_until = 0.0
+
+
+def _start_timer_alert(state: AppState, now: float, *, completed_seconds: int, theme: dict) -> None:
+    done_seconds = max(1, int(completed_seconds or 0))
+    state.ui.timer_last_completed_seconds = done_seconds
+    state.ui.timer_alert_active = True
+    state.ui.timer_alert_blink_on = True
+    state.ui.timer_alert_started_at = float(now)
+    state.ui.timer_alert_until = float(now) + _timer_alert_show_s(theme)
+
+
+def _tick_timer_alert(state: AppState, now: float, *, theme: dict) -> None:
+    if not bool(state.ui.timer_alert_active):
+        return
+    until = float(state.ui.timer_alert_until or 0.0)
+    if until <= 0.0 or float(now) >= until:
+        _clear_timer_alert(state)
+        return
+    started = float(state.ui.timer_alert_started_at or now)
+    period = _timer_alert_blink_period_s(theme)
+    phase = int(max(0.0, float(now) - started) / period)
+    state.ui.timer_alert_blink_on = (phase % 2) == 0
+
+
 def _clamp_timer_focus(state: AppState) -> None:
     n = 4  # [DECREASE, INCREASE, START_PAUSE, RESET]
     state.ui.timer_focused_index = int(state.ui.timer_focused_index or 0) % n
@@ -297,11 +344,13 @@ def _adjust_timer_seconds(state: AppState, delta_s: int, *, max_s: int) -> None:
     secs = int(state.ui.timer_seconds or 0) + int(delta_s)
     secs = max(0, min(int(max_s), secs))
     state.ui.timer_seconds = secs
+    state.ui.timer_target_seconds = secs
     if secs <= 0:
         state.ui.timer_running = False
 
 
 def _handle_timer_click(state: AppState, now: float, *, theme: dict) -> None:
+    _clear_timer_alert(state)
     _clamp_timer_focus(state)
     focus = int(state.ui.timer_focused_index or 0)
     step_s = _timer_step_s(theme)
@@ -327,12 +376,16 @@ def _handle_timer_click(state: AppState, now: float, *, theme: dict) -> None:
         else:
             if secs <= 0:
                 state.ui.timer_seconds = default_s
+                state.ui.timer_target_seconds = int(state.ui.timer_seconds or default_s)
+            elif int(state.ui.timer_target_seconds or 0) <= 0:
+                state.ui.timer_target_seconds = secs
             state.ui.timer_running = True
         state.ui.timer_last_tick_at = now
         return
 
     # focus == 3 => reset
     state.ui.timer_seconds = 0
+    state.ui.timer_target_seconds = 0
     state.ui.timer_running = False
     state.ui.timer_last_tick_at = now
 
@@ -365,12 +418,18 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             dt = max(0.0, now - last)
             if dt >= 1.0:
                 dec = int(dt)
-                state.ui.timer_seconds = max(0, int(state.ui.timer_seconds) - dec)
+                before = int(state.ui.timer_seconds or 0)
+                state.ui.timer_seconds = max(0, before - dec)
                 state.ui.timer_last_tick_at = last + dec
                 if state.ui.timer_seconds <= 0:
                     state.ui.timer_running = False
+                    completed = int(state.ui.timer_target_seconds or 0)
+                    if completed <= 0:
+                        completed = before
+                    _start_timer_alert(state, now, completed_seconds=completed, theme=theme)
         else:
             state.ui.timer_last_tick_at = now
+        _tick_timer_alert(state, now, theme=theme)
 
         # Delayed reorder
         if state.ui.pending_reorder and now >= state.ui.reorder_due_at:
@@ -450,6 +509,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 cur = 0
             state.ui.settings_focused_index = (cur + event.delta) % n
         elif state.ui.screen == Screen.TIMER:
+            _clear_timer_alert(state)
             state.ui.timer_focused_index = int(state.ui.timer_focused_index or 0) + event.delta
             _clamp_timer_focus(state)
         else:
@@ -575,7 +635,9 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 state.ui.timer_running = False
                 state.ui.widget_mode = WidgetMode.CLOCK
                 state.ui.timer_seconds = 0
+                state.ui.timer_target_seconds = 0
                 state.ui.timer_last_tick_at = now
+                _clear_timer_alert(state)
                 return state
             state.ui.menu_overlay_active = True
             return state

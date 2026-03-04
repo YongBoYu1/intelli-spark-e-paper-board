@@ -247,5 +247,29 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.24)
 
+    def test_timer_alert_blink_change_marks_time_status_region(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.TIMER
+        prev.ui.timer_seconds = 0
+        prev.ui.timer_running = False
+        prev.ui.timer_alert_active = True
+        prev.ui.timer_alert_blink_on = True
+        prev.ui.timer_last_completed_seconds = 300
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.TIMER
+        curr.ui.timer_seconds = 0
+        curr.ui.timer_running = False
+        curr.ui.timer_alert_active = True
+        curr.ui.timer_alert_blink_on = False
+        curr.ui.timer_last_completed_seconds = 300
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("timer.time_or_state", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.50)
+
 if __name__ == "__main__":
     unittest.main()

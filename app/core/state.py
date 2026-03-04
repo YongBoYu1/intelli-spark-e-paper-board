@@ -103,6 +103,14 @@ class UiState:
     timer_seconds: int = 0
     timer_running: bool = False
     timer_last_tick_at: float = field(default_factory=lambda: time.time())
+    # Current timer target duration (seconds) for the active run; used by completion copy.
+    timer_target_seconds: int = 0
+    # Countdown-done alert state (blinking zeros + completion message).
+    timer_alert_active: bool = False
+    timer_alert_blink_on: bool = True
+    timer_alert_started_at: float = 0.0
+    timer_alert_until: float = 0.0
+    timer_last_completed_seconds: int = 0
     # TIMER page focus: [DECREASE, INCREASE, START_PAUSE, RESET]
     timer_focused_index: int = 2
 

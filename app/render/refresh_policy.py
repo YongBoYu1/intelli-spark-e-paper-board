@@ -200,6 +200,9 @@ class UiSnapshot:
     timer_seconds: int
     timer_running: bool
     timer_focused_index: int
+    timer_alert_active: bool
+    timer_alert_blink_on: bool
+    timer_last_completed_seconds: int
     clock_minute_bucket: int
     widget_mode: str
     weather_day_index: int
@@ -232,6 +235,9 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
         timer_seconds=int(state.ui.timer_seconds or 0),
         timer_running=bool(state.ui.timer_running),
         timer_focused_index=int(state.ui.timer_focused_index or 0),
+        timer_alert_active=bool(state.ui.timer_alert_active),
+        timer_alert_blink_on=bool(state.ui.timer_alert_blink_on),
+        timer_last_completed_seconds=int(state.ui.timer_last_completed_seconds or 0),
         clock_minute_bucket=int(state.ui.clock_minute_bucket or 0),
         widget_mode=str(state.ui.widget_mode.value if hasattr(state.ui.widget_mode, "value") else state.ui.widget_mode),
         weather_day_index=int(state.ui.weather_day_index or 0),
@@ -451,6 +457,9 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         if (
             prev.timer_seconds != curr.timer_seconds
             or prev.timer_running != curr.timer_running
+            or prev.timer_alert_active != curr.timer_alert_active
+            or prev.timer_alert_blink_on != curr.timer_alert_blink_on
+            or prev.timer_last_completed_seconds != curr.timer_last_completed_seconds
             or prev.widget_mode != curr.widget_mode
         ):
             rects.append(regions["time_status"])

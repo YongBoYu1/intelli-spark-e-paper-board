@@ -35,6 +35,12 @@ def _fit_font_for_text(draw, fonts, key: str, text: str, *, max_size: int, min_s
     return fonts.get(key, min_size)
 
 
+def _timer_done_message(done_seconds: int) -> str:
+    secs = max(1, int(done_seconds or 0))
+    mins = max(1, int(round(float(secs) / 60.0)))
+    return f"{mins}分钟的倒计时结束"
+
+
 def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     theme = apply_panel_font_template(theme)
     draw = ImageDraw.Draw(image)
@@ -81,6 +87,8 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     draw.line((24, 68, w - 24, 68), fill=border, width=int(theme.get("divider_width", 2) or 2))
 
     secs = max(0, int(state.ui.timer_seconds or 0))
+    alert_active = bool(state.ui.timer_alert_active) and secs <= 0
+    blink_on = bool(state.ui.timer_alert_blink_on)
     mm = secs // 60
     ss = secs % 60
     time_text = f"{mm:02d}:{ss:02d}"
@@ -88,7 +96,10 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     time_max_size = max(120, int(theme.get("timer_time_size", 160) or 160))
     time_min_size = max(80, int(theme.get("timer_time_min_size", 96) or 96))
 
-    if secs <= 0:
+    if alert_active:
+        done_seconds = int(state.ui.timer_last_completed_seconds or state.ui.timer_target_seconds or 0)
+        status_text = _timer_done_message(done_seconds)
+    elif secs <= 0:
         status_text = "READY"
     elif bool(state.ui.timer_running):
         status_text = "RUNNING"
@@ -113,6 +124,15 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     status_gap = max(20, int(theme.get("timer_status_gap", 38) or 38))
     content_top = int(theme.get("timer_time_top", 112) or 112)
     available_bottom = row_y - 26
+    status_font = _fit_font_for_text(
+        draw,
+        fonts,
+        body_focus_key,
+        status_text,
+        max_size=max(20, int(body_base + 4)),
+        min_size=max(13, int(body_base - 1)),
+        max_width=(w - 72),
+    )
     status_bbox_0 = draw.textbbox((0, 0), status_text, font=status_font)
     status_h = max(1, status_bbox_0[3] - status_bbox_0[1])
 
@@ -142,7 +162,9 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     time_w, _ = text_size(draw, time_text, time_font)
     time_x = (w - time_w) // 2
     time_y = content_top
-    draw.text((time_x, time_y), time_text, font=time_font, fill=ink)
+    show_time_text = (not alert_active) or blink_on
+    if show_time_text:
+        draw.text((time_x, time_y), time_text, font=time_font, fill=ink)
 
     time_box = draw.textbbox((time_x, time_y), time_text, font=time_font)
     status_y = time_box[3] + status_gap
