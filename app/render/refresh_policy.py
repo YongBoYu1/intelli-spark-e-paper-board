@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from app.core.kitchen_queue import KITCHEN_LEFT_FOCUS_DATE, KITCHEN_LEFT_FOCUS_SLOTS, KITCHEN_LEFT_FOCUS_WEATHER
 from app.core.state import AppState, Screen
 
 Rect = tuple[int, int, int, int]
@@ -324,6 +325,24 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             max(ox0 + 28, left_split - 20),
             oy1,
         ),
+        "left_focus_date": (
+            ox0,
+            oy0 + int((oy1 - oy0) * 0.16),
+            left_split,
+            oy0 + int((oy1 - oy0) * 0.36),
+        ),
+        "left_focus_time": (
+            ox0,
+            oy0,
+            left_split,
+            oy0 + int((oy1 - oy0) * 0.26),
+        ),
+        "left_focus_weather": (
+            ox0 + int((left_split - ox0) * 0.58),
+            oy0,
+            left_split,
+            oy0 + int((oy1 - oy0) * 0.48),
+        ),
         "left_focus_indicator": (
             max(ox0, left_split - 34),
             oy0 + 4,
@@ -354,7 +373,7 @@ def _home_menu_overlay_region(width: int, height: int) -> Rect:
 
 def _home_focus_row_rect(width: int, height: int, focus_index: int) -> Rect | None:
     # Approximate row geometry from app/ui/home_kitchen.py theme defaults.
-    if int(focus_index) <= 0:
+    if int(focus_index) < KITCHEN_LEFT_FOCUS_SLOTS:
         return None
 
     w = max(1, int(width))
@@ -376,7 +395,7 @@ def _home_focus_row_rect(width: int, height: int, focus_index: int) -> Rect | No
     shop_row_h = 40
     row_h = 56
 
-    pos = int(focus_index) - 1
+    pos = int(focus_index) - KITCHEN_LEFT_FOCUS_SLOTS
     if pos < 0:
         return None
     if pos < inv_max:
@@ -391,6 +410,17 @@ def _home_focus_row_rect(width: int, height: int, focus_index: int) -> Rect | No
     if x1 <= x0 or y1 <= y0:
         return None
     return (x0, y0, x1, y1)
+
+
+def _home_left_focus_rect(regions: dict[str, Rect], focus_index: int) -> Rect | None:
+    idx = int(focus_index)
+    if idx < 0 or idx >= KITCHEN_LEFT_FOCUS_SLOTS:
+        return None
+    if idx == KITCHEN_LEFT_FOCUS_WEATHER:
+        return regions.get("left_focus_weather")
+    if idx == KITCHEN_LEFT_FOCUS_DATE:
+        return regions.get("left_focus_date")
+    return regions.get("left_focus_time")
 
 
 def infer_dirty_rects(prev: UiSnapshot, curr: UiSnapshot, width: int, height: int) -> list[Rect]:
@@ -479,6 +509,8 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
     if prev.focused_index != curr.focused_index:
         prev_row = _home_focus_row_rect(width, height, prev.focused_index)
         curr_row = _home_focus_row_rect(width, height, curr.focused_index)
+        prev_left = _home_left_focus_rect(regions, prev.focused_index)
+        curr_left = _home_left_focus_rect(regions, curr.focused_index)
         if prev_row is not None and curr_row is not None:
             rects.append(prev_row)
             if curr_row != prev_row:
@@ -486,14 +518,25 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             reasons.append("home.focus_move_row")
         elif prev_row is not None and curr_row is None:
             rects.append(prev_row)
-            rects.append(regions["left_focus_indicator"])
+            if curr_left is not None:
+                rects.append(curr_left)
+            else:
+                rects.append(regions["left_focus_indicator"])
             reasons.append("home.focus_to_left_panel")
         elif prev_row is None and curr_row is not None:
             rects.append(curr_row)
-            rects.append(regions["left_focus_indicator"])
+            if prev_left is not None:
+                rects.append(prev_left)
+            else:
+                rects.append(regions["left_focus_indicator"])
             reasons.append("home.focus_from_left_panel")
         else:
-            rects.append(regions["left_focus_indicator"])
+            if prev_left is not None:
+                rects.append(prev_left)
+            if curr_left is not None and curr_left != prev_left:
+                rects.append(curr_left)
+            if prev_left is None and curr_left is None:
+                rects.append(regions["left_focus_indicator"])
             reasons.append("home.focus_left_panel_only")
         # Do not force a left-panel redraw on focus entering/leaving index 0.
         # In current kitchen renderer there is no persistent left focus ring by default.

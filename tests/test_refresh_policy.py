@@ -100,13 +100,18 @@ class RefreshPolicyTests(unittest.TestCase):
         self.assertIn("menu.focus_move", reasons)
 
     def test_home_focus_move_prefers_row_dirty_rect(self) -> None:
-        prev = AppState(model=DashboardModel())
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="r1", title="Task 1", category="fridge"),
+            Reminder(rid="r2", title="Task 2", category="shopping"),
+        ]
+        prev = AppState(model=model)
         prev.ui.screen = Screen.HOME
-        prev.ui.focused_index = 1
+        prev.ui.focused_index = 3
 
-        curr = AppState(model=DashboardModel())
+        curr = AppState(model=model)
         curr.ui.screen = Screen.HOME
-        curr.ui.focused_index = 2
+        curr.ui.focused_index = 4
 
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("home.focus_move_row", reasons)
@@ -124,7 +129,7 @@ class RefreshPolicyTests(unittest.TestCase):
             )
         prev = AppState(model=model_prev)
         prev.ui.screen = Screen.HOME
-        prev.ui.focused_index = 2
+        prev.ui.focused_index = 3
 
         model_curr = DashboardModel()
         model_curr.reminders = []
@@ -140,7 +145,7 @@ class RefreshPolicyTests(unittest.TestCase):
             )
         curr = AppState(model=model_curr)
         curr.ui.screen = Screen.HOME
-        curr.ui.focused_index = 2
+        curr.ui.focused_index = 3
 
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("home.reminder_row_update", reasons)
@@ -178,20 +183,25 @@ class RefreshPolicyTests(unittest.TestCase):
         self.assertLess(ratio, 0.24)
 
     def test_home_focus_to_left_panel_uses_small_regions(self) -> None:
-        prev = AppState(model=DashboardModel())
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="r1", title="Task 1", category="fridge"),
+            Reminder(rid="r2", title="Task 2", category="shopping"),
+        ]
+        prev = AppState(model=model)
         prev.ui.screen = Screen.HOME
-        prev.ui.focused_index = 1
+        prev.ui.focused_index = 3
 
-        curr = AppState(model=DashboardModel())
+        curr = AppState(model=model)
         curr.ui.screen = Screen.HOME
-        curr.ui.focused_index = 0
+        curr.ui.focused_index = 2
 
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("home.focus_to_left_panel", reasons)
         merged = merge_rects(rects, 800, 480)
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
-        self.assertLess(ratio, 0.24)
+        self.assertLess(ratio, 0.30)
 
     def test_home_voice_overlay_change_uses_voice_zone_rect(self) -> None:
         prev = AppState(model=DashboardModel())

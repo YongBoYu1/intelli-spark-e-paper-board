@@ -4,7 +4,11 @@ from dataclasses import replace
 import time
 from typing import Optional
 
-from app.core.kitchen_queue import kitchen_visible_task_indices
+from app.core.kitchen_queue import (
+    KITCHEN_LEFT_FOCUS_SLOTS,
+    kitchen_left_focus_kind,
+    kitchen_visible_task_indices,
+)
 from app.core.settings_schema import SettingsItem, SETTINGS_ORDER
 from app.core.state import AppState, Screen, Reminder, MenuItemId, WidgetMode
 
@@ -108,9 +112,9 @@ def _clamp_focus_home(state: AppState, items_per_page: int) -> None:
 
 
 def _clamp_focus_kitchen(state: AppState, theme: Optional[dict] = None) -> None:
-    # Focus queue: [LEFT_PANEL, TASK_0..] where tasks are visible+sorted by category.
+    # Focus queue: [DATE, TIME, WEATHER, TASK_0..] where tasks are visible+sorted by category.
     idxs = _kitchen_visible_task_indices(state, theme)
-    n = 1 + len(idxs)
+    n = KITCHEN_LEFT_FOCUS_SLOTS + len(idxs)
     if n <= 0:
         state.ui.focused_index = 0
         return
@@ -395,7 +399,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             # merge with voice dirty regions and force a large full refresh.
             if state.ui.voice_active or state.ui.menu_overlay_active or in_interaction_pause:
                 state.ui.memo_last_rotated_at = now
-            elif state.ui.focused_index != 0 and not state.ui.idle:
+            elif state.ui.focused_index >= KITCHEN_LEFT_FOCUS_SLOTS and not state.ui.idle:
                 if (now - float(state.ui.memo_last_rotated_at or now)) >= interval_s and state.model.memos:
                     state.ui.memo_index = (int(state.ui.memo_index or 0) + 1) % max(1, len(state.model.memos))
                     state.ui.memo_last_rotated_at = now
@@ -455,7 +459,12 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         return state
 
     if isinstance(event, MemoDelta):
-        if state.ui.screen == Screen.HOME and variant == "kitchen" and state.ui.focused_index == 0 and state.model.memos:
+        if (
+            state.ui.screen == Screen.HOME
+            and variant == "kitchen"
+            and int(state.ui.focused_index or 0) < KITCHEN_LEFT_FOCUS_SLOTS
+            and state.model.memos
+        ):
             state.ui.memo_index = (int(state.ui.memo_index or 0) + event.delta) % max(1, len(state.model.memos))
             state.ui.memo_last_rotated_at = now
         return state
@@ -470,16 +479,26 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 _activate_menu_pick(state, state.ui.menu_focused, now, theme=theme, items_per_page=items_per_page, variant=variant)
                 return state
             if variant == "kitchen":
-                if state.ui.focused_index == 0:
-                    if state.ui.widget_mode == WidgetMode.TIMER:
-                        state.ui.timer_running = not state.ui.timer_running
-                        state.ui.timer_last_tick_at = now
-                    else:
-                        state.ui.screen = Screen.WEATHER
-                        state.ui.weather_day_index = 0
+                focus_kind = kitchen_left_focus_kind(int(state.ui.focused_index or 0))
+                if focus_kind == "weather":
+                    state.ui.screen = Screen.WEATHER
+                    state.ui.weather_day_index = 0
+                elif focus_kind == "time":
+                    state.ui.widget_mode = WidgetMode.TIMER
+                    if int(state.ui.timer_seconds or 0) <= 0:
+                        state.ui.timer_seconds = _timer_default_s(theme)
+                    state.ui.timer_running = False
+                    state.ui.timer_last_tick_at = now
+                    state.ui.timer_focused_index = 2
+                    state.ui.screen = Screen.TIMER
+                elif focus_kind == "date":
+                    state.ui.screen = Screen.CALENDAR
+                    state.ui.calendar_offset_days = 0
+                    state.ui.calendar_mode = "date"
+                    state.ui.calendar_selected_index = 0
                 else:
                     idxs = _kitchen_visible_task_indices(state, theme)
-                    pos = int(state.ui.focused_index) - 1
+                    pos = int(state.ui.focused_index) - KITCHEN_LEFT_FOCUS_SLOTS
                     if 0 <= pos < len(idxs):
                         _toggle_task_completed_by_index(state, idxs[pos])
                         _clamp_focus_kitchen(state, theme)
@@ -563,7 +582,10 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 state.ui.menu_overlay_active = False
                 return state
             # TSX: Back cancels timer when focused on clock, otherwise opens menu.
-            if state.ui.widget_mode == WidgetMode.TIMER and state.ui.focused_index == 0:
+            timer_focus_on_home = int(state.ui.focused_index or 0) == 0
+            if variant == "kitchen":
+                timer_focus_on_home = kitchen_left_focus_kind(int(state.ui.focused_index or 0)) == "time"
+            if state.ui.widget_mode == WidgetMode.TIMER and timer_focus_on_home:
                 state.ui.timer_running = False
                 state.ui.widget_mode = WidgetMode.CLOCK
                 state.ui.timer_seconds = 0
