@@ -20,7 +20,7 @@ def render_placeholder(image, state: AppState, fonts, theme: dict) -> None:
         title = "INVENTORY"
     elif state.ui.screen == Screen.REMINDERS:
         title = "REMINDERS"
-    if state.ui.active_menu == MenuItemId.SETTINGS:
+    elif state.ui.active_menu == MenuItemId.SETTINGS:
         title = "SETTINGS"
     elif state.ui.active_menu == MenuItemId.MEMO:
         title = "MEMO"

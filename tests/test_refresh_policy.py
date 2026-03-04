@@ -271,5 +271,29 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.50)
 
+    def test_home_focus_row_mapping_uses_real_inventory_count(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="s1", title="Eggs", right="", completed=False, category="shopping"),
+        ]
+
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 3  # reminders header when fridge count is 1
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 4  # first reminders item
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.focus_move_row", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        _, y0, _, _ = merged or (0, 0, 0, 0)
+        # Reminders section is in the lower half; if this maps near top rows,
+        # focus-row geometry is still using a fixed inventory span.
+        self.assertGreater(y0, 220)
+
 if __name__ == "__main__":
     unittest.main()
