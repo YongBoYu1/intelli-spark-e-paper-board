@@ -683,14 +683,21 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         cx += tw + name_gap
 
     posted = _format_memo_posted((memo.timestamp if memo else None), t)
+    posted_w = 0
     posted_h = text_size(draw, "Ag", f_posted)[1]
-    posted_max_y = oy1 - int(t["b_left_bottom_pad"]) - posted_h
+    posted_bottom_off = posted_h
+    posted_max_y = oy1 - int(t["b_left_bottom_pad"]) - posted_bottom_off
     posted_prefix = str(t.get("b_posted_prefix") or "-").strip() or "-"
     posted_label_raw = f"{posted_prefix} {posted}" if posted else ""
     posted_label = truncate_text(draw, posted_label_raw, f_posted, max(40, lx1 - lx0 - 12)) if posted_label_raw else ""
-    posted_w = 0
     if posted_label:
-        posted_w, posted_h = text_size(draw, posted_label, f_posted)
+        pb = draw.textbbox((0, 0), posted_label, font=f_posted)
+        posted_w = int(pb[2] - pb[0])
+        posted_h = int(pb[3] - pb[1])
+        posted_bottom_off = int(pb[3])
+        if posted_bottom_off <= int(pb[1]):
+            posted_bottom_off = posted_h
+        posted_max_y = oy1 - int(t["b_left_bottom_pad"]) - posted_bottom_off
         pending_confirm = bool(state.ui.voice_confirm_tool) and float(state.ui.voice_confirm_due_at or 0.0) > time.time()
         show_voice_lane = bool(state.ui.voice_active) or pending_confirm or bool(t.get("voice_zone_show_idle_home", True))
         if show_voice_lane:
@@ -700,8 +707,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             v_lane_h = int(t.get("voice_zone_lane_h", 29) or 29)
             vy1 = h - v_margin
             vy0 = max(v_margin, vy1 - v_lane_h) - 1
-            avoid_gap = max(1, int(t.get("b_posted_voice_overlap_gap", 4) or 4))
-            posted_max_y = min(posted_max_y, vy0 - posted_h - avoid_gap)
+            avoid_gap = max(1, int(t.get("b_posted_voice_overlap_gap", 12) or 12))
+            posted_max_y = min(posted_max_y, vy0 - posted_bottom_off - avoid_gap)
             posted_max_y = max(oy0 + 8, posted_max_y)
 
     meta_row_bottom = label_y + text_size(draw, "Ag", f_micro)[1]
