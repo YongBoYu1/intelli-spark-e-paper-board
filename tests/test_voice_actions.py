@@ -336,6 +336,20 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(result.status, "done")
         self.assertGreater(len(self.state.model.reminders), 0)
 
+    def test_apply_no_action_gemini_error_returns_error_status(self) -> None:
+        action = VoiceAction(tool="no_action", args={"reason": "gemini_error:timeout"})
+        result = apply_voice_action(self.state, action)
+        self.assertFalse(result.changed)
+        self.assertEqual(result.status, "error")
+        self.assertIn("service is unavailable", result.message.lower())
+
+    def test_apply_no_action_missing_item_has_guidance(self) -> None:
+        action = VoiceAction(tool="no_action", args={"reason": "missing_item_name"})
+        result = apply_voice_action(self.state, action)
+        self.assertFalse(result.changed)
+        self.assertEqual(result.status, "done")
+        self.assertIn("item name", result.message.lower())
+
     def test_apply_voice_plan_partial_success(self) -> None:
         plan = VoicePlan(
             actions=[
@@ -389,6 +403,21 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(result.status, "done")
         self.assertNotIn("removed from the shopping list", result.message.lower())
         self.assertIn("which milk", result.message.lower())
+
+    def test_no_action_message_uses_reason_specific_guidance(self) -> None:
+        plan = parse_voice_plan(
+            {
+                "plan": {
+                    "actions": [
+                        {"tool": "no_action", "args": {"reason": "insufficient_context"}},
+                    ],
+                }
+            }
+        )
+        result = apply_voice_plan(self.state, plan, transcript="do that again")
+        self.assertFalse(result.changed)
+        self.assertEqual(result.status, "done")
+        self.assertIn("more context", result.message.lower())
 
     def test_skipped_non_no_action_uses_step_message_instead_of_generic_copy(self) -> None:
         plan = parse_voice_plan(
