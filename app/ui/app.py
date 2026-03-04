@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw
 from app.core.state import AppState, Screen, MenuItemId, WidgetMode
 from app.ui.home import render_home
 from app.ui.home_kitchen import render_home_kitchen
+from app.ui.home_kitchen_portrait import render_home_kitchen_portrait
 from app.ui.calendar import render_calendar
 from app.ui.weather_detail import render_weather_detail
 from app.ui.menu import render_menu, render_menu_overlay_home
@@ -670,6 +671,10 @@ def _render_no_rotation(image, state: AppState, fonts, theme: dict) -> None:
 
     # HOME: choose renderer variant based on theme (default: kitchen).
     variant = str((theme or {}).get("home_variant") or "kitchen").strip().lower()
+    if variant == "kitchen_portrait":
+        render_home_kitchen_portrait(image, state, fonts, theme)
+        _draw_voice_overlay(image, state, fonts, theme)
+        return
     if variant == "kitchen":
         render_home_kitchen(image, state, fonts, theme)
         if state.ui.menu_overlay_active:
