@@ -190,10 +190,6 @@ def _cycle_value(current, options: list):
 
 
 def _handle_settings_click(state: AppState, now: float) -> None:
-    if int(state.ui.settings_focused_index or 0) < 0:
-        state.ui.screen = Screen.HOME
-        return
-
     item = _settings_item_for_focus(state)
 
     if item == SettingsItem.FONT_SIZE:
@@ -449,11 +445,10 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 state.ui.calendar_offset_days = int(state.ui.calendar_offset_days or 0) + event.delta
         elif state.ui.screen == Screen.SETTINGS:
             n = max(1, len(SETTINGS_ORDER))
-            total = n + 1  # +1 for header home icon focus target
             cur = int(state.ui.settings_focused_index or 0)
-            pos = 0 if cur < 0 else (cur + 1)
-            pos = (pos + event.delta) % total
-            state.ui.settings_focused_index = -1 if pos == 0 else (pos - 1)
+            if cur < 0:
+                cur = 0
+            state.ui.settings_focused_index = (cur + event.delta) % n
         elif state.ui.screen == Screen.TIMER:
             state.ui.timer_focused_index = int(state.ui.timer_focused_index or 0) + event.delta
             _clamp_timer_focus(state)

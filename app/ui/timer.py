@@ -5,7 +5,6 @@ from PIL import ImageDraw
 from app.core.state import AppState
 from app.shared.draw import draw_text_spaced, text_size, text_width_spaced
 from app.shared.panel_font_templates import apply_panel_font_template
-from app.ui.settings import _draw_home_icon
 
 
 def _timer_step_s(theme: dict) -> int:
@@ -71,17 +70,9 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
 
     title_y = 16
     title_text = "TIMER"
-    title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
-    title_mid_y = title_y + int(round((title_bbox[1] + title_bbox[3]) / 2.0))
-    title_h = max(1, int(title_bbox[3] - title_bbox[1]))
-    icon_size = max(38, int(round(title_h * 0.84)))
-    icon_x = 24
-    icon_y = max(4, title_mid_y - (icon_size // 2) - 2)
-    _draw_home_icon(image, icon_x, icon_y, icon_size, ink)
-
-    title_x = icon_x + icon_size + 14
+    title_x = 24
     draw.text((title_x, title_y), title_text, font=title_font, fill=ink)
-    hint_text = "ROTATE TO SELECT  -  CLICK TO CHANGE"
+    hint_text = "Rotate to select  -  Click to enter  -  Long press to home"
     if meta_compact:
         hint_text = hint_text.upper()
     hint_w = text_width_spaced(draw, hint_text, hint_font, spacing=meta_spacing)

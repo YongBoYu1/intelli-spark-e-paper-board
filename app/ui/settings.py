@@ -134,31 +134,14 @@ def render_settings(image, state: AppState, fonts, theme: dict) -> None:
     row_focus_font = fonts.get(body_focus_key, label_size)
     value_font = fonts.get(meta_key, value_size)
 
-    focused_raw = int(state.ui.settings_focused_index or 0)
-    home_focused = focused_raw < 0
-    focused = focused_raw if focused_raw >= 0 else -1
+    focused = max(0, int(state.ui.settings_focused_index or 0))
 
     title_y = 16
-    title_bbox = draw.textbbox((0, 0), "SETTINGS", font=title_font)
-    title_mid_y = title_y + int(round((title_bbox[1] + title_bbox[3]) / 2.0))
-    title_h = max(1, int(title_bbox[3] - title_bbox[1]))
-    icon_size = max(38, int(round(title_h * 0.84)))
-    icon_x = 24
-    icon_y = max(4, title_mid_y - (icon_size // 2) - 2)
-    _draw_home_icon(image, icon_x, icon_y, icon_size, ink)
-    if home_focused:
-        pad = 2
-        draw.rectangle(
-            (icon_x - pad, icon_y - pad, icon_x + icon_size + pad, icon_y + icon_size + pad),
-            outline=ink,
-            width=2,
-            fill=None,
-        )
-        draw.text((icon_x - 15, icon_y + max(2, icon_size // 4)), ">", font=value_font, fill=ink)
-
-    title_x = icon_x + icon_size + 14
+    title_x = 24
     draw.text((title_x, title_y), "SETTINGS", font=title_font, fill=ink)
-    hint_text = "ROTATE TO SELECT  -  CLICK TO CHANGE"
+    hint_text = "Rotate to select  -  Click to enter  -  Long press to home"
+    if meta_compact:
+        hint_text = hint_text.upper()
     hint_w = text_width_spaced(draw, hint_text, meta_font, spacing=meta_spacing)
     hint_x = max(24, (w - 24) - hint_w)
     draw_text_spaced(

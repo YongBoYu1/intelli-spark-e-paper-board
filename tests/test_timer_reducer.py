@@ -171,6 +171,23 @@ class TimerReducerTests(unittest.TestCase):
         self.assertEqual(self.state.ui.memo_index, 0)
         self.assertEqual(self.state.ui.memo_last_rotated_at, 112.0)
 
+    def test_settings_rotate_cycles_only_real_rows(self) -> None:
+        self.state.ui.screen = Screen.SETTINGS
+        self.state.ui.settings_focused_index = 0
+
+        reduce(self.state, Rotate(-1))
+
+        self.assertGreaterEqual(self.state.ui.settings_focused_index, 0)
+
+    def test_settings_click_on_negative_focus_does_not_force_home(self) -> None:
+        self.state.ui.screen = Screen.SETTINGS
+        self.state.ui.settings_focused_index = -1
+
+        reduce(self.state, Click())
+
+        self.assertEqual(self.state.ui.screen, Screen.SETTINGS)
+        self.assertGreaterEqual(self.state.ui.settings_focused_index, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
