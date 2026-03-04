@@ -72,7 +72,7 @@ class MemoItem:
 
 @dataclass
 class DashboardModel:
-    location: str = "New York"
+    location: str = "Unknown"
     battery: int = 84
     reminders: list[Reminder] = field(default_factory=list)
     weather: list[WeatherDay] = field(default_factory=list)
@@ -120,7 +120,7 @@ class UiState:
     calendar_mode: str = "date"  # "date" | "agenda"
     calendar_selected_index: int = 0
 
-    # Weather detail: rotate cycles days in the forecast.
+    # Weather detail selected day (currently fixed in UI; kept for compatibility).
     weather_day_index: int = 0
 
     # Mood panel memo selection + auto-rotation.

@@ -1,6 +1,8 @@
 import json
 import os
 
+from app.data.location import resolve_dashboard_location
+from app.data.weather_api import resolve_weather_data
 from app.shared.paths import find_repo_root
 
 
@@ -8,8 +10,8 @@ def load_dashboard():
     repo_root = find_repo_root(os.path.dirname(__file__))
     path = os.path.join(repo_root, "data", "dashboard.json")
     if not os.path.exists(path):
-        return {
-            "location": "New York",
+        data = {
+            "location": "",
             "battery": 84,
             "page": 1,
             "page_count": 2,
@@ -28,6 +30,12 @@ def load_dashboard():
                 {"dow": "THU", "icon": "storm", "hi": 19, "lo": 13, "humidity": 73},
             ],
         }
+        data["location"] = resolve_dashboard_location(data.get("location"))
+        live_location, live_weather = resolve_weather_data(data.get("location"), data.get("weather"))
+        data["location"] = live_location
+        if live_weather:
+            data["weather"] = live_weather
+        return data
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -37,4 +45,9 @@ def load_dashboard():
         if isinstance(reminders, list):
             data["reminder_total"] = len(reminders)
         data.pop("page_count", None)
+        data["location"] = resolve_dashboard_location(data.get("location"))
+        live_location, live_weather = resolve_weather_data(data.get("location"), data.get("weather"))
+        data["location"] = live_location
+        if live_weather:
+            data["weather"] = live_weather
         return data
