@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime
 from urllib.error import URLError
 from urllib.parse import urlencode
@@ -28,6 +29,19 @@ def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
     except Exception:
         value = int(default)
     return max(minimum, min(maximum, value))
+
+
+def _debug_enabled() -> bool:
+    return _env_flag("WEATHER_DEBUG", False)
+
+
+def _debug(msg: str) -> None:
+    if not _debug_enabled():
+        return
+    try:
+        print(f"[weather_api] {msg}", file=sys.stderr)
+    except Exception:
+        pass
 
 
 def _timeout_s() -> float:
@@ -123,9 +137,11 @@ def _open_meteo_geocode(city: str, *, timeout_s: float) -> tuple[float, float, s
     url = f"{base}?{urlencode(params)}"
     payload = _http_json(url, timeout_s=timeout_s)
     if not payload:
+        _debug(f"geocode_failed city={city} reason=no_payload")
         return None
     rows = payload.get("results")
     if not isinstance(rows, list) or not rows:
+        _debug(f"geocode_failed city={city} reason=no_results")
         return None
     first = rows[0] if isinstance(rows[0], dict) else None
     if not first:
@@ -133,6 +149,7 @@ def _open_meteo_geocode(city: str, *, timeout_s: float) -> tuple[float, float, s
     lat = _to_float(first.get("latitude"))
     lon = _to_float(first.get("longitude"))
     if lat is None or lon is None:
+        _debug(f"geocode_failed city={city} reason=missing_lat_lon")
         return None
     label = _normalize_location_label(first, city)
     timezone = _clean_text(first.get("timezone")) or "auto"
@@ -162,9 +179,11 @@ def _open_meteo_forecast_daily(lat: float, lon: float, *, timezone: str, forecas
     url = f"{base}?{urlencode(params)}"
     payload = _http_json(url, timeout_s=timeout_s)
     if not payload:
+        _debug(f"forecast_failed lat={lat:.3f} lon={lon:.3f} reason=no_payload")
         return []
     daily = payload.get("daily")
     if not isinstance(daily, dict):
+        _debug(f"forecast_failed lat={lat:.3f} lon={lon:.3f} reason=missing_daily")
         return []
 
     times = daily.get("time") or []
@@ -173,6 +192,7 @@ def _open_meteo_forecast_daily(lat: float, lon: float, *, timezone: str, forecas
     weather_code = daily.get("weather_code") or []
     n = min(len(times), len(tmax), len(tmin), len(weather_code))
     if n <= 0:
+        _debug(f"forecast_failed lat={lat:.3f} lon={lon:.3f} reason=empty_vectors")
         return []
 
     apparent = daily.get("apparent_temperature_max") or []
@@ -227,13 +247,16 @@ def resolve_weather_data(location: object, fallback_rows: object) -> tuple[str, 
     fallback = _normalized_fallback_rows(fallback_rows)
 
     if not _env_flag("WEATHER_API_ENABLED", True):
+        _debug("api_disabled_by_env")
         return (city or "Unknown"), fallback
 
     provider = _clean_text(os.environ.get("WEATHER_API_PROVIDER")).lower()
     if provider and provider not in ("open_meteo", "open-meteo", "openmeteo"):
+        _debug(f"unsupported_provider provider={provider}")
         return (city or "Unknown"), fallback
 
     if not city or city.lower() == "unknown":
+        _debug("skip_live_weather reason=unknown_city")
         return (city or "Unknown"), fallback
 
     timeout_s = _timeout_s()
@@ -241,6 +264,7 @@ def resolve_weather_data(location: object, fallback_rows: object) -> tuple[str, 
 
     geo = _open_meteo_geocode(city, timeout_s=timeout_s)
     if not geo:
+        _debug(f"fallback_static reason=geocode_failed city={city}")
         return (city or "Unknown"), fallback
     lat, lon, resolved_city, timezone = geo
 
@@ -252,6 +276,7 @@ def resolve_weather_data(location: object, fallback_rows: object) -> tuple[str, 
         timeout_s=timeout_s,
     )
     if not live:
+        _debug(f"fallback_static reason=forecast_failed city={resolved_city or city}")
         return (resolved_city or city or "Unknown"), fallback
+    _debug(f"live_weather_ok city={resolved_city or city} days={len(live)}")
     return (resolved_city or city or "Unknown"), live
-
