@@ -685,6 +685,24 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     posted = _format_memo_posted((memo.timestamp if memo else None), t)
     posted_h = text_size(draw, "Ag", f_posted)[1]
     posted_max_y = oy1 - int(t["b_left_bottom_pad"]) - posted_h
+    posted_prefix = str(t.get("b_posted_prefix") or "-").strip() or "-"
+    posted_label_raw = f"{posted_prefix} {posted}" if posted else ""
+    posted_label = truncate_text(draw, posted_label_raw, f_posted, max(40, lx1 - lx0 - 12)) if posted_label_raw else ""
+    posted_w = 0
+    if posted_label:
+        posted_w, posted_h = text_size(draw, posted_label, f_posted)
+        pending_confirm = bool(state.ui.voice_confirm_tool) and float(state.ui.voice_confirm_due_at or 0.0) > time.time()
+        show_voice_lane = bool(state.ui.voice_active) or pending_confirm or bool(t.get("voice_zone_show_idle_home", True))
+        if show_voice_lane:
+            v_margin = int(t.get("voice_zone_margin", 14) or 14)
+            v_zone_w = int(t.get("voice_zone_width", min(380, max(300, int(w * 0.46)))) or 340)
+            v_zone_w = max(220, min(v_zone_w, max(220, w - v_margin * 2)))
+            v_lane_h = int(t.get("voice_zone_lane_h", 29) or 29)
+            vy1 = h - v_margin
+            vy0 = max(v_margin, vy1 - v_lane_h) - 1
+            avoid_gap = max(1, int(t.get("b_posted_voice_overlap_gap", 4) or 4))
+            posted_max_y = min(posted_max_y, vy0 - posted_h - avoid_gap)
+            posted_max_y = max(oy0 + 8, posted_max_y)
 
     meta_row_bottom = label_y + text_size(draw, "Ag", f_micro)[1]
     if labels:
@@ -780,11 +798,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     posted_text_y = min(posted_max_y, posted_cap_y)
     if posted_text_y < posted_min_y:
         posted_text_y = min(posted_max_y, posted_min_y)
-    posted_prefix = str(t.get("b_posted_prefix") or "-").strip() or "-"
-    posted_label_raw = f"{posted_prefix} {posted}" if posted else ""
-    posted_label = truncate_text(draw, posted_label_raw, f_posted, max(40, lx1 - lx0 - 12)) if posted_label_raw else ""
     if posted_label:
-        posted_w = text_size(draw, posted_label, f_posted)[0]
         posted_x = max(lx0, lx1 - int(t.get("b_posted_right_inset", 6)) - posted_w)
         draw.text((posted_x, posted_text_y), posted_label, font=f_posted, fill=ink)
 
