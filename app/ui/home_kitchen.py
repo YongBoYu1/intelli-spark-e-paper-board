@@ -5,12 +5,7 @@ import time
 
 from PIL import ImageDraw
 
-from app.core.kitchen_queue import (
-    KITCHEN_LEFT_FOCUS_SLOTS,
-    kitchen_left_focus_kind,
-    kitchen_queue_theme_key,
-    kitchen_visible_task_indices,
-)
+from app.core.kitchen_queue import kitchen_queue_theme_key, kitchen_visible_task_indices
 from app.core.state import AppState
 from app.shared.draw import draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
 from app.ui.weather_detail import _draw_weather_icon_pack
@@ -400,10 +395,9 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     split_x = ox0 + int((ox1 - ox0) * float(t["b_split_ratio"]))
     draw.line((split_x, oy0, split_x, oy1), fill=ink, width=int(t["b_divider_w"]))
 
-    # Focus on left panel (date / time / weather)
+    # Focus on left panel (index 0)
     focus_idx = int(state.ui.focused_index or 0)
-    focus_kind = kitchen_left_focus_kind(focus_idx)
-    if bool(t.get("b_show_focus_ring")) and not state.ui.idle and focus_kind:
+    if bool(t.get("b_show_focus_ring")) and not state.ui.idle and focus_idx == 0:
         rounded_rect(
             draw,
             (ox0 + 2, oy0 + 2, split_x - 2, oy1 - 2),
@@ -507,7 +501,6 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         display_font = fonts.get("inter_black", _font_px(display_size))
 
     draw.text((clock_x, clock_y), time_str, font=display_font, fill=ink)
-    time_w, time_h = text_size(draw, time_str, display_font)
 
     wy = time_flow_box[3] + int(t["b_time_weekday_gap"])
     w_spacing = int(t["b_weekday_spacing"])
@@ -517,7 +510,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     dy = wy + wh + int(t["b_weekday_date_gap"])
     draw.text((lx0, dy), month_day, font=f_date, fill=date_muted)
-    date_w, dh = text_size(draw, month_day, f_date)
+    _, dh = text_size(draw, month_day, f_date)
 
     weather_bottom = dy + dh
     if state.model.weather:
@@ -598,32 +591,16 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
         weather_bottom = max(weather_bottom, desc_y + dh2, humidity_bottom)
 
-    if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_kind:
+    if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 0:
         focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
         focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
         focus_right_trim = int(t.get("b_right_focus_right_trim", 2))
         focus_radius = int(t.get("b_right_focus_radius", 5))
         focus_w = max(1, int(t.get("b_right_focus_w", 1)))
-        fy0 = 0
-        fy1 = 0
-        fx0 = 0
-        fx1 = 0
-        if focus_kind == "weather":
-            fy0 = max(oy0 + 2, top_y + int(t.get("b_weather_top", 0)) - focus_pad_y)
-            fy1 = weather_bottom + focus_pad_y
-            fx0 = weather_left - focus_pad_x
-            fx1 = weather_right + focus_pad_x - focus_right_trim
-        elif focus_kind == "time":
-            fy0 = clock_y - focus_pad_y
-            fy1 = clock_y + time_h + focus_pad_y
-            fx0 = clock_x - focus_pad_x
-            fx1 = clock_x + time_w + focus_pad_x - focus_right_trim
-        elif focus_kind == "date":
-            text_right = lx0 + max(ww, date_w)
-            fy0 = wy - focus_pad_y
-            fy1 = dy + dh + focus_pad_y
-            fx0 = lx0 - focus_pad_x
-            fx1 = text_right + focus_pad_x - focus_right_trim
+        fy0 = max(oy0 + 2, top_y + int(t.get("b_weather_top", 0)) - focus_pad_y)
+        fy1 = weather_bottom + focus_pad_y
+        fx0 = weather_left - focus_pad_x
+        fx1 = weather_right + focus_pad_x - focus_right_trim
         if fy1 > fy0 and fx1 > fx0:
             rounded_rect(
                 draw,
@@ -1154,11 +1131,11 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
 
 def _kitchen_focus_rid(state: AppState, focused_index: int, theme: dict | None = None) -> str:
-    # focused_index: 0..2 are left panel hotspots; 3.. maps to visible tasks list
-    if focused_index < KITCHEN_LEFT_FOCUS_SLOTS:
+    # focused_index: 0 is left panel; 1.. maps to visible tasks list
+    if focused_index <= 0:
         return ""
     visible_idxs = kitchen_visible_task_indices(state, theme)
-    pos = focused_index - KITCHEN_LEFT_FOCUS_SLOTS
+    pos = focused_index - 1
     if 0 <= pos < len(visible_idxs):
         return state.model.reminders[visible_idxs[pos]].rid
     return ""

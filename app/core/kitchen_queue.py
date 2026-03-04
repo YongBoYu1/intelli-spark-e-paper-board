@@ -2,11 +2,6 @@ from __future__ import annotations
 
 from app.core.state import AppState
 
-KITCHEN_LEFT_FOCUS_DATE = 0
-KITCHEN_LEFT_FOCUS_TIME = 1
-KITCHEN_LEFT_FOCUS_WEATHER = 2
-KITCHEN_LEFT_FOCUS_SLOTS = 3
-
 
 def _max_rows(theme: dict | None, key: str, default: int) -> int:
     raw = default if theme is None else theme.get(key, default)
@@ -66,13 +61,3 @@ def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> 
                 shop.append(i)
 
     return fridge + shop
-
-
-def kitchen_left_focus_kind(focused_index: int) -> str:
-    if focused_index == KITCHEN_LEFT_FOCUS_DATE:
-        return "date"
-    if focused_index == KITCHEN_LEFT_FOCUS_TIME:
-        return "time"
-    if focused_index == KITCHEN_LEFT_FOCUS_WEATHER:
-        return "weather"
-    return ""
