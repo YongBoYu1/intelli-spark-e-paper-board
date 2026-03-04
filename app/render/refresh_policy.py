@@ -372,17 +372,32 @@ def _home_focus_row_rect(width: int, height: int, focus_index: int) -> Rect | No
     inv_start_y = oy0 + max(8, right_pad - 6) + 34
     inv_row_h = 40
     inv_max = 3
+    inv_header_cy = oy0 + max(8, right_pad - 6) + (inv_row_h // 2)
     shop_start_y = oy0 + int((oy1 - oy0) * 0.62)
     shop_row_h = 40
+    shop_header_cy = shop_start_y - (shop_row_h // 2)
     row_h = 56
 
     pos = int(focus_index) - 1
     if pos < 0:
         return None
-    if pos < inv_max:
-        cy = inv_start_y + (pos * inv_row_h) + (inv_row_h // 2)
+
+    if pos == 0:
+        cy = inv_header_cy
     else:
-        cy = shop_start_y + ((pos - inv_max) * shop_row_h) + (shop_row_h // 2)
+        pos -= 1
+
+    if pos >= 0 and pos < inv_max:
+        cy = inv_start_y + (pos * inv_row_h) + (inv_row_h // 2)
+    elif pos >= inv_max:
+        pos -= inv_max
+        if pos == 0:
+            cy = shop_header_cy
+        else:
+            pos -= 1
+            cy = shop_start_y + (max(0, pos) * shop_row_h) + (shop_row_h // 2)
+    else:
+        cy = inv_header_cy
 
     y0 = max(oy0, cy - (row_h // 2))
     y1 = min(oy1, y0 + row_h)

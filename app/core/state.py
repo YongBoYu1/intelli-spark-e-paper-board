@@ -12,6 +12,8 @@ class Screen(str, Enum):
     TIMER = "timer"
     CALENDAR = "calendar"
     WEATHER = "weather"
+    INVENTORY = "inventory"
+    REMINDERS = "reminders"
     SETTINGS = "settings"
     PLACEHOLDER = "placeholder"
 

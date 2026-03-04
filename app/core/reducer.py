@@ -4,7 +4,16 @@ from dataclasses import replace
 import time
 from typing import Optional
 
-from app.core.kitchen_queue import kitchen_visible_task_indices
+from app.core.kitchen_queue import (
+    KITCHEN_FOCUS_INVENTORY_HEADER,
+    KITCHEN_FOCUS_INVENTORY_ITEM,
+    KITCHEN_FOCUS_LEFT_PANEL,
+    KITCHEN_FOCUS_REMINDERS_HEADER,
+    KITCHEN_FOCUS_REMINDERS_ITEM,
+    kitchen_focus_count,
+    kitchen_focus_target,
+    kitchen_visible_task_indices,
+)
 from app.core.settings_schema import SettingsItem, SETTINGS_ORDER
 from app.core.state import AppState, Screen, Reminder, MenuItemId, WidgetMode
 
@@ -108,9 +117,8 @@ def _clamp_focus_home(state: AppState, items_per_page: int) -> None:
 
 
 def _clamp_focus_kitchen(state: AppState, theme: Optional[dict] = None) -> None:
-    # Focus queue: [LEFT_PANEL, TASK_0..] where tasks are visible+sorted by category.
-    idxs = _kitchen_visible_task_indices(state, theme)
-    n = 1 + len(idxs)
+    # Focus queue: [LEFT_PANEL, INVENTORY_HEADER, INVENTORY_ITEMS..., REMINDERS_HEADER, REMINDERS_ITEMS...]
+    n = kitchen_focus_count(state, theme)
     if n <= 0:
         state.ui.focused_index = 0
         return
@@ -470,19 +478,24 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 _activate_menu_pick(state, state.ui.menu_focused, now, theme=theme, items_per_page=items_per_page, variant=variant)
                 return state
             if variant == "kitchen":
-                if state.ui.focused_index == 0:
+                target_kind, target_idx = kitchen_focus_target(state, int(state.ui.focused_index or 0), theme)
+                if target_kind == KITCHEN_FOCUS_LEFT_PANEL:
                     if state.ui.widget_mode == WidgetMode.TIMER:
                         state.ui.timer_running = not state.ui.timer_running
                         state.ui.timer_last_tick_at = now
                     else:
                         state.ui.screen = Screen.WEATHER
                         state.ui.weather_day_index = 0
-                else:
-                    idxs = _kitchen_visible_task_indices(state, theme)
-                    pos = int(state.ui.focused_index) - 1
-                    if 0 <= pos < len(idxs):
-                        _toggle_task_completed_by_index(state, idxs[pos])
+                elif target_kind == KITCHEN_FOCUS_INVENTORY_HEADER:
+                    state.ui.screen = Screen.INVENTORY
+                elif target_kind == KITCHEN_FOCUS_REMINDERS_HEADER:
+                    state.ui.screen = Screen.REMINDERS
+                elif target_kind in (KITCHEN_FOCUS_INVENTORY_ITEM, KITCHEN_FOCUS_REMINDERS_ITEM):
+                    if target_idx is not None:
+                        _toggle_task_completed_by_index(state, target_idx)
                         _clamp_focus_kitchen(state, theme)
+                else:
+                    _clamp_focus_kitchen(state, theme)
                 return state
 
             # classic home

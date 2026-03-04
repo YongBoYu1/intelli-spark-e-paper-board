@@ -5,7 +5,12 @@ import time
 
 from PIL import ImageDraw
 
-from app.core.kitchen_queue import kitchen_queue_theme_key, kitchen_visible_task_indices
+from app.core.kitchen_queue import (
+    KITCHEN_FOCUS_INVENTORY_HEADER,
+    KITCHEN_FOCUS_REMINDERS_HEADER,
+    kitchen_focus_target,
+    kitchen_queue_theme_key,
+)
 from app.core.state import AppState
 from app.shared.draw import draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
 from app.ui.weather_detail import _draw_weather_icon_pack
@@ -791,7 +796,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     mid_y = oy0 + int((oy1 - oy0) * float(t["b_mid_split_ratio"]))
 
-    # Focus lookup by task id (incomplete order from reducer)
+    # Focus target on right panel: headers + items.
+    focus_kind, _ = kitchen_focus_target(state, focus_idx, t)
     focus_rid = _kitchen_focus_rid(state, focus_idx, t)
     rendered_focus_rids: list[str] = []
 
@@ -799,6 +805,42 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     # [ARTISTIC POLISH] Inventory Header
     inv_y = oy0 + max(8, rp - 6)
+    inv_row_h = int(t["b_inventory_row_h"]) + 4
+    right_focus_style = str(t.get("b_right_focus_style", "row_box")).strip().lower()
+    focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
+    focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
+    focus_right_trim = int(t.get("b_right_focus_right_trim", 2))
+    focus_radius = int(t.get("b_right_focus_radius", 5))
+    focus_w = max(1, int(t.get("b_right_focus_w", 1)))
+    inv_title_h = text_size(draw, "Ag", f_inv_title)[1]
+    inv_hdr_top = inv_y - max(2, focus_pad_y + 1)
+    inv_hdr_bottom = inv_y + inv_title_h + max(3, focus_pad_y + 2)
+
+    if (not state.ui.idle) and (focus_kind == KITCHEN_FOCUS_INVENTORY_HEADER):
+        if right_focus_style == "rail":
+            rail_w = int(t.get("b_right_focus_rail_w", 3))
+            rail_gap = int(t.get("b_right_focus_rail_gap", 6))
+            rail_vpad = int(t.get("b_right_focus_rail_vpad", 5))
+            rx1 = inner_x0 - rail_gap
+            rx0 = rx1 - rail_w
+            ry0 = inv_hdr_top + rail_vpad
+            ry1 = inv_hdr_bottom - rail_vpad
+            if ry1 > ry0:
+                draw.rectangle((rx0, ry0, rx1, ry1), fill=ink)
+        else:
+            fx0 = inner_x0 - focus_pad_x
+            fx1 = inner_x1 + focus_pad_x - focus_right_trim
+            fy0 = inv_hdr_top
+            fy1 = inv_hdr_bottom
+            if fy1 > fy0 and fx1 > fx0:
+                rounded_rect(
+                    draw,
+                    (fx0, fy0, fx1, fy1),
+                    radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                    outline=ink,
+                    width=focus_w,
+                    fill=None,
+                )
 
     inv_title_spacing = int(t.get("b_inventory_title_spacing", 1))
     draw_text_spaced(draw, "INVENTORY", inner_x0, inv_y, f_inv_title, spacing=inv_title_spacing, fill=ink)
@@ -809,14 +851,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         cw = text_width_spaced(draw, cnt, f_inv_title, spacing=inv_title_spacing)
         draw_text_spaced(draw, cnt, inner_x1 - cw, inv_y, f_inv_title, spacing=inv_title_spacing, fill=ink)
 
-    inv_row_h = int(t["b_inventory_row_h"]) + 4
     y = inv_y + int(t["b_inventory_header_gap"])
-    right_focus_style = str(t.get("b_right_focus_style", "row_box")).strip().lower()
-    focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
-    focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
-    focus_right_trim = int(t.get("b_right_focus_right_trim", 2))
-    focus_radius = int(t.get("b_right_focus_radius", 5))
-    focus_w = max(1, int(t.get("b_right_focus_w", 1)))
 
     inv_max_rows = max(1, int(t.get("b_inventory_max_rows", 4)))
     for item in fridge[:inv_max_rows]:
@@ -1008,11 +1043,11 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
         y += inv_row_h
 
-    # Shopping header
+    # Reminders header
     # Keep right-lower section aligned to the left panel section rhythm.
     inv_bottom_y = y
     shop_title_spacing = int(t.get("b_shopping_title_spacing", 1))
-    shop_label = "SHOPPING LIST"
+    shop_label = "REMINDERS"
     shop_rule_gap = int(t.get("b_shop_header_rule_gap", 6))
     shop_rule_w = section_rule_w
     shop_rule_right_max = inner_x1 - int(t.get("b_shop_section_rule_right_gap", 18))
@@ -1024,6 +1059,35 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     shop_rule_y = max(shop_rule_y_target, shop_rule_y_min)
     shop_title_y = shop_rule_y - shop_title_h - shop_line_gap
     shop_label_w = text_width_spaced(draw, shop_label, f_shop_title, spacing=shop_title_spacing)
+    shop_row_h = int(t["b_shopping_row_h"]) + 4
+    shop_hdr_top = shop_title_y - max(2, focus_pad_y + 1)
+    shop_hdr_bottom = max(shop_title_y + shop_title_h, shop_rule_y) + max(3, focus_pad_y + 2)
+
+    if (not state.ui.idle) and (focus_kind == KITCHEN_FOCUS_REMINDERS_HEADER):
+        if right_focus_style == "rail":
+            rail_w = int(t.get("b_right_focus_rail_w", 3))
+            rail_gap = int(t.get("b_right_focus_rail_gap", 6))
+            rail_vpad = int(t.get("b_right_focus_rail_vpad", 5))
+            rx1 = inner_x0 - rail_gap
+            rx0 = rx1 - rail_w
+            ry0 = shop_hdr_top + rail_vpad
+            ry1 = shop_hdr_bottom - rail_vpad
+            if ry1 > ry0:
+                draw.rectangle((rx0, ry0, rx1, ry1), fill=ink)
+        else:
+            fx0 = inner_x0 - focus_pad_x
+            fx1 = inner_x1 + focus_pad_x - focus_right_trim
+            fy0 = shop_hdr_top
+            fy1 = shop_hdr_bottom
+            if fy1 > fy0 and fx1 > fx0:
+                rounded_rect(
+                    draw,
+                    (fx0, fy0, fx1, fy1),
+                    radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                    outline=ink,
+                    width=focus_w,
+                    fill=None,
+                )
 
     # Header: left-aligned title + right count on same baseline.
     shop_title_x = inner_x0
@@ -1040,7 +1104,6 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     if shop_rule_right > shop_rule_left:
         draw.line((shop_rule_left, shop_rule_y, shop_rule_right, shop_rule_y), fill=ink, width=shop_rule_w)
     
-    shop_row_h = int(t["b_shopping_row_h"]) + 4
     y = max(shop_title_y + int(t["b_shopping_header_gap"]), shop_rule_y + 10)
     shop_bottom = oy1 - int(t["b_bottom_pad"])
 
@@ -1131,11 +1194,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
 
 def _kitchen_focus_rid(state: AppState, focused_index: int, theme: dict | None = None) -> str:
-    # focused_index: 0 is left panel; 1.. maps to visible tasks list
-    if focused_index <= 0:
+    _, task_idx = kitchen_focus_target(state, focused_index, theme)
+    if task_idx is None or task_idx < 0 or task_idx >= len(state.model.reminders):
         return ""
-    visible_idxs = kitchen_visible_task_indices(state, theme)
-    pos = focused_index - 1
-    if 0 <= pos < len(visible_idxs):
-        return state.model.reminders[visible_idxs[pos]].rid
-    return ""
+    return state.model.reminders[task_idx].rid
