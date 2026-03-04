@@ -38,7 +38,8 @@ def _fit_font_for_text(draw, fonts, key: str, text: str, *, max_size: int, min_s
 def _timer_done_message(done_seconds: int) -> str:
     secs = max(1, int(done_seconds or 0))
     mins = max(1, int(round(float(secs) / 60.0)))
-    return f"{mins}分钟的倒计时结束"
+    unit = "minute" if mins == 1 else "minutes"
+    return f"{mins} {unit} countdown finished"
 
 
 def render_timer(image, state: AppState, fonts, theme: dict) -> None:
@@ -162,8 +163,24 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     time_w, _ = text_size(draw, time_text, time_font)
     time_x = (w - time_w) // 2
     time_y = content_top
-    show_time_text = (not alert_active) or blink_on
-    if show_time_text:
+    time_box = draw.textbbox((time_x, time_y), time_text, font=time_font)
+    if alert_active and not blink_on:
+        pad_x = max(10, int((time_box[2] - time_box[0]) * 0.06))
+        pad_y = max(6, int((time_box[3] - time_box[1]) * 0.18))
+        bx0 = max(16, time_box[0] - pad_x)
+        by0 = max(74, time_box[1] - pad_y)
+        bx1 = min(w - 16, time_box[2] + pad_x)
+        by1 = min(h - 108, time_box[3] + pad_y)
+        if bx1 > bx0 and by1 > by0:
+            draw.rounded_rectangle(
+                (bx0, by0, bx1, by1),
+                radius=max(8, int((by1 - by0) * 0.16)),
+                outline=ink,
+                width=1,
+                fill=ink,
+            )
+        draw.text((time_x, time_y), time_text, font=time_font, fill=bg)
+    else:
         draw.text((time_x, time_y), time_text, font=time_font, fill=ink)
 
     time_box = draw.textbbox((time_x, time_y), time_text, font=time_font)
