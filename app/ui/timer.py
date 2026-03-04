@@ -5,7 +5,6 @@ from PIL import ImageDraw
 from app.core.state import AppState
 from app.shared.draw import draw_text_spaced, text_size, text_width_spaced
 from app.shared.panel_font_templates import apply_panel_font_template
-from app.ui.settings import _draw_home_icon
 
 
 def _timer_step_s(theme: dict) -> int:
@@ -34,6 +33,13 @@ def _fit_font_for_text(draw, fonts, key: str, text: str, *, max_size: int, min_s
             return font
         size -= 2
     return fonts.get(key, min_size)
+
+
+def _timer_done_message(done_seconds: int) -> str:
+    secs = max(1, int(done_seconds or 0))
+    mins = max(1, int(round(float(secs) / 60.0)))
+    unit = "minute" if mins == 1 else "minutes"
+    return f"{mins} {unit} countdown finished"
 
 
 def render_timer(image, state: AppState, fonts, theme: dict) -> None:
@@ -71,17 +77,9 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
 
     title_y = 16
     title_text = "TIMER"
-    title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
-    title_mid_y = title_y + int(round((title_bbox[1] + title_bbox[3]) / 2.0))
-    title_h = max(1, int(title_bbox[3] - title_bbox[1]))
-    icon_size = max(38, int(round(title_h * 0.84)))
-    icon_x = 24
-    icon_y = max(4, title_mid_y - (icon_size // 2) - 2)
-    _draw_home_icon(image, icon_x, icon_y, icon_size, ink)
-
-    title_x = icon_x + icon_size + 14
+    title_x = 24
     draw.text((title_x, title_y), title_text, font=title_font, fill=ink)
-    hint_text = "ROTATE TO SELECT  -  CLICK TO CHANGE"
+    hint_text = "Rotate to select  -  Click to enter  -  Long press to home"
     if meta_compact:
         hint_text = hint_text.upper()
     hint_w = text_width_spaced(draw, hint_text, hint_font, spacing=meta_spacing)
@@ -90,6 +88,8 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     draw.line((24, 68, w - 24, 68), fill=border, width=int(theme.get("divider_width", 2) or 2))
 
     secs = max(0, int(state.ui.timer_seconds or 0))
+    alert_active = bool(state.ui.timer_alert_active) and secs <= 0
+    blink_on = bool(state.ui.timer_alert_blink_on)
     mm = secs // 60
     ss = secs % 60
     time_text = f"{mm:02d}:{ss:02d}"
@@ -97,7 +97,10 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     time_max_size = max(120, int(theme.get("timer_time_size", 160) or 160))
     time_min_size = max(80, int(theme.get("timer_time_min_size", 96) or 96))
 
-    if secs <= 0:
+    if alert_active:
+        done_seconds = int(state.ui.timer_last_completed_seconds or state.ui.timer_target_seconds or 0)
+        status_text = _timer_done_message(done_seconds)
+    elif secs <= 0:
         status_text = "READY"
     elif bool(state.ui.timer_running):
         status_text = "RUNNING"
@@ -122,6 +125,15 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     status_gap = max(20, int(theme.get("timer_status_gap", 38) or 38))
     content_top = int(theme.get("timer_time_top", 112) or 112)
     available_bottom = row_y - 26
+    status_font = _fit_font_for_text(
+        draw,
+        fonts,
+        body_focus_key,
+        status_text,
+        max_size=max(20, int(body_base + 4)),
+        min_size=max(13, int(body_base - 1)),
+        max_width=(w - 72),
+    )
     status_bbox_0 = draw.textbbox((0, 0), status_text, font=status_font)
     status_h = max(1, status_bbox_0[3] - status_bbox_0[1])
 
@@ -151,7 +163,25 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     time_w, _ = text_size(draw, time_text, time_font)
     time_x = (w - time_w) // 2
     time_y = content_top
-    draw.text((time_x, time_y), time_text, font=time_font, fill=ink)
+    time_box = draw.textbbox((time_x, time_y), time_text, font=time_font)
+    if alert_active and not blink_on:
+        pad_x = max(10, int((time_box[2] - time_box[0]) * 0.06))
+        pad_y = max(6, int((time_box[3] - time_box[1]) * 0.18))
+        bx0 = max(16, time_box[0] - pad_x)
+        by0 = max(74, time_box[1] - pad_y)
+        bx1 = min(w - 16, time_box[2] + pad_x)
+        by1 = min(h - 108, time_box[3] + pad_y)
+        if bx1 > bx0 and by1 > by0:
+            draw.rounded_rectangle(
+                (bx0, by0, bx1, by1),
+                radius=max(8, int((by1 - by0) * 0.16)),
+                outline=ink,
+                width=1,
+                fill=ink,
+            )
+        draw.text((time_x, time_y), time_text, font=time_font, fill=bg)
+    else:
+        draw.text((time_x, time_y), time_text, font=time_font, fill=ink)
 
     time_box = draw.textbbox((time_x, time_y), time_text, font=time_font)
     status_y = time_box[3] + status_gap

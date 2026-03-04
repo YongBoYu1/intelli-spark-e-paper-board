@@ -200,6 +200,9 @@ class UiSnapshot:
     timer_seconds: int
     timer_running: bool
     timer_focused_index: int
+    timer_alert_active: bool
+    timer_alert_blink_on: bool
+    timer_last_completed_seconds: int
     clock_minute_bucket: int
     widget_mode: str
     weather_day_index: int
@@ -232,6 +235,9 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
         timer_seconds=int(state.ui.timer_seconds or 0),
         timer_running=bool(state.ui.timer_running),
         timer_focused_index=int(state.ui.timer_focused_index or 0),
+        timer_alert_active=bool(state.ui.timer_alert_active),
+        timer_alert_blink_on=bool(state.ui.timer_alert_blink_on),
+        timer_last_completed_seconds=int(state.ui.timer_last_completed_seconds or 0),
         clock_minute_bucket=int(state.ui.clock_minute_bucket or 0),
         widget_mode=str(state.ui.widget_mode.value if hasattr(state.ui.widget_mode, "value") else state.ui.widget_mode),
         weather_day_index=int(state.ui.weather_day_index or 0),
@@ -352,7 +358,27 @@ def _home_menu_overlay_region(width: int, height: int) -> Rect:
     return (x0, y0, x1, y1)
 
 
-def _home_focus_row_rect(width: int, height: int, focus_index: int) -> Rect | None:
+def _home_visible_section_counts(reminders_digest: tuple, *, inv_max: int = 3, rem_max: int = 5) -> tuple[int, int]:
+    inv_count = 0
+    rem_count = 0
+    for item in reminders_digest or ():
+        try:
+            completed = bool(item[1])
+            category = str(item[4] or "")
+        except Exception:
+            continue
+        if completed:
+            continue
+        if category == "fridge":
+            if inv_count < inv_max:
+                inv_count += 1
+        else:
+            if rem_count < rem_max:
+                rem_count += 1
+    return inv_count, rem_count
+
+
+def _home_focus_row_rect(width: int, height: int, focus_index: int, reminders_digest: tuple) -> Rect | None:
     # Approximate row geometry from app/ui/home_kitchen.py theme defaults.
     if int(focus_index) <= 0:
         return None
@@ -371,18 +397,33 @@ def _home_focus_row_rect(width: int, height: int, focus_index: int) -> Rect | No
 
     inv_start_y = oy0 + max(8, right_pad - 6) + 34
     inv_row_h = 40
-    inv_max = 3
+    inv_count, _ = _home_visible_section_counts(reminders_digest, inv_max=3, rem_max=5)
+    inv_header_cy = oy0 + max(8, right_pad - 6) + (inv_row_h // 2)
     shop_start_y = oy0 + int((oy1 - oy0) * 0.62)
     shop_row_h = 40
+    shop_header_cy = shop_start_y - (shop_row_h // 2)
     row_h = 56
 
     pos = int(focus_index) - 1
     if pos < 0:
         return None
-    if pos < inv_max:
-        cy = inv_start_y + (pos * inv_row_h) + (inv_row_h // 2)
+
+    if pos == 0:
+        cy = inv_header_cy
     else:
-        cy = shop_start_y + ((pos - inv_max) * shop_row_h) + (shop_row_h // 2)
+        pos -= 1
+
+    if pos >= 0 and pos < inv_count:
+        cy = inv_start_y + (pos * inv_row_h) + (inv_row_h // 2)
+    elif pos >= inv_count:
+        pos -= inv_count
+        if pos == 0:
+            cy = shop_header_cy
+        else:
+            pos -= 1
+            cy = shop_start_y + (max(0, pos) * shop_row_h) + (shop_row_h // 2)
+    else:
+        cy = inv_header_cy
 
     y0 = max(oy0, cy - (row_h // 2))
     y1 = min(oy1, y0 + row_h)
@@ -436,6 +477,9 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         if (
             prev.timer_seconds != curr.timer_seconds
             or prev.timer_running != curr.timer_running
+            or prev.timer_alert_active != curr.timer_alert_active
+            or prev.timer_alert_blink_on != curr.timer_alert_blink_on
+            or prev.timer_last_completed_seconds != curr.timer_last_completed_seconds
             or prev.widget_mode != curr.widget_mode
         ):
             rects.append(regions["time_status"])
@@ -477,8 +521,8 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         reasons.append("home.menu_overlay_focus")
 
     if prev.focused_index != curr.focused_index:
-        prev_row = _home_focus_row_rect(width, height, prev.focused_index)
-        curr_row = _home_focus_row_rect(width, height, curr.focused_index)
+        prev_row = _home_focus_row_rect(width, height, prev.focused_index, prev.reminders_digest)
+        curr_row = _home_focus_row_rect(width, height, curr.focused_index, curr.reminders_digest)
         if prev_row is not None and curr_row is not None:
             rects.append(prev_row)
             if curr_row != prev_row:
@@ -502,8 +546,8 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         curr_rids = tuple(str(r[0]) for r in curr.reminders_digest)
         if prev_rids == curr_rids:
             # Same row order: likely a click-toggle style change; update focused row only.
-            prev_row = _home_focus_row_rect(width, height, prev.focused_index)
-            curr_row = _home_focus_row_rect(width, height, curr.focused_index)
+            prev_row = _home_focus_row_rect(width, height, prev.focused_index, prev.reminders_digest)
+            curr_row = _home_focus_row_rect(width, height, curr.focused_index, curr.reminders_digest)
             if prev_row is not None:
                 rects.append(prev_row)
             if curr_row is not None and curr_row != prev_row:

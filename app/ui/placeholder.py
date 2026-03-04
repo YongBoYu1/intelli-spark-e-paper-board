@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PIL import ImageDraw
 
-from app.core.state import AppState, MenuItemId
+from app.core.state import AppState, MenuItemId, Screen
 
 
 def render_placeholder(image, state: AppState, fonts, theme: dict) -> None:
@@ -16,7 +16,11 @@ def render_placeholder(image, state: AppState, fonts, theme: dict) -> None:
     draw.rectangle((0, 0, w, h), fill=bg)
 
     title = "DETAIL"
-    if state.ui.active_menu == MenuItemId.SETTINGS:
+    if state.ui.screen == Screen.INVENTORY:
+        title = "INVENTORY"
+    elif state.ui.screen == Screen.REMINDERS:
+        title = "REMINDERS"
+    elif state.ui.active_menu == MenuItemId.SETTINGS:
         title = "SETTINGS"
     elif state.ui.active_menu == MenuItemId.MEMO:
         title = "MEMO"
@@ -30,4 +34,3 @@ def render_placeholder(image, state: AppState, fonts, theme: dict) -> None:
     msg = "B / ESC / BACKSPACE TO GO BACK"
     mw = draw.textlength(msg, font=meta_font)
     draw.text(((w - mw) / 2, h * 0.35 + 60), msg, font=meta_font, fill=muted)
-

@@ -171,6 +171,59 @@ class TimerReducerTests(unittest.TestCase):
         self.assertEqual(self.state.ui.memo_index, 0)
         self.assertEqual(self.state.ui.memo_last_rotated_at, 112.0)
 
+    def test_settings_rotate_cycles_only_real_rows(self) -> None:
+        self.state.ui.screen = Screen.SETTINGS
+        self.state.ui.settings_focused_index = 0
+
+        reduce(self.state, Rotate(-1))
+
+        self.assertGreaterEqual(self.state.ui.settings_focused_index, 0)
+
+    def test_settings_click_on_negative_focus_does_not_force_home(self) -> None:
+        self.state.ui.screen = Screen.SETTINGS
+        self.state.ui.settings_focused_index = -1
+
+        reduce(self.state, Click())
+
+        self.assertEqual(self.state.ui.screen, Screen.SETTINGS)
+        self.assertGreaterEqual(self.state.ui.settings_focused_index, 0)
+
+    def test_tick_reaching_zero_starts_timer_done_alert(self) -> None:
+        self.state.ui.screen = Screen.TIMER
+        self.state.ui.widget_mode = WidgetMode.TIMER
+        self.state.ui.timer_running = True
+        self.state.ui.timer_seconds = 2
+        self.state.ui.timer_target_seconds = 300
+        self.state.ui.timer_last_tick_at = 100.0
+
+        reduce(self.state, Tick(now=102.1), theme={"timer_alert_show_s": 6.0, "timer_alert_blink_period_s": 0.5})
+
+        self.assertEqual(self.state.ui.timer_seconds, 0)
+        self.assertFalse(self.state.ui.timer_running)
+        self.assertTrue(self.state.ui.timer_alert_active)
+        self.assertTrue(self.state.ui.timer_alert_blink_on)
+        self.assertEqual(self.state.ui.timer_last_completed_seconds, 300)
+
+    def test_tick_timer_done_alert_blinks_and_expires(self) -> None:
+        self.state.ui.screen = Screen.TIMER
+        self.state.ui.widget_mode = WidgetMode.TIMER
+        self.state.ui.timer_alert_active = True
+        self.state.ui.timer_alert_blink_on = True
+        self.state.ui.timer_alert_started_at = 200.0
+        self.state.ui.timer_alert_until = 202.0
+        self.state.ui.timer_last_completed_seconds = 180
+
+        reduce(self.state, Tick(now=200.6), theme={"timer_alert_blink_period_s": 0.5})
+        self.assertFalse(self.state.ui.timer_alert_blink_on)
+        self.assertTrue(self.state.ui.timer_alert_active)
+
+        reduce(self.state, Tick(now=201.1), theme={"timer_alert_blink_period_s": 0.5})
+        self.assertTrue(self.state.ui.timer_alert_blink_on)
+        self.assertTrue(self.state.ui.timer_alert_active)
+
+        reduce(self.state, Tick(now=202.2), theme={"timer_alert_show_s": 2.0, "timer_alert_blink_period_s": 0.5})
+        self.assertFalse(self.state.ui.timer_alert_active)
+
 
 if __name__ == "__main__":
     unittest.main()
