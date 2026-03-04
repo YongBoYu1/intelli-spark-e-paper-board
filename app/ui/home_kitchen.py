@@ -406,11 +406,6 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             width=3,
             fill=None,
         )
-    if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 0:
-        r = max(2, int(t.get("b_left_focus_indicator_r", 5) or 5))
-        cx = split_x - max(r + 2, int(t.get("b_left_focus_indicator_inset_x", 14) or 14))
-        cy = oy0 + max(r + 2, int(t.get("b_left_focus_indicator_inset_y", 14) or 14))
-        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=ink, outline=ink)
 
     # Fonts
     panel_mode = bool(theme.get("panel_mode", False))
@@ -595,6 +590,26 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             humidity_bottom = humidity_y + hsh
 
         weather_bottom = max(weather_bottom, desc_y + dh2, humidity_bottom)
+
+    if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 0:
+        focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
+        focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
+        focus_right_trim = int(t.get("b_right_focus_right_trim", 2))
+        focus_radius = int(t.get("b_right_focus_radius", 5))
+        focus_w = max(1, int(t.get("b_right_focus_w", 1)))
+        fy0 = max(oy0 + 2, top_y + int(t.get("b_weather_top", 0)) - focus_pad_y)
+        fy1 = weather_bottom + focus_pad_y
+        fx0 = weather_left - focus_pad_x
+        fx1 = weather_right + focus_pad_x - focus_right_trim
+        if fy1 > fy0 and fx1 > fx0:
+            rounded_rect(
+                draw,
+                (fx0, fy0, fx1, fy1),
+                radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                outline=ink,
+                width=focus_w,
+                fill=None,
+            )
 
     header_rule_y = weather_bottom + int(t["b_header_gap"])
     header_rule_w = int(t["b_header_rule_w"])
