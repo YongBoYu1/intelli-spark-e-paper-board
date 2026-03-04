@@ -379,6 +379,16 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     forecast_y0 = metric_y1
     forecast_y1 = forecast_y0 + forecast_h
 
+    # Reuse exact forecast column centers as anchor points for top-left city
+    # and top-right current-weather icon, so both align with bottom columns.
+    forecast_w = cx1 - cx0 + 1
+    forecast_col_w = max(1, forecast_w // 3)
+    forecast_col_centers: list[int] = []
+    for col in range(3):
+        col_x0 = cx0 + col * forecast_col_w
+        col_x1 = cx1 if col == 2 else col_x0 + forecast_col_w
+        forecast_col_centers.append(col_x0 + ((col_x1 - col_x0) // 2))
+
     draw.line((cx0, metric_y1, cx1, metric_y1), fill=ink, width=2)
 
     days, sel, current = _select_days(state)
@@ -404,13 +414,32 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     # 1) Hero block: feels line + big temp + H/L line, with icon at right.
     panel_w = cx1 - cx0 + 1
     icon_box_w = max(96, min(124, int(panel_w * 0.16)))
-    icon_x1 = cx1 - 6
-    icon_x0 = icon_x1 - icon_box_w
+    right_anchor_cx = forecast_col_centers[2]
+    icon_x0 = right_anchor_cx - (icon_box_w // 2)
+    icon_x1 = icon_x0 + icon_box_w
+    if icon_x1 > cx1 - 2:
+        shift = icon_x1 - (cx1 - 2)
+        icon_x0 -= shift
+        icon_x1 -= shift
+    if icon_x0 < cx0 + 2:
+        shift = (cx0 + 2) - icon_x0
+        icon_x0 += shift
+        icon_x1 += shift
+
     city_text = str(getattr(state.model, "location", "") or "").strip()
     show_city = bool(city_text)
-    city_box_x0 = cx0 + 6
     city_box_w = icon_box_w if show_city else 0
+    left_anchor_cx = forecast_col_centers[0]
+    city_box_x0 = (left_anchor_cx - (city_box_w // 2)) if show_city else cx0 + 6
     city_box_x1 = city_box_x0 + city_box_w
+    if show_city and city_box_x0 < cx0 + 2:
+        shift = (cx0 + 2) - city_box_x0
+        city_box_x0 += shift
+        city_box_x1 += shift
+    if show_city and city_box_x1 > cx1 - 2:
+        shift = city_box_x1 - (cx1 - 2)
+        city_box_x0 -= shift
+        city_box_x1 -= shift
     text_xmin = city_box_x1 + 12 if show_city else cx0 + 8
     text_xmax = icon_x0 - 12
     text_w = max(100, text_xmax - text_xmin)
@@ -572,8 +601,6 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     forecast_inner_top = forecast_y0 + 8
     forecast_bottom_pad = int(theme.get("weather_forecast_bottom_pad", 12) or 12)
     forecast_inner_bottom = forecast_y1 - max(6, forecast_bottom_pad)
-    forecast_w = cx1 - cx0 + 1
-    forecast_col_w = max(1, forecast_w // 3)
     for i in (1, 2):
         vx = cx0 + i * forecast_col_w
         draw.line((vx, forecast_inner_top, vx, forecast_inner_bottom), fill=ink, width=1)
