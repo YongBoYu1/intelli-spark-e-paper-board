@@ -711,6 +711,18 @@ def _prepare_partial_rects(
     return [merged] if merged is not None else []
 
 
+def _diff_bbox_and_ratio(prev_frame: Image.Image, curr_frame: Image.Image) -> tuple[tuple[int, int, int, int] | None, float]:
+    diff = ImageChops.difference(prev_frame, curr_frame).convert("L")
+    bbox = diff.getbbox()
+    if bbox is None:
+        return None, 0.0
+
+    hist = diff.histogram()
+    nonzero = int(sum(hist[1:])) if hist else 0
+    total = max(1, int(diff.width) * int(diff.height))
+    return bbox, (float(nonzero) / float(total))
+
+
 def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
     if screen != Screen.HOME or not reasons:
         return False
@@ -1551,7 +1563,7 @@ def main() -> int:
                     panel_dither=panel_dither,
                 )
                 curr_snapshot = build_ui_snapshot(state)
-                diff_box = ImageChops.difference(committed_frame, frame).getbbox()
+                diff_box, diff_ratio = _diff_bbox_and_ratio(committed_frame, frame)
                 if diff_box is None:
                     pending_frame = None
                     pending_sig = None
@@ -1569,9 +1581,21 @@ def main() -> int:
                     )
                     if dirty_rects:
                         merged_dirty = merge_rects(dirty_rects, epd.width, epd.height)
-                        if merged_dirty is None or not rect_contains(merged_dirty, diff_box, slack=4):
+                        if merged_dirty is None:
                             dirty_rects.append(diff_box)
                             dirty_reasons.append("diff_fallback")
+                        elif not rect_contains(merged_dirty, diff_box, slack=4):
+                            # BBox can be overly large when a few distant pixels change.
+                            # Only trust bbox fallback when changed-pixel ratio is meaningful.
+                            fallback_ratio_min = float(theme.get("refresh_diff_fallback_min_ratio", 0.10) or 0.10)
+                            if diff_ratio >= fallback_ratio_min:
+                                dirty_rects.append(diff_box)
+                                dirty_reasons.append("diff_fallback")
+                            elif refresh_debug:
+                                print(
+                                    f"[refresh] DIFF_FALLBACK_SKIP screen={curr_snapshot.screen.value} "
+                                    f"diff_ratio={diff_ratio:.4f} threshold={fallback_ratio_min:.4f}"
+                                )
                     else:
                         dirty_rects = [diff_box]
                         dirty_reasons = ["diff_only"]

@@ -29,15 +29,15 @@ def screen_partial_area_limit(screen: Screen, mode: str) -> float:
     if screen == Screen.TIMER:
         return min(0.95, base + 0.20)
     if screen == Screen.MEMO:
-        # Memo page updates mostly touch the content body; allow a larger partial region
-        # to avoid unnecessary full-screen flashes when changing memo focus/content.
-        return max(0.60, min(base + 0.10, 0.78))
+        # Memo click/expand frequently redraws a large content card.
+        # Keep threshold high enough even in slow mode to avoid full-screen flashes.
+        return max(0.72, min(base + 0.25, 0.88))
     if screen in (Screen.INVENTORY, Screen.REMINDERS):
-        return max(0.45, min(base, 0.72))
+        return max(0.60, min(base + 0.15, 0.80))
     if screen == Screen.MENU:
         return max(0.30, min(base, 0.55))
     if screen == Screen.CALENDAR:
-        return max(0.45, min(base, 0.72))
+        return max(0.58, min(base + 0.15, 0.82))
     if screen == Screen.WEATHER:
         return max(0.50, min(base, 0.78))
     if screen == Screen.HOME:
