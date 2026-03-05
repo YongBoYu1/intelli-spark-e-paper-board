@@ -64,10 +64,10 @@ def _theme(theme: dict) -> dict:
     t = dict(theme or {})
 
     # Layout
-    t.setdefault("bp_margin", 16)
+    t.setdefault("bp_margin", 12)
     t.setdefault("bp_section_gap", 4)
-    t.setdefault("bp_inner_pad", 16)
-    t.setdefault("bp_header_ratio", 0.24)
+    t.setdefault("bp_inner_pad", 12)
+    t.setdefault("bp_header_ratio", 0.22)
     t.setdefault("bp_memo_ratio", 0.25)
     t.setdefault("bp_weather_col_w", 156)
     t.setdefault("bp_header_col_gap", 16)
@@ -92,17 +92,17 @@ def _theme(theme: dict) -> dict:
     t.setdefault("bp_temp_size", 58)
     t.setdefault("bp_weather_desc_size", 14)
     t.setdefault("bp_weather_desc_spacing", 1)
-    t.setdefault("bp_weather_desc_gap", 8)
+    t.setdefault("bp_weather_desc_gap", 12)
     t.setdefault("bp_weather_icon_size", 34)
     t.setdefault("bp_weather_temp_icon_gap", 8)
     t.setdefault("bp_weather_meta_gap", 14)
     t.setdefault("bp_weather_icon_stroke", 3)
-    t.setdefault("bp_weather_top", 4)
+    t.setdefault("bp_weather_top", 0)
     t.setdefault("bp_weather_humidity_size", 14)
     t.setdefault("bp_weather_humidity_spacing", 1)
     t.setdefault("bp_weather_humidity_prefix", "HUM")
-    t.setdefault("bp_weather_humidity_gap", 8)
-    t.setdefault("bp_time_nudge_y", -6)
+    t.setdefault("bp_weather_humidity_gap", 10)
+    t.setdefault("bp_time_nudge_y", -12)
 
     # Memo section
     t.setdefault("bp_memo_title_size", 15)
@@ -329,7 +329,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
 
     sec_gap = int(t["bp_section_gap"])
     inner_h = max(1, y1 - y0)
-    header_h = max(184, int(inner_h * float(t["bp_header_ratio"])))
+    header_h = max(168, int(inner_h * float(t["bp_header_ratio"])))
     memo_h = max(188, int(inner_h * float(t["bp_memo_ratio"])))
     min_list_h = 220
     if header_h + memo_h + sec_gap * 2 + min_list_h > inner_h:
@@ -436,31 +436,41 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         draw.text((temp_x, temp_y), temp, font=f_temp, fill=ink)
         desc = _weather_word(getattr(w0, "icon", "sun"))
         humidity = getattr(w0, "humidity", None)
-        meta_text = desc
+        desc_spacing = int(t.get("bp_weather_desc_spacing", 1))
+        hum_spacing = int(t.get("bp_weather_humidity_spacing", 1))
+        desc_w = text_width_spaced(draw, desc, f_weather_desc, spacing=desc_spacing)
+        desc_h = text_size(draw, "Ag", f_weather_desc)[1]
+        desc_x = weather_x1 - desc_w
+        desc_y = top_line_y + top_line_h + int(t.get("bp_weather_meta_gap", 10))
+        draw_text_spaced(
+            draw,
+            desc,
+            desc_x,
+            desc_y,
+            f_weather_desc,
+            spacing=desc_spacing,
+            fill=muted,
+        )
         if humidity is not None:
             try:
                 hum_label = str(t["bp_weather_humidity_prefix"]).upper()
-                meta_text = f"{desc}  {hum_label} {int(humidity)}%"
+                hum_text = f"{hum_label} {int(humidity)}%"
             except Exception:
-                meta_text = desc
-        if meta_text:
-            meta_w = text_width_spaced(
-                draw,
-                meta_text,
-                f_weather_desc,
-                spacing=int(t["bp_weather_humidity_spacing"]),
-            )
-            meta_x = weather_x1 - meta_w
-            meta_y = top_line_y + top_line_h + int(t.get("bp_weather_meta_gap", 10))
-            draw_text_spaced(
-                draw,
-                meta_text,
-                meta_x,
-                meta_y,
-                f_weather_desc,
-                spacing=int(t["bp_weather_humidity_spacing"]),
-                fill=muted,
-            )
+                hum_text = ""
+            if hum_text:
+                hum_w = text_width_spaced(draw, hum_text, f_weather_humidity, spacing=hum_spacing)
+                hum_h = text_size(draw, "Ag", f_weather_humidity)[1]
+                hum_x = weather_x1 - hum_w
+                hum_y = desc_y + desc_h + int(t.get("bp_weather_humidity_gap", 8))
+                draw_text_spaced(
+                    draw,
+                    hum_text,
+                    hum_x,
+                    hum_y,
+                    f_weather_humidity,
+                    spacing=hum_spacing,
+                    fill=muted,
+                )
     else:
         draw.text((weather_x1 - 92, weather_top + 8), "--°", font=f_temp, fill=ink)
         draw_text_spaced(draw, "NO DATA", weather_x1 - 72, weather_top + 72, f_weather_desc, spacing=1, fill=muted)
