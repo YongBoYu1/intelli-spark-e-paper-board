@@ -95,7 +95,7 @@ def _theme(theme: dict) -> dict:
     t.setdefault("bp_weather_desc_spacing", 1)
     t.setdefault("bp_weather_desc_gap", 8)
     t.setdefault("bp_weather_icon_size", 34)
-    t.setdefault("bp_weather_temp_icon_gap", 10)
+    t.setdefault("bp_weather_temp_icon_gap", 13)
     t.setdefault("bp_weather_meta_gap", 11)
     t.setdefault("bp_weather_icon_stroke", 3)
     t.setdefault("bp_weather_top", -4)
