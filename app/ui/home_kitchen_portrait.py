@@ -70,6 +70,7 @@ def _theme(theme: dict) -> dict:
     t.setdefault("bp_header_ratio", 0.21)
     t.setdefault("bp_memo_ratio", 0.25)
     t.setdefault("bp_weather_col_w", 156)
+    t.setdefault("bp_weather_right_inset", 10)
     t.setdefault("bp_header_col_gap", 16)
     t.setdefault("bp_header_rule_w", 2)
     t.setdefault("bp_list_split_ratio", 0.48)
@@ -415,7 +416,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         temp = f"{int(w0.hi)}°"
         tw, th = text_size(draw, temp, f_temp)
         icon_size = int(t["bp_weather_icon_size"])
-        weather_right = weather_x1 - 2
+        weather_right = weather_x1 - max(2, int(t.get("bp_weather_right_inset", 2)))
         # Keep the first header row semantically aligned: big clock (left) vs big temp (right).
         temp_y = weather_top
         temp_x = weather_right - tw
