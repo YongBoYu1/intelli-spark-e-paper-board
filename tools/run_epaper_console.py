@@ -665,23 +665,6 @@ def _screen_change_partial_enabled_with_theme(prev_screen: Screen, curr_screen: 
     return _screen_partial_enabled_with_theme(curr_screen, theme)
 
 
-def _rects_overlap_or_near(a: tuple[int, int, int, int], b: tuple[int, int, int, int], *, slack: int = 4) -> bool:
-    ax0, ay0, ax1, ay1 = a
-    bx0, by0, bx1, by1 = b
-    return not (
-        (ax1 + slack) <= bx0
-        or (bx1 + slack) <= ax0
-        or (ay1 + slack) <= by0
-        or (by1 + slack) <= ay0
-    )
-
-
-def _union_rect(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
-    ax0, ay0, ax1, ay1 = a
-    bx0, by0, bx1, by1 = b
-    return (min(ax0, bx0), min(ay0, by0), max(ax1, bx1), max(ay1, by1))
-
-
 def _prepare_partial_rects(
     rects: list[tuple[int, int, int, int]],
     *,
@@ -703,23 +686,6 @@ def _prepare_partial_rects(
 
     if not aligned:
         return []
-
-    # Coalesce touching/overlapping rects to avoid excessive partial calls.
-    changed = True
-    while changed:
-        changed = False
-        next_rects: list[tuple[int, int, int, int]] = []
-        for rect in aligned:
-            merged = False
-            for i, existing in enumerate(next_rects):
-                if _rects_overlap_or_near(existing, rect, slack=0):
-                    next_rects[i] = _union_rect(existing, rect)
-                    merged = True
-                    changed = True
-                    break
-            if not merged:
-                next_rects.append(rect)
-        aligned = next_rects
 
     # Keep predictable order for debug/readability.
     aligned.sort(key=lambda r: (r[1], r[0], (r[2] - r[0]) * (r[3] - r[1])))
