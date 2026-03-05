@@ -12,6 +12,8 @@ class Screen(str, Enum):
     TIMER = "timer"
     CALENDAR = "calendar"
     WEATHER = "weather"
+    INVENTORY = "inventory"
+    REMINDERS = "reminders"
     SETTINGS = "settings"
     PLACEHOLDER = "placeholder"
 
@@ -70,7 +72,7 @@ class MemoItem:
 
 @dataclass
 class DashboardModel:
-    location: str = "New York"
+    location: str = "Unknown"
     battery: int = 84
     reminders: list[Reminder] = field(default_factory=list)
     weather: list[WeatherDay] = field(default_factory=list)
@@ -101,6 +103,14 @@ class UiState:
     timer_seconds: int = 0
     timer_running: bool = False
     timer_last_tick_at: float = field(default_factory=lambda: time.time())
+    # Current timer target duration (seconds) for the active run; used by completion copy.
+    timer_target_seconds: int = 0
+    # Countdown-done alert state (blinking zeros + completion message).
+    timer_alert_active: bool = False
+    timer_alert_blink_on: bool = True
+    timer_alert_started_at: float = 0.0
+    timer_alert_until: float = 0.0
+    timer_last_completed_seconds: int = 0
     # TIMER page focus: [DECREASE, INCREASE, START_PAUSE, RESET]
     timer_focused_index: int = 2
 
@@ -110,7 +120,7 @@ class UiState:
     calendar_mode: str = "date"  # "date" | "agenda"
     calendar_selected_index: int = 0
 
-    # Weather detail: rotate cycles days in the forecast.
+    # Weather detail selected day (currently fixed in UI; kept for compatibility).
     weather_day_index: int = 0
 
     # Mood panel memo selection + auto-rotation.

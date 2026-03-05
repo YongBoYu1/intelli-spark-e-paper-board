@@ -247,5 +247,53 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.24)
 
+    def test_timer_alert_blink_change_marks_time_status_region(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.TIMER
+        prev.ui.timer_seconds = 0
+        prev.ui.timer_running = False
+        prev.ui.timer_alert_active = True
+        prev.ui.timer_alert_blink_on = True
+        prev.ui.timer_last_completed_seconds = 300
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.TIMER
+        curr.ui.timer_seconds = 0
+        curr.ui.timer_running = False
+        curr.ui.timer_alert_active = True
+        curr.ui.timer_alert_blink_on = False
+        curr.ui.timer_last_completed_seconds = 300
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("timer.time_or_state", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.50)
+
+    def test_home_focus_row_mapping_uses_real_inventory_count(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="s1", title="Eggs", right="", completed=False, category="shopping"),
+        ]
+
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 3  # reminders header when fridge count is 1
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 4  # first reminders item
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.focus_move_row", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        _, y0, _, _ = merged or (0, 0, 0, 0)
+        # Reminders section is in the lower half; if this maps near top rows,
+        # focus-row geometry is still using a fixed inventory span.
+        self.assertGreater(y0, 220)
+
 if __name__ == "__main__":
     unittest.main()

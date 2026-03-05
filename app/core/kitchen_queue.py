@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from app.core.state import AppState
 
+KITCHEN_FOCUS_LEFT_PANEL = "left_panel"
+KITCHEN_FOCUS_INVENTORY_HEADER = "inventory_header"
+KITCHEN_FOCUS_INVENTORY_ITEM = "inventory_item"
+KITCHEN_FOCUS_REMINDERS_HEADER = "reminders_header"
+KITCHEN_FOCUS_REMINDERS_ITEM = "reminders_item"
+KITCHEN_FOCUS_NONE = "none"
+
 
 def _max_rows(theme: dict | None, key: str, default: int) -> int:
     raw = default if theme is None else theme.get(key, default)
@@ -61,3 +68,52 @@ def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> 
                 shop.append(i)
 
     return fridge + shop
+
+
+def kitchen_visible_section_indices(state: AppState, theme: dict | None = None) -> tuple[list[int], list[int]]:
+    all_visible = kitchen_visible_task_indices(state, theme)
+    fridge: list[int] = []
+    reminders: list[int] = []
+    for idx in all_visible:
+        r = state.model.reminders[idx]
+        if (r.category or "") == "fridge":
+            fridge.append(idx)
+        else:
+            reminders.append(idx)
+    return fridge, reminders
+
+
+def kitchen_focus_count(state: AppState, theme: dict | None = None) -> int:
+    fridge, reminders = kitchen_visible_section_indices(state, theme)
+    # [LEFT_PANEL, INVENTORY_HEADER, INVENTORY_ITEMS..., REMINDERS_HEADER, REMINDERS_ITEMS...]
+    return 3 + len(fridge) + len(reminders)
+
+
+def kitchen_focus_target(
+    state: AppState,
+    focused_index: int,
+    theme: dict | None = None,
+) -> tuple[str, int | None]:
+    idx = int(focused_index or 0)
+    if idx <= 0:
+        return (KITCHEN_FOCUS_LEFT_PANEL, None)
+
+    fridge, reminders = kitchen_visible_section_indices(state, theme)
+    pos = idx - 1
+
+    if pos == 0:
+        return (KITCHEN_FOCUS_INVENTORY_HEADER, None)
+    pos -= 1
+
+    if pos < len(fridge):
+        return (KITCHEN_FOCUS_INVENTORY_ITEM, fridge[pos])
+    pos -= len(fridge)
+
+    if pos == 0:
+        return (KITCHEN_FOCUS_REMINDERS_HEADER, None)
+    pos -= 1
+
+    if pos < len(reminders):
+        return (KITCHEN_FOCUS_REMINDERS_ITEM, reminders[pos])
+
+    return (KITCHEN_FOCUS_NONE, None)

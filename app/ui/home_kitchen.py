@@ -5,7 +5,12 @@ import time
 
 from PIL import ImageDraw
 
-from app.core.kitchen_queue import kitchen_queue_theme_key, kitchen_visible_task_indices
+from app.core.kitchen_queue import (
+    KITCHEN_FOCUS_INVENTORY_HEADER,
+    KITCHEN_FOCUS_REMINDERS_HEADER,
+    kitchen_focus_target,
+    kitchen_queue_theme_key,
+)
 from app.core.state import AppState
 from app.shared.draw import draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
 from app.ui.weather_detail import _draw_weather_icon_pack
@@ -87,10 +92,10 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_time_display_y_offset", -24)
     t.setdefault("b_time_weather_gap", 14)
     t.setdefault("b_time_weekday_gap", 13)
-    t.setdefault("b_weekday_size", 13)
+    t.setdefault("b_weekday_size", 15)
     t.setdefault("b_weekday_spacing", 4)
     t.setdefault("b_weekday_date_gap", 11)
-    t.setdefault("b_date_size", 16)
+    t.setdefault("b_date_size", 18)
     t.setdefault("b_date_gray", 80)
     t.setdefault("b_temp_size", 66)
     t.setdefault("b_weather_desc_size", 15)
@@ -112,6 +117,10 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_weather_humidity_prefix", "HUM")
     t.setdefault("b_show_weather_humidity", True)
     t.setdefault("b_show_weather_humidity_placeholder", True)
+    t.setdefault("b_weather_city_size", 13)
+    t.setdefault("b_weather_city_spacing", 1)
+    t.setdefault("b_weather_city_gap", 6)
+    t.setdefault("b_weather_city_upper", True)
     t.setdefault("b_header_gap", 28)
     t.setdefault("b_header_rule_w", 0)
     t.setdefault("b_left_micro_size", 16)
@@ -406,11 +415,6 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             width=3,
             fill=None,
         )
-    if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 0:
-        r = max(2, int(t.get("b_left_focus_indicator_r", 5) or 5))
-        cx = split_x - max(r + 2, int(t.get("b_left_focus_indicator_inset_x", 14) or 14))
-        cy = oy0 + max(r + 2, int(t.get("b_left_focus_indicator_inset_y", 14) or 14))
-        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=ink, outline=ink)
 
     # Fonts
     panel_mode = bool(theme.get("panel_mode", False))
@@ -422,6 +426,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     f_temp = fonts.get("inter_black", _font_px(t["b_temp_size"]))
     f_weather_desc = fonts.get("jet_bold", _font_px(t["b_weather_desc_size"]))
     f_weather_humidity = fonts.get("jet_bold", _font_px(t["b_weather_humidity_size"]))
+    f_weather_city = fonts.get("inter_semibold", _font_px(t["b_weather_city_size"]))
     f_micro = fonts.get("jet_extrabold", _font_px(t["b_left_micro_size"]))
     f_family_name = fonts.get("jet_bold", _font_px(t["b_family_name_size"]))
     # Use a slightly heavier serif to survive 1-bit panel quantization.
@@ -518,6 +523,26 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     _, dh = text_size(draw, month_day, f_date)
 
     weather_bottom = dy + dh
+    location = str(getattr(state.model, "location", "") or "").strip()
+    if location:
+        city_text = location.upper() if bool(t.get("b_weather_city_upper", True)) else location
+        city_text = truncate_text(draw, city_text, f_weather_city, max(60, weather_col_w))
+        city_w = text_width_spaced(draw, city_text, f_weather_city, spacing=int(t["b_weather_city_spacing"]))
+        city_h = text_size(draw, city_text, f_weather_city)[1]
+        temp_top = top_y + int(t["b_weather_top"])
+        city_y = max(oy0 + 4, temp_top - city_h - int(t["b_weather_city_gap"]))
+        city_x = weather_right - city_w
+        draw_text_spaced(
+            draw,
+            city_text,
+            city_x,
+            city_y,
+            f_weather_city,
+            spacing=int(t["b_weather_city_spacing"]),
+            fill=muted,
+        )
+        weather_bottom = max(weather_bottom, city_y + city_h)
+
     if state.model.weather:
         w0 = state.model.weather[0]
         temp_str = f"{int(w0.hi)}°"
@@ -596,6 +621,26 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
         weather_bottom = max(weather_bottom, desc_y + dh2, humidity_bottom)
 
+    if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 0:
+        focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
+        focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
+        focus_right_trim = int(t.get("b_right_focus_right_trim", 2))
+        focus_radius = int(t.get("b_right_focus_radius", 5))
+        focus_w = max(1, int(t.get("b_right_focus_w", 1)))
+        fy0 = max(oy0 + 2, top_y + int(t.get("b_weather_top", 0)) - focus_pad_y)
+        fy1 = weather_bottom + focus_pad_y
+        fx0 = weather_left - focus_pad_x
+        fx1 = weather_right + focus_pad_x - focus_right_trim
+        if fy1 > fy0 and fx1 > fx0:
+            rounded_rect(
+                draw,
+                (fx0, fy0, fx1, fy1),
+                radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                outline=ink,
+                width=focus_w,
+                fill=None,
+            )
+
     header_rule_y = weather_bottom + int(t["b_header_gap"])
     header_rule_w = int(t["b_header_rule_w"])
     if header_rule_w > 0:
@@ -667,8 +712,33 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         cx += tw + name_gap
 
     posted = _format_memo_posted((memo.timestamp if memo else None), t)
+    posted_w = 0
     posted_h = text_size(draw, "Ag", f_posted)[1]
-    posted_max_y = oy1 - int(t["b_left_bottom_pad"]) - posted_h
+    posted_bottom_off = posted_h
+    posted_max_y = oy1 - int(t["b_left_bottom_pad"]) - posted_bottom_off
+    posted_prefix = str(t.get("b_posted_prefix") or "-").strip() or "-"
+    posted_label_raw = f"{posted_prefix} {posted}" if posted else ""
+    posted_label = truncate_text(draw, posted_label_raw, f_posted, max(40, lx1 - lx0 - 12)) if posted_label_raw else ""
+    if posted_label:
+        pb = draw.textbbox((0, 0), posted_label, font=f_posted)
+        posted_w = int(pb[2] - pb[0])
+        posted_h = int(pb[3] - pb[1])
+        posted_bottom_off = int(pb[3])
+        if posted_bottom_off <= int(pb[1]):
+            posted_bottom_off = posted_h
+        posted_max_y = oy1 - int(t["b_left_bottom_pad"]) - posted_bottom_off
+        pending_confirm = bool(state.ui.voice_confirm_tool) and float(state.ui.voice_confirm_due_at or 0.0) > time.time()
+        show_voice_lane = bool(state.ui.voice_active) or pending_confirm or bool(t.get("voice_zone_show_idle_home", True))
+        if show_voice_lane:
+            v_margin = int(t.get("voice_zone_margin", 14) or 14)
+            v_zone_w = int(t.get("voice_zone_width", min(380, max(300, int(w * 0.46)))) or 340)
+            v_zone_w = max(220, min(v_zone_w, max(220, w - v_margin * 2)))
+            v_lane_h = int(t.get("voice_zone_lane_h", 29) or 29)
+            vy1 = h - v_margin
+            vy0 = max(v_margin, vy1 - v_lane_h) - 1
+            avoid_gap = max(1, int(t.get("b_posted_voice_overlap_gap", 12) or 12))
+            posted_max_y = min(posted_max_y, vy0 - posted_bottom_off - avoid_gap)
+            posted_max_y = max(oy0 + 8, posted_max_y)
 
     meta_row_bottom = label_y + text_size(draw, "Ag", f_micro)[1]
     if labels:
@@ -764,11 +834,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     posted_text_y = min(posted_max_y, posted_cap_y)
     if posted_text_y < posted_min_y:
         posted_text_y = min(posted_max_y, posted_min_y)
-    posted_prefix = str(t.get("b_posted_prefix") or "-").strip() or "-"
-    posted_label_raw = f"{posted_prefix} {posted}" if posted else ""
-    posted_label = truncate_text(draw, posted_label_raw, f_posted, max(40, lx1 - lx0 - 12)) if posted_label_raw else ""
     if posted_label:
-        posted_w = text_size(draw, posted_label, f_posted)[0]
         posted_x = max(lx0, lx1 - int(t.get("b_posted_right_inset", 6)) - posted_w)
         draw.text((posted_x, posted_text_y), posted_label, font=f_posted, fill=ink)
 
@@ -780,7 +846,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     mid_y = oy0 + int((oy1 - oy0) * float(t["b_mid_split_ratio"]))
 
-    # Focus lookup by task id (incomplete order from reducer)
+    # Focus target on right panel: headers + items.
+    focus_kind, _ = kitchen_focus_target(state, focus_idx, t)
     focus_rid = _kitchen_focus_rid(state, focus_idx, t)
     rendered_focus_rids: list[str] = []
 
@@ -788,6 +855,42 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     # [ARTISTIC POLISH] Inventory Header
     inv_y = oy0 + max(8, rp - 6)
+    inv_row_h = int(t["b_inventory_row_h"]) + 4
+    right_focus_style = str(t.get("b_right_focus_style", "row_box")).strip().lower()
+    focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
+    focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
+    focus_right_trim = int(t.get("b_right_focus_right_trim", 2))
+    focus_radius = int(t.get("b_right_focus_radius", 5))
+    focus_w = max(1, int(t.get("b_right_focus_w", 1)))
+    inv_title_h = text_size(draw, "Ag", f_inv_title)[1]
+    inv_hdr_top = inv_y - max(2, focus_pad_y + 1)
+    inv_hdr_bottom = inv_y + inv_title_h + max(3, focus_pad_y + 2)
+
+    if (not state.ui.idle) and (focus_kind == KITCHEN_FOCUS_INVENTORY_HEADER):
+        if right_focus_style == "rail":
+            rail_w = int(t.get("b_right_focus_rail_w", 3))
+            rail_gap = int(t.get("b_right_focus_rail_gap", 6))
+            rail_vpad = int(t.get("b_right_focus_rail_vpad", 5))
+            rx1 = inner_x0 - rail_gap
+            rx0 = rx1 - rail_w
+            ry0 = inv_hdr_top + rail_vpad
+            ry1 = inv_hdr_bottom - rail_vpad
+            if ry1 > ry0:
+                draw.rectangle((rx0, ry0, rx1, ry1), fill=ink)
+        else:
+            fx0 = inner_x0 - focus_pad_x
+            fx1 = inner_x1 + focus_pad_x - focus_right_trim
+            fy0 = inv_hdr_top
+            fy1 = inv_hdr_bottom
+            if fy1 > fy0 and fx1 > fx0:
+                rounded_rect(
+                    draw,
+                    (fx0, fy0, fx1, fy1),
+                    radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                    outline=ink,
+                    width=focus_w,
+                    fill=None,
+                )
 
     inv_title_spacing = int(t.get("b_inventory_title_spacing", 1))
     draw_text_spaced(draw, "INVENTORY", inner_x0, inv_y, f_inv_title, spacing=inv_title_spacing, fill=ink)
@@ -798,14 +901,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         cw = text_width_spaced(draw, cnt, f_inv_title, spacing=inv_title_spacing)
         draw_text_spaced(draw, cnt, inner_x1 - cw, inv_y, f_inv_title, spacing=inv_title_spacing, fill=ink)
 
-    inv_row_h = int(t["b_inventory_row_h"]) + 4
     y = inv_y + int(t["b_inventory_header_gap"])
-    right_focus_style = str(t.get("b_right_focus_style", "row_box")).strip().lower()
-    focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
-    focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
-    focus_right_trim = int(t.get("b_right_focus_right_trim", 2))
-    focus_radius = int(t.get("b_right_focus_radius", 5))
-    focus_w = max(1, int(t.get("b_right_focus_w", 1)))
 
     inv_max_rows = max(1, int(t.get("b_inventory_max_rows", 4)))
     hold_rid = str(getattr(state.ui, "kitchen_focus_rid_override", "") or "").strip()
@@ -1000,11 +1096,11 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
         y += inv_row_h
 
-    # Shopping header
+    # Reminders header
     # Keep right-lower section aligned to the left panel section rhythm.
     inv_bottom_y = y
     shop_title_spacing = int(t.get("b_shopping_title_spacing", 1))
-    shop_label = "SHOPPING LIST"
+    shop_label = "REMINDERS"
     shop_rule_gap = int(t.get("b_shop_header_rule_gap", 6))
     shop_rule_w = section_rule_w
     shop_rule_right_max = inner_x1 - int(t.get("b_shop_section_rule_right_gap", 18))
@@ -1016,6 +1112,35 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     shop_rule_y = max(shop_rule_y_target, shop_rule_y_min)
     shop_title_y = shop_rule_y - shop_title_h - shop_line_gap
     shop_label_w = text_width_spaced(draw, shop_label, f_shop_title, spacing=shop_title_spacing)
+    shop_row_h = int(t["b_shopping_row_h"]) + 4
+    shop_hdr_top = shop_title_y - max(2, focus_pad_y + 1)
+    shop_hdr_bottom = max(shop_title_y + shop_title_h, shop_rule_y) + max(3, focus_pad_y + 2)
+
+    if (not state.ui.idle) and (focus_kind == KITCHEN_FOCUS_REMINDERS_HEADER):
+        if right_focus_style == "rail":
+            rail_w = int(t.get("b_right_focus_rail_w", 3))
+            rail_gap = int(t.get("b_right_focus_rail_gap", 6))
+            rail_vpad = int(t.get("b_right_focus_rail_vpad", 5))
+            rx1 = inner_x0 - rail_gap
+            rx0 = rx1 - rail_w
+            ry0 = shop_hdr_top + rail_vpad
+            ry1 = shop_hdr_bottom - rail_vpad
+            if ry1 > ry0:
+                draw.rectangle((rx0, ry0, rx1, ry1), fill=ink)
+        else:
+            fx0 = inner_x0 - focus_pad_x
+            fx1 = inner_x1 + focus_pad_x - focus_right_trim
+            fy0 = shop_hdr_top
+            fy1 = shop_hdr_bottom
+            if fy1 > fy0 and fx1 > fx0:
+                rounded_rect(
+                    draw,
+                    (fx0, fy0, fx1, fy1),
+                    radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                    outline=ink,
+                    width=focus_w,
+                    fill=None,
+                )
 
     # Header: left-aligned title + right count on same baseline.
     shop_title_x = inner_x0
@@ -1032,7 +1157,6 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     if shop_rule_right > shop_rule_left:
         draw.line((shop_rule_left, shop_rule_y, shop_rule_right, shop_rule_y), fill=ink, width=shop_rule_w)
     
-    shop_row_h = int(t["b_shopping_row_h"]) + 4
     y = max(shop_title_y + int(t["b_shopping_header_gap"]), shop_rule_y + 10)
     shop_bottom = oy1 - int(t["b_bottom_pad"])
 
@@ -1125,16 +1249,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
 
 def _kitchen_focus_rid(state: AppState, focused_index: int, theme: dict | None = None) -> str:
-    # focused_index: 0 is left panel; 1.. maps to visible tasks list
-    if focused_index <= 0:
+    _, task_idx = kitchen_focus_target(state, focused_index, theme)
+    if task_idx is None or task_idx < 0 or task_idx >= len(state.model.reminders):
         return ""
-    hold_rid = str(getattr(state.ui, "kitchen_focus_rid_override", "") or "").strip()
-    if hold_rid:
-        for r in state.model.reminders:
-            if str(r.rid or "") == hold_rid:
-                return hold_rid
-    visible_idxs = kitchen_visible_task_indices(state, theme)
-    pos = focused_index - 1
-    if 0 <= pos < len(visible_idxs):
-        return state.model.reminders[visible_idxs[pos]].rid
-    return ""
+    return state.model.reminders[task_idx].rid

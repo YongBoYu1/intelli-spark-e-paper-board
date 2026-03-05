@@ -4,7 +4,16 @@ from dataclasses import replace
 import time
 from typing import Optional
 
-from app.core.kitchen_queue import kitchen_visible_task_indices
+from app.core.kitchen_queue import (
+    KITCHEN_FOCUS_INVENTORY_HEADER,
+    KITCHEN_FOCUS_INVENTORY_ITEM,
+    KITCHEN_FOCUS_LEFT_PANEL,
+    KITCHEN_FOCUS_REMINDERS_HEADER,
+    KITCHEN_FOCUS_REMINDERS_ITEM,
+    kitchen_focus_count,
+    kitchen_focus_target,
+    kitchen_visible_task_indices,
+)
 from app.core.settings_schema import SettingsItem, SETTINGS_ORDER
 from app.core.state import AppState, Screen, Reminder, MenuItemId, WidgetMode
 
@@ -140,9 +149,8 @@ def _clamp_focus_home(state: AppState, items_per_page: int) -> None:
 
 
 def _clamp_focus_kitchen(state: AppState, theme: Optional[dict] = None) -> None:
-    # Focus queue: [LEFT_PANEL, TASK_0..] where tasks are visible+sorted by category.
-    idxs = _kitchen_visible_task_indices(state, theme)
-    n = 1 + len(idxs)
+    # Focus queue: [LEFT_PANEL, INVENTORY_HEADER, INVENTORY_ITEMS..., REMINDERS_HEADER, REMINDERS_ITEMS...]
+    n = kitchen_focus_count(state, theme)
     if n <= 0:
         state.ui.focused_index = 0
         state.ui.kitchen_focus_rid_override = ""
@@ -218,10 +226,6 @@ def _cycle_value(current, options: list):
 
 
 def _handle_settings_click(state: AppState, now: float) -> None:
-    if int(state.ui.settings_focused_index or 0) < 0:
-        state.ui.screen = Screen.HOME
-        return
-
     item = _settings_item_for_focus(state)
 
     if item == SettingsItem.FONT_SIZE:
@@ -283,9 +287,11 @@ def _activate_menu_pick(state: AppState, picked: MenuItemId, now: float, *, them
         state.ui.widget_mode = WidgetMode.TIMER
         if int(state.ui.timer_seconds or 0) <= 0:
             state.ui.timer_seconds = _timer_default_s(theme)
+        state.ui.timer_target_seconds = int(state.ui.timer_seconds or 0)
         state.ui.timer_running = False
         state.ui.timer_last_tick_at = now
         state.ui.timer_focused_index = 2
+        _clear_timer_alert(state)
         state.ui.screen = Screen.TIMER
         return
     if picked == MenuItemId.LIST:
@@ -325,6 +331,58 @@ def _timer_max_s(theme: dict) -> int:
     return max(1, value)
 
 
+def _kitchen_left_click_action(theme: dict) -> str:
+    raw = str(theme.get("kitchen_left_click_action", "weather") or "weather").strip().lower()
+    if raw in ("timer", "timer_toggle", "toggle_timer"):
+        return "timer_toggle"
+    return "weather"
+
+
+def _timer_alert_show_s(theme: dict) -> float:
+    try:
+        value = float(theme.get("timer_alert_show_s", 6.0) or 6.0)
+    except Exception:
+        value = 6.0
+    return max(0.6, value)
+
+
+def _timer_alert_blink_period_s(theme: dict) -> float:
+    try:
+        value = float(theme.get("timer_alert_blink_period_s", 0.45) or 0.45)
+    except Exception:
+        value = 0.45
+    return max(0.12, value)
+
+
+def _clear_timer_alert(state: AppState) -> None:
+    state.ui.timer_alert_active = False
+    state.ui.timer_alert_blink_on = True
+    state.ui.timer_alert_started_at = 0.0
+    state.ui.timer_alert_until = 0.0
+
+
+def _start_timer_alert(state: AppState, now: float, *, completed_seconds: int, theme: dict) -> None:
+    done_seconds = max(1, int(completed_seconds or 0))
+    state.ui.timer_last_completed_seconds = done_seconds
+    state.ui.timer_alert_active = True
+    state.ui.timer_alert_blink_on = True
+    state.ui.timer_alert_started_at = float(now)
+    state.ui.timer_alert_until = float(now) + _timer_alert_show_s(theme)
+
+
+def _tick_timer_alert(state: AppState, now: float, *, theme: dict) -> None:
+    if not bool(state.ui.timer_alert_active):
+        return
+    until = float(state.ui.timer_alert_until or 0.0)
+    if until <= 0.0 or float(now) >= until:
+        _clear_timer_alert(state)
+        return
+    started = float(state.ui.timer_alert_started_at or now)
+    period = _timer_alert_blink_period_s(theme)
+    phase = int(max(0.0, float(now) - started) / period)
+    state.ui.timer_alert_blink_on = (phase % 2) == 0
+
+
 def _clamp_timer_focus(state: AppState) -> None:
     n = 4  # [DECREASE, INCREASE, START_PAUSE, RESET]
     state.ui.timer_focused_index = int(state.ui.timer_focused_index or 0) % n
@@ -334,11 +392,13 @@ def _adjust_timer_seconds(state: AppState, delta_s: int, *, max_s: int) -> None:
     secs = int(state.ui.timer_seconds or 0) + int(delta_s)
     secs = max(0, min(int(max_s), secs))
     state.ui.timer_seconds = secs
+    state.ui.timer_target_seconds = secs
     if secs <= 0:
         state.ui.timer_running = False
 
 
 def _handle_timer_click(state: AppState, now: float, *, theme: dict) -> None:
+    _clear_timer_alert(state)
     _clamp_timer_focus(state)
     focus = int(state.ui.timer_focused_index or 0)
     step_s = _timer_step_s(theme)
@@ -364,12 +424,16 @@ def _handle_timer_click(state: AppState, now: float, *, theme: dict) -> None:
         else:
             if secs <= 0:
                 state.ui.timer_seconds = default_s
+                state.ui.timer_target_seconds = int(state.ui.timer_seconds or default_s)
+            elif int(state.ui.timer_target_seconds or 0) <= 0:
+                state.ui.timer_target_seconds = secs
             state.ui.timer_running = True
         state.ui.timer_last_tick_at = now
         return
 
     # focus == 3 => reset
     state.ui.timer_seconds = 0
+    state.ui.timer_target_seconds = 0
     state.ui.timer_running = False
     state.ui.timer_last_tick_at = now
 
@@ -402,12 +466,18 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             dt = max(0.0, now - last)
             if dt >= 1.0:
                 dec = int(dt)
-                state.ui.timer_seconds = max(0, int(state.ui.timer_seconds) - dec)
+                before = int(state.ui.timer_seconds or 0)
+                state.ui.timer_seconds = max(0, before - dec)
                 state.ui.timer_last_tick_at = last + dec
                 if state.ui.timer_seconds <= 0:
                     state.ui.timer_running = False
+                    completed = int(state.ui.timer_target_seconds or 0)
+                    if completed <= 0:
+                        completed = before
+                    _start_timer_alert(state, now, completed_seconds=completed, theme=theme)
         else:
             state.ui.timer_last_tick_at = now
+        _tick_timer_alert(state, now, theme=theme)
 
         # Delayed reorder
         if state.ui.pending_reorder and now >= state.ui.reorder_due_at:
@@ -471,8 +541,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 state.ui.focused_index += event.delta
                 _clamp_focus_home(state, items_per_page)
         elif state.ui.screen == Screen.WEATHER:
-            n = max(1, min(4, len(state.model.weather)))
-            state.ui.weather_day_index = (int(state.ui.weather_day_index) + event.delta) % n
+            # Weather-page day rotation is intentionally disabled for now.
+            pass
         elif state.ui.screen == Screen.CALENDAR:
             if (state.ui.calendar_mode or "date") == "agenda":
                 if state.ui.calendar_offset_days != 0:
@@ -489,12 +559,12 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 state.ui.calendar_offset_days = int(state.ui.calendar_offset_days or 0) + event.delta
         elif state.ui.screen == Screen.SETTINGS:
             n = max(1, len(SETTINGS_ORDER))
-            total = n + 1  # +1 for header home icon focus target
             cur = int(state.ui.settings_focused_index or 0)
-            pos = 0 if cur < 0 else (cur + 1)
-            pos = (pos + event.delta) % total
-            state.ui.settings_focused_index = -1 if pos == 0 else (pos - 1)
+            if cur < 0:
+                cur = 0
+            state.ui.settings_focused_index = (cur + event.delta) % n
         elif state.ui.screen == Screen.TIMER:
+            _clear_timer_alert(state)
             state.ui.timer_focused_index = int(state.ui.timer_focused_index or 0) + event.delta
             _clamp_timer_focus(state)
         else:
@@ -518,9 +588,35 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 _activate_menu_pick(state, state.ui.menu_focused, now, theme=theme, items_per_page=items_per_page, variant=variant)
                 return state
             if _is_kitchen_variant(variant):
+                # Landscape kitchen keeps section-header actions (open inventory/reminders),
+                # while portrait keeps direct list focus with click-hold behavior.
+                if variant == "kitchen":
+                    target_kind, target_idx = kitchen_focus_target(state, int(state.ui.focused_index or 0), theme)
+                    if target_kind == KITCHEN_FOCUS_LEFT_PANEL:
+                        left_click_action = _kitchen_left_click_action(theme)
+                        if left_click_action == "timer_toggle" and state.ui.widget_mode == WidgetMode.TIMER:
+                            state.ui.timer_running = not state.ui.timer_running
+                            state.ui.timer_last_tick_at = now
+                        else:
+                            state.ui.screen = Screen.WEATHER
+                            state.ui.weather_day_index = 0
+                    elif target_kind == KITCHEN_FOCUS_INVENTORY_HEADER:
+                        state.ui.screen = Screen.INVENTORY
+                    elif target_kind == KITCHEN_FOCUS_REMINDERS_HEADER:
+                        state.ui.screen = Screen.REMINDERS
+                    elif target_kind in (KITCHEN_FOCUS_INVENTORY_ITEM, KITCHEN_FOCUS_REMINDERS_ITEM):
+                        if target_idx is not None:
+                            _toggle_task_completed_by_index(state, target_idx)
+                            _clamp_focus_kitchen(state, theme)
+                    else:
+                        _clamp_focus_kitchen(state, theme)
+                    return state
+
+                # kitchen_portrait: no clickable headers, list rows map directly.
                 if state.ui.focused_index == 0:
                     state.ui.kitchen_focus_rid_override = ""
-                    if state.ui.widget_mode == WidgetMode.TIMER:
+                    left_click_action = _kitchen_left_click_action(theme)
+                    if left_click_action == "timer_toggle" and state.ui.widget_mode == WidgetMode.TIMER:
                         state.ui.timer_running = not state.ui.timer_running
                         state.ui.timer_last_tick_at = now
                     else:
@@ -619,7 +715,9 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 state.ui.timer_running = False
                 state.ui.widget_mode = WidgetMode.CLOCK
                 state.ui.timer_seconds = 0
+                state.ui.timer_target_seconds = 0
                 state.ui.timer_last_tick_at = now
+                _clear_timer_alert(state)
                 return state
             state.ui.menu_overlay_active = True
             state.ui.kitchen_focus_rid_override = ""

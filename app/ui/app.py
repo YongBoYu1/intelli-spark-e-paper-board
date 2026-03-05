@@ -15,6 +15,7 @@ from app.ui.settings import render_settings
 from app.ui.timer import render_timer
 from app.ui.placeholder import render_placeholder
 from app.ui.layout import compute_layout
+from app.shared.panel_font_templates import apply_panel_font_template
 
 
 def _voice_zone_status_label(phase: str, msg: str = "") -> str:
@@ -527,6 +528,7 @@ def _resolved_home_variant(theme: dict, *, rotation_deg: int = 0) -> str:
 
 
 def _draw_voice_overlay(image, state: AppState, fonts, theme: dict) -> None:
+    theme = apply_panel_font_template(theme)
     now = time.time()
     pending_confirm = bool(state.ui.voice_confirm_tool) and float(state.ui.voice_confirm_due_at or 0.0) > now
     active = bool(state.ui.voice_active) or pending_confirm
@@ -585,7 +587,14 @@ def _draw_voice_overlay(image, state: AppState, fonts, theme: dict) -> None:
     icon_y = y0 + max(0, (zone_h - icon_size) // 2) + icon_nudge_y
     _draw_mic_icon(draw, icon_x, icon_y, icon_size, ink, style=mic_style)
 
-    state_font = fonts.get("inter_bold", 13)
+    # Use shared panel font tokens only (no voice-specific font family override).
+    voice_font_key = str(theme.get("panel_font_body_key") or "inter_medium")
+    body_size = max(12, int(theme.get("panel_font_body_size", 18) or 18))
+    voice_font_size = max(
+        10,
+        int(theme.get("voice_zone_font_size", max(11, body_size - 5)) or max(11, body_size - 5)),
+    )
+    state_font = fonts.get(voice_font_key, voice_font_size)
     tx = icon_x + icon_size + 7
     state_text = _voice_summary_text(state, phase_label, msg, active=active)
     max_text_w = max(0.0, (x1 - 2) - tx)
@@ -701,7 +710,7 @@ def _render_no_rotation(image, state: AppState, fonts, theme: dict) -> None:
         render_timer(image, state, fonts, theme)
         _draw_voice_overlay(image, state, fonts, theme)
         return
-    if state.ui.screen == Screen.PLACEHOLDER:
+    if state.ui.screen in (Screen.PLACEHOLDER, Screen.INVENTORY, Screen.REMINDERS):
         render_placeholder(image, state, fonts, theme)
         _draw_voice_overlay(image, state, fonts, theme)
         return
