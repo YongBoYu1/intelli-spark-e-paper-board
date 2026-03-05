@@ -193,9 +193,9 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_shop_text_left_pad", 2)
     t.setdefault("b_right_focus_style", "row_box")
     t.setdefault("b_right_focus_pad_x", 6)
-    t.setdefault("b_right_focus_pad_y", 3)
-    t.setdefault("b_right_focus_right_trim", 2)
-    t.setdefault("b_right_focus_radius", 5)
+    t.setdefault("b_right_focus_pad_y", 4)
+    t.setdefault("b_right_focus_right_trim", 0)
+    t.setdefault("b_right_focus_radius", 6)
     t.setdefault("b_right_focus_w", 1)
     t.setdefault("b_right_focus_rail_w", 3)
     t.setdefault("b_right_focus_rail_gap", 6)
@@ -808,12 +808,15 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     focus_w = max(1, int(t.get("b_right_focus_w", 1)))
 
     inv_max_rows = max(1, int(t.get("b_inventory_max_rows", 4)))
+    hold_rid = str(getattr(state.ui, "kitchen_focus_rid_override", "") or "").strip()
     for item in fridge[:inv_max_rows]:
         if y + inv_row_h > mid_y - 8:
             break
         is_focus = (not state.ui.idle) and (focus_rid == item.rid)
         if not item.completed:
             rendered_focus_rids.append(item.rid)
+        is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
+        row_focus_w = focus_w + 1 if is_hold_focus else focus_w
 
         text_fill = ink 
         badge_text = ink
@@ -842,7 +845,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
                         (fx0, fy0, fx1, fy1),
                         radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
                         outline=ink,
-                        width=focus_w,
+                        width=row_focus_w,
                         fill=None,
                     )
 
@@ -1040,6 +1043,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         is_focus = (not state.ui.idle) and (focus_rid == item.rid)
         if not item.completed:
             rendered_focus_rids.append(item.rid)
+        is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
+        row_focus_w = focus_w + 1 if is_hold_focus else focus_w
         
         text_fill = ink
         box_outline = ink
@@ -1066,7 +1071,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
                         (fx0, fy0, fx1, fy1),
                         radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
                         outline=ink,
-                        width=focus_w,
+                        width=row_focus_w,
                         fill=None,
                     )
 

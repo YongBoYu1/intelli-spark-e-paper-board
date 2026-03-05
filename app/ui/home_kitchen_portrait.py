@@ -653,6 +653,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     focus_pad_y = int(t["bp_focus_pad_y"])
     focus_radius = int(t["bp_focus_radius"])
     focus_w = max(1, int(t["bp_focus_w"]))
+    hold_rid = str(getattr(state.ui, "kitchen_focus_rid_override", "") or "").strip()
 
     def _draw_list_header_line(
         y: int,
@@ -720,6 +721,8 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         is_focus = (not state.ui.idle) and (focus_rid == item.rid)
         if not item.completed:
             rendered_focus_rids.append(item.rid)
+        is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
+        row_focus_w = focus_w + 1 if is_hold_focus else focus_w
 
         if is_focus:
             fx0 = lx0 - focus_pad_x
@@ -732,7 +735,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
                     (fx0, fy0, fx1, fy1),
                     radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
                     outline=ink,
-                    width=focus_w,
+                    width=row_focus_w,
                     fill=None,
                 )
 
@@ -851,6 +854,8 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         is_focus = (not state.ui.idle) and (focus_rid == item.rid)
         if not item.completed:
             rendered_focus_rids.append(item.rid)
+        is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
+        row_focus_w = focus_w + 1 if is_hold_focus else focus_w
 
         if is_focus:
             fx0 = lx0 - focus_pad_x
@@ -863,7 +868,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
                     (fx0, fy0, fx1, fy1),
                     radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
                     outline=ink,
-                    width=focus_w,
+                    width=row_focus_w,
                     fill=None,
                 )
 
