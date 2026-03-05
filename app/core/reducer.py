@@ -156,6 +156,53 @@ def _toggle_task_completed_by_index(state: AppState, idx: int) -> None:
     state.ui.reorder_due_at = time.time() + 2.0
 
 
+def _list_section_indices(state: AppState) -> tuple[list[int], list[int]]:
+    inventory: list[int] = []
+    reminders: list[int] = []
+    for i, r in enumerate(state.model.reminders):
+        if str(r.category or "") == "fridge":
+            inventory.append(i)
+        else:
+            reminders.append(i)
+    return inventory, reminders
+
+
+def _list_focus_order(state: AppState) -> list[int]:
+    inventory, reminders = _list_section_indices(state)
+    return inventory + reminders
+
+
+def _clamp_focus_list(state: AppState, *, prefer_section: str | None = None) -> None:
+    inventory, reminders = _list_section_indices(state)
+    order = inventory + reminders
+    if not order:
+        state.ui.list_focused_index = 0
+        return
+
+    prefer = str(prefer_section or "").strip().lower()
+    if prefer == "inventory":
+        state.ui.list_focused_index = 0
+        return
+    if prefer == "reminders":
+        if reminders:
+            state.ui.list_focused_index = len(inventory)
+            return
+        state.ui.list_focused_index = 0
+        return
+
+    cur = int(state.ui.list_focused_index or 0)
+    state.ui.list_focused_index = max(0, min(cur, len(order) - 1))
+
+
+def _selected_list_item_model_index(state: AppState) -> int | None:
+    order = _list_focus_order(state)
+    if not order:
+        return None
+    idx = max(0, min(int(state.ui.list_focused_index or 0), len(order) - 1))
+    state.ui.list_focused_index = idx
+    return order[idx]
+
+
 def _apply_reorder(state: AppState) -> None:
     # Stable sort: incomplete first, then completed, preserve order within groups.
     before = list(state.model.reminders)
@@ -260,11 +307,8 @@ def _activate_menu_pick(state: AppState, picked: MenuItemId, now: float, *, them
         state.ui.screen = Screen.TIMER
         return
     if picked == MenuItemId.LIST:
-        state.ui.screen = Screen.HOME
-        if variant == "kitchen":
-            _clamp_focus_kitchen(state, theme)
-        else:
-            _clamp_focus_home(state, items_per_page)
+        state.ui.screen = Screen.REMINDERS
+        _clamp_focus_list(state, prefer_section="reminders")
         return
     if picked == MenuItemId.SETTINGS:
         state.ui.screen = Screen.SETTINGS
@@ -449,6 +493,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             _apply_reorder(state)
             if state.ui.screen == Screen.HOME and variant == "kitchen":
                 _clamp_focus_kitchen(state, theme)
+            elif state.ui.screen in (Screen.INVENTORY, Screen.REMINDERS):
+                _clamp_focus_list(state)
             else:
                 _clamp_focus_home(state, items_per_page)
 
@@ -531,6 +577,12 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             _clear_timer_alert(state)
             state.ui.timer_focused_index = int(state.ui.timer_focused_index or 0) + event.delta
             _clamp_timer_focus(state)
+        elif state.ui.screen in (Screen.INVENTORY, Screen.REMINDERS):
+            order = _list_focus_order(state)
+            if order:
+                cur = int(state.ui.list_focused_index or 0)
+                cur = max(0, min(cur + event.delta, len(order) - 1))
+                state.ui.list_focused_index = cur
         else:
             # Minimal: rotate does nothing on detail pages for now.
             pass
@@ -563,8 +615,10 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                         state.ui.weather_day_index = 0
                 elif target_kind == KITCHEN_FOCUS_INVENTORY_HEADER:
                     state.ui.screen = Screen.INVENTORY
+                    _clamp_focus_list(state, prefer_section="inventory")
                 elif target_kind == KITCHEN_FOCUS_REMINDERS_HEADER:
                     state.ui.screen = Screen.REMINDERS
+                    _clamp_focus_list(state, prefer_section="reminders")
                 elif target_kind in (KITCHEN_FOCUS_INVENTORY_ITEM, KITCHEN_FOCUS_REMINDERS_ITEM):
                     if target_idx is not None:
                         _toggle_task_completed_by_index(state, target_idx)
@@ -614,6 +668,11 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                     state.model.memos[idx] = replace(current, is_new=False)
         elif state.ui.screen == Screen.SETTINGS:
             _handle_settings_click(state, now)
+        elif state.ui.screen in (Screen.INVENTORY, Screen.REMINDERS):
+            selected_idx = _selected_list_item_model_index(state)
+            if selected_idx is not None:
+                _toggle_task_completed_by_index(state, selected_idx)
+                _clamp_focus_list(state)
         else:
             # Detail/placeholder: click does nothing; Back is the exit (TSX).
             pass

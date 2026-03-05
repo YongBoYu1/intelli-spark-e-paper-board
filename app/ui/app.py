@@ -10,6 +10,7 @@ from app.ui.home_kitchen import render_home_kitchen
 from app.ui.calendar import render_calendar
 from app.ui.weather_detail import render_weather_detail
 from app.ui.memo import render_memo
+from app.ui.list_unified import render_unified_list
 from app.ui.menu import render_menu, render_menu_overlay_home
 from app.ui.settings import render_settings
 from app.ui.timer import render_timer
@@ -669,7 +670,11 @@ def _render_no_rotation(image, state: AppState, fonts, theme: dict) -> None:
         render_memo(image, state, fonts, theme)
         _draw_voice_overlay(image, state, fonts, theme)
         return
-    if state.ui.screen in (Screen.PLACEHOLDER, Screen.INVENTORY, Screen.REMINDERS):
+    if state.ui.screen in (Screen.INVENTORY, Screen.REMINDERS):
+        render_unified_list(image, state, fonts, theme)
+        _draw_voice_overlay(image, state, fonts, theme)
+        return
+    if state.ui.screen in (Screen.PLACEHOLDER,):
         render_placeholder(image, state, fonts, theme)
         _draw_voice_overlay(image, state, fonts, theme)
         return

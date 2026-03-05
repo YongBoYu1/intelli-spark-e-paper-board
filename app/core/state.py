@@ -128,6 +128,8 @@ class UiState:
     memo_index: int = 0
     memo_expanded: bool = False
     memo_last_rotated_at: float = field(default_factory=lambda: time.time())
+    # Unified list page focus index (Inventory + Reminders items only; section headers are not focusable).
+    list_focused_index: int = 0
     # Monotonic revision for reminder list mutations (toggle/reorder/etc.).
     reminders_version: int = 0
     # Last rendered focus queue for kitchen home (left panel excluded).

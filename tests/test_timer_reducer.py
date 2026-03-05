@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.core.reducer import Back, Click, LongPress, Rotate, Tick, reduce
-from app.core.state import AppState, DashboardModel, MemoItem, MenuItemId, Screen, WeatherDay, WidgetMode
+from app.core.state import AppState, DashboardModel, MemoItem, MenuItemId, Reminder, Screen, WeatherDay, WidgetMode
 
 
 class TimerReducerTests(unittest.TestCase):
@@ -36,6 +36,46 @@ class TimerReducerTests(unittest.TestCase):
         self.assertEqual(self.state.ui.screen, Screen.MEMO)
         self.assertEqual(self.state.ui.memo_index, 0)
         self.assertFalse(self.state.ui.memo_expanded)
+
+    def test_menu_list_click_opens_unified_list_screen(self) -> None:
+        self.state.ui.screen = Screen.MENU
+        self.state.ui.menu_focused = MenuItemId.LIST
+        self.state.model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", category="shopping"),
+        ]
+
+        reduce(self.state, Click(), theme={})
+
+        self.assertEqual(self.state.ui.screen, Screen.REMINDERS)
+        self.assertEqual(self.state.ui.list_focused_index, 1)
+
+    def test_rotate_on_unified_list_moves_focus(self) -> None:
+        self.state.ui.screen = Screen.REMINDERS
+        self.state.model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", category="shopping"),
+            Reminder(rid="r2", title="Pay Rent", category="general"),
+        ]
+        self.state.ui.list_focused_index = 1
+
+        reduce(self.state, Rotate(+1), theme={})
+        self.assertEqual(self.state.ui.list_focused_index, 2)
+
+        reduce(self.state, Rotate(+1), theme={})
+        self.assertEqual(self.state.ui.list_focused_index, 2)
+
+    def test_click_on_unified_list_toggles_selected_item(self) -> None:
+        self.state.ui.screen = Screen.REMINDERS
+        self.state.model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge", completed=False),
+            Reminder(rid="r1", title="Buy Eggs", category="shopping", completed=False),
+        ]
+        # Focus reminder section first item (order: inventory then reminders).
+        self.state.ui.list_focused_index = 1
+
+        reduce(self.state, Click(), theme={})
+        self.assertTrue(self.state.model.reminders[1].completed)
 
     def test_rotate_on_memo_cycles_index_and_collapses(self) -> None:
         self.state.ui.screen = Screen.MEMO

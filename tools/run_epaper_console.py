@@ -497,6 +497,7 @@ def _state_render_sig(state: AppState):
         state.ui.calendar_selected_index,
         state.ui.memo_index,
         state.ui.memo_expanded,
+        state.ui.list_focused_index,
         state.ui.partial_refresh_mode,
         state.ui.full_refresh_every,
         state.ui.wifi_enabled,

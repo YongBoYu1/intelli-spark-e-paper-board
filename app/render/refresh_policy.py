@@ -30,6 +30,8 @@ def screen_partial_area_limit(screen: Screen, mode: str) -> float:
         return min(0.95, base + 0.20)
     if screen == Screen.MEMO:
         return max(0.45, min(base, 0.72))
+    if screen in (Screen.INVENTORY, Screen.REMINDERS):
+        return max(0.45, min(base, 0.72))
     if screen == Screen.MENU:
         return max(0.30, min(base, 0.55))
     if screen == Screen.CALENDAR:
@@ -216,6 +218,7 @@ class UiSnapshot:
     memo_index: int
     memo_expanded: bool
     memos_digest: tuple
+    list_focused_index: int
     voice_active: bool
     voice_phase: str
 
@@ -256,6 +259,7 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
         memo_index=int(state.ui.memo_index or 0),
         memo_expanded=bool(state.ui.memo_expanded),
         memos_digest=tuple((m.mid, str(m.text), str(m.author), int(float(m.timestamp)), bool(m.is_new)) for m in state.model.memos),
+        list_focused_index=int(state.ui.list_focused_index or 0),
         voice_active=bool(state.ui.voice_active),
         voice_phase=str(state.ui.voice_phase or "idle"),
     )
@@ -310,6 +314,21 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             "header": (16, 10, w - 16, 76),
             "card": (20, 80, w - 20, max(80, h - 60)),
             "footer": (16, max(0, h - 58), w - 16, h),
+        }
+    if screen in (Screen.INVENTORY, Screen.REMINDERS):
+        left = 24
+        right = w - 24
+        content_top = 104
+        footer_y = h - 40
+        content_bottom = footer_y - 6
+        split_x = left + int((right - left) * 0.40)
+        return {
+            "header": (16, 10, w - 16, 76),
+            "summary": (20, 76, w - 20, 104),
+            "list_left": (left, content_top, max(left + 1, split_x - 3), content_bottom),
+            "list_right": (min(right - 1, split_x + 3), content_top, right, content_bottom),
+            "divider": (max(left, split_x - 2), content_top, min(right, split_x + 2), content_bottom),
+            "footer": (16, max(0, h - 44), w - 16, h),
         }
     if screen == Screen.WEATHER:
         y0 = 16
@@ -388,6 +407,27 @@ def _home_visible_section_counts(reminders_digest: tuple, *, inv_max: int = 3, r
             if rem_count < rem_max:
                 rem_count += 1
     return inv_count, rem_count
+
+
+def _list_inventory_count(reminders_digest: tuple) -> int:
+    count = 0
+    for item in reminders_digest or ():
+        try:
+            category = str(item[4] or "")
+        except Exception:
+            continue
+        if category == "fridge":
+            count += 1
+    return count
+
+
+def _list_focus_section(list_focused_index: int, reminders_digest: tuple) -> str:
+    total = len(reminders_digest or ())
+    if total <= 0:
+        return "none"
+    inv_count = _list_inventory_count(reminders_digest)
+    idx = max(0, min(int(list_focused_index or 0), total - 1))
+    return "inventory" if idx < inv_count else "reminders"
 
 
 def _home_focus_row_rect(width: int, height: int, focus_index: int, reminders_digest: tuple) -> Rect | None:
@@ -516,6 +556,24 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         if prev.memos_digest != curr.memos_digest:
             rects.extend([regions["header"], regions["card"]])
             reasons.append("memo.data_change")
+        return rects, reasons
+
+    if curr.screen in (Screen.INVENTORY, Screen.REMINDERS):
+        if prev.list_focused_index != curr.list_focused_index:
+            prev_section = _list_focus_section(prev.list_focused_index, prev.reminders_digest)
+            curr_section = _list_focus_section(curr.list_focused_index, curr.reminders_digest)
+            if prev_section == "inventory" and curr_section == "inventory":
+                rects.append(regions["list_left"])
+            elif prev_section == "reminders" and curr_section == "reminders":
+                rects.append(regions["list_right"])
+            else:
+                rects.extend([regions["list_left"], regions["list_right"], regions["divider"]])
+            reasons.append("list.focus_move")
+            return rects, reasons
+        if prev.reminders_digest != curr.reminders_digest:
+            rects.extend([regions["summary"], regions["list_left"], regions["list_right"], regions["divider"]])
+            reasons.append("list.data_change")
+            return rects, reasons
         return rects, reasons
 
     if curr.screen == Screen.WEATHER:
