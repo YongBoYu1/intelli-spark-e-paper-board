@@ -70,7 +70,7 @@ def _theme(theme: dict) -> dict:
     t.setdefault("bp_header_ratio", 0.21)
     t.setdefault("bp_memo_ratio", 0.25)
     t.setdefault("bp_weather_col_w", 156)
-    t.setdefault("bp_weather_right_inset", 10)
+    t.setdefault("bp_weather_right_inset", 14)
     t.setdefault("bp_header_col_gap", 16)
     t.setdefault("bp_header_rule_w", 2)
     t.setdefault("bp_list_split_ratio", 0.48)
