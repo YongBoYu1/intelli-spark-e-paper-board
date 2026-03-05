@@ -9,6 +9,7 @@ from typing import Any, Optional
 class Screen(str, Enum):
     HOME = "home"
     MENU = "menu"
+    MEMO = "memo"
     TIMER = "timer"
     CALENDAR = "calendar"
     WEATHER = "weather"
@@ -125,6 +126,7 @@ class UiState:
 
     # Mood panel memo selection + auto-rotation.
     memo_index: int = 0
+    memo_expanded: bool = False
     memo_last_rotated_at: float = field(default_factory=lambda: time.time())
     # Monotonic revision for reminder list mutations (toggle/reorder/etc.).
     reminders_version: int = 0

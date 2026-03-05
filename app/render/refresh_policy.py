@@ -28,6 +28,8 @@ def screen_partial_area_limit(screen: Screen, mode: str) -> float:
     base = mode_params(mode).partial_area_limit
     if screen == Screen.TIMER:
         return min(0.95, base + 0.20)
+    if screen == Screen.MEMO:
+        return max(0.45, min(base, 0.72))
     if screen == Screen.MENU:
         return max(0.30, min(base, 0.55))
     if screen == Screen.CALENDAR:
@@ -212,6 +214,8 @@ class UiSnapshot:
     calendar_selected_index: int
     reminders_digest: tuple
     memo_index: int
+    memo_expanded: bool
+    memos_digest: tuple
     voice_active: bool
     voice_phase: str
 
@@ -250,6 +254,8 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
         calendar_selected_index=int(state.ui.calendar_selected_index or 0),
         reminders_digest=tuple((r.rid, bool(r.completed), str(r.title), str(r.right), str(r.category)) for r in state.model.reminders),
         memo_index=int(state.ui.memo_index or 0),
+        memo_expanded=bool(state.ui.memo_expanded),
+        memos_digest=tuple((m.mid, str(m.text), str(m.author), int(float(m.timestamp)), bool(m.is_new)) for m in state.model.memos),
         voice_active=bool(state.ui.voice_active),
         voice_phase=str(state.ui.voice_phase or "idle"),
     )
@@ -299,6 +305,12 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
     if screen == Screen.MENU:
         cy = h // 2
         return {"pills": (40, max(0, cy - 56), w - 40, min(h, cy + 56))}
+    if screen == Screen.MEMO:
+        return {
+            "header": (16, 10, w - 16, 76),
+            "card": (20, 80, w - 20, max(80, h - 60)),
+            "footer": (16, max(0, h - 58), w - 16, h),
+        }
     if screen == Screen.WEATHER:
         y0 = 16
         y1 = h - 16
@@ -490,6 +502,20 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         if prev.menu_focused != curr.menu_focused:
             rects.append(regions["pills"])
             reasons.append("menu.focus_move")
+        return rects, reasons
+
+    if curr.screen == Screen.MEMO:
+        if prev.memo_index != curr.memo_index:
+            rects.extend([regions["header"], regions["card"]])
+            reasons.append("memo.focus_move")
+            return rects, reasons
+        if prev.memo_expanded != curr.memo_expanded:
+            rects.extend([regions["card"], regions["footer"]])
+            reasons.append("memo.expand_toggle")
+            return rects, reasons
+        if prev.memos_digest != curr.memos_digest:
+            rects.extend([regions["header"], regions["card"]])
+            reasons.append("memo.data_change")
         return rects, reasons
 
     if curr.screen == Screen.WEATHER:

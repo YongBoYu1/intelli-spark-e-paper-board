@@ -239,6 +239,12 @@ def _toggle_rotation(state: AppState) -> None:
 def _activate_menu_pick(state: AppState, picked: MenuItemId, now: float, *, theme: dict, items_per_page: int, variant: str) -> None:
     state.ui.active_menu = picked
     state.ui.menu_overlay_active = False
+    if picked == MenuItemId.MEMO:
+        state.ui.screen = Screen.MEMO
+        count = len(state.model.memos)
+        state.ui.memo_index = (int(state.ui.memo_index or 0) % max(1, count)) if count > 0 else 0
+        state.ui.memo_expanded = False
+        return
     if picked == MenuItemId.CALENDAR:
         state.ui.screen = Screen.CALENDAR
         return
@@ -509,6 +515,12 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                         state.ui.calendar_selected_index = cur
             else:
                 state.ui.calendar_offset_days = int(state.ui.calendar_offset_days or 0) + event.delta
+        elif state.ui.screen == Screen.MEMO:
+            memo_count = len(state.model.memos)
+            if memo_count > 0:
+                cur = int(state.ui.memo_index or 0)
+                state.ui.memo_index = (cur + event.delta) % memo_count
+                state.ui.memo_expanded = False
         elif state.ui.screen == Screen.SETTINGS:
             n = max(1, len(SETTINGS_ORDER))
             cur = int(state.ui.settings_focused_index or 0)
@@ -593,6 +605,13 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                         _toggle_task_completed_by_index(state, task_idx)
         elif state.ui.screen == Screen.TIMER:
             _handle_timer_click(state, now, theme=theme)
+        elif state.ui.screen == Screen.MEMO:
+            if state.model.memos:
+                state.ui.memo_expanded = not bool(state.ui.memo_expanded)
+                idx = int(state.ui.memo_index or 0) % len(state.model.memos)
+                current = state.model.memos[idx]
+                if bool(current.is_new):
+                    state.model.memos[idx] = replace(current, is_new=False)
         elif state.ui.screen == Screen.SETTINGS:
             _handle_settings_click(state, now)
         else:

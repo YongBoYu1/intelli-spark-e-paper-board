@@ -99,6 +99,41 @@ class RefreshPolicyTests(unittest.TestCase):
         _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("menu.focus_move", reasons)
 
+    def test_memo_rotate_change_generates_memo_focus_reason(self) -> None:
+        model = DashboardModel()
+        model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=100.0, is_new=True),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=120.0, is_new=False),
+        ]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.MEMO
+        prev.ui.memo_index = 0
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.MEMO
+        curr.ui.memo_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("memo.focus_move", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.90)
+
+    def test_memo_expand_toggle_generates_memo_expand_reason(self) -> None:
+        model = DashboardModel()
+        model.memos = [MemoItem(mid="m1", text="A", author="Mom", timestamp=100.0, is_new=False)]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.MEMO
+        prev.ui.memo_expanded = False
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.MEMO
+        curr.ui.memo_expanded = True
+
+        _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("memo.expand_toggle", reasons)
+
     def test_home_focus_move_prefers_row_dirty_rect(self) -> None:
         prev = AppState(model=DashboardModel())
         prev.ui.screen = Screen.HOME

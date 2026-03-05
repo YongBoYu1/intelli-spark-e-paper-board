@@ -22,6 +22,53 @@ class TimerReducerTests(unittest.TestCase):
         self.assertFalse(self.state.ui.timer_running)
         self.assertEqual(self.state.ui.timer_focused_index, 2)
 
+    def test_menu_memo_click_opens_memo_screen(self) -> None:
+        self.state.ui.screen = Screen.MENU
+        self.state.ui.menu_focused = MenuItemId.MEMO
+        self.state.ui.memo_expanded = True
+        self.state.model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=1, is_new=True),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=2, is_new=False),
+        ]
+
+        reduce(self.state, Click(), theme={})
+
+        self.assertEqual(self.state.ui.screen, Screen.MEMO)
+        self.assertEqual(self.state.ui.memo_index, 0)
+        self.assertFalse(self.state.ui.memo_expanded)
+
+    def test_rotate_on_memo_cycles_index_and_collapses(self) -> None:
+        self.state.ui.screen = Screen.MEMO
+        self.state.ui.memo_index = 0
+        self.state.ui.memo_expanded = True
+        self.state.model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=1, is_new=True),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=2, is_new=False),
+        ]
+
+        reduce(self.state, Rotate(-1), theme={})
+        self.assertEqual(self.state.ui.memo_index, 1)
+        self.assertFalse(self.state.ui.memo_expanded)
+
+        reduce(self.state, Rotate(+1), theme={})
+        self.assertEqual(self.state.ui.memo_index, 0)
+
+    def test_click_on_memo_toggles_expand_and_clears_new_flag(self) -> None:
+        self.state.ui.screen = Screen.MEMO
+        self.state.ui.memo_index = 0
+        self.state.ui.memo_expanded = False
+        self.state.model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=1, is_new=True),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=2, is_new=False),
+        ]
+
+        reduce(self.state, Click(), theme={})
+        self.assertTrue(self.state.ui.memo_expanded)
+        self.assertFalse(self.state.model.memos[0].is_new)
+
+        reduce(self.state, Click(), theme={})
+        self.assertFalse(self.state.ui.memo_expanded)
+
     def test_timer_rotate_cycles_focus(self) -> None:
         self.state.ui.screen = Screen.TIMER
         self.state.ui.timer_focused_index = 0
