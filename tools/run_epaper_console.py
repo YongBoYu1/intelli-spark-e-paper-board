@@ -174,6 +174,16 @@ def _parse_optional_number(raw) -> float | None:
         return None
 
 
+def _first_present_value(*values):
+    for v in values:
+        if v is None:
+            continue
+        if isinstance(v, str) and not v.strip():
+            continue
+        return v
+    return None
+
+
 def _weather_rows_from_model(state: AppState) -> list[dict]:
     rows: list[dict] = []
     for w in list(getattr(state.model, "weather", []) or []):
@@ -211,12 +221,28 @@ def _weather_days_from_rows(rows: object) -> list[WeatherDay]:
                     lo=int(w.get("lo", 0)),
                     humidity=_parse_optional_humidity(w.get("humidity")),
                     feels_like=_parse_optional_number(
-                        w.get("feels_like") or w.get("feelsLike") or w.get("feels") or w.get("apparent_temp")
+                        _first_present_value(
+                            w.get("feels_like"),
+                            w.get("feelsLike"),
+                            w.get("feels"),
+                            w.get("apparent_temp"),
+                        )
                     ),
                     wind_kmh=_parse_optional_number(
-                        w.get("wind_kmh") or w.get("windKmh") or w.get("wind_speed") or w.get("wind")
+                        _first_present_value(
+                            w.get("wind_kmh"),
+                            w.get("windKmh"),
+                            w.get("wind_speed"),
+                            w.get("wind"),
+                        )
                     ),
-                    uv_index=_parse_optional_number(w.get("uv_index") or w.get("uv") or w.get("uvi")),
+                    uv_index=_parse_optional_number(
+                        _first_present_value(
+                            w.get("uv_index"),
+                            w.get("uv"),
+                            w.get("uvi"),
+                        )
+                    ),
                 )
             )
         except Exception:
@@ -321,12 +347,28 @@ def _load_model(repo_root: str) -> DashboardModel:
                     lo=int(w.get("lo", 0)),
                     humidity=_parse_optional_humidity(w.get("humidity")),
                     feels_like=_parse_optional_number(
-                        w.get("feels_like") or w.get("feelsLike") or w.get("feels") or w.get("apparent_temp")
+                        _first_present_value(
+                            w.get("feels_like"),
+                            w.get("feelsLike"),
+                            w.get("feels"),
+                            w.get("apparent_temp"),
+                        )
                     ),
                     wind_kmh=_parse_optional_number(
-                        w.get("wind_kmh") or w.get("windKmh") or w.get("wind_speed") or w.get("wind")
+                        _first_present_value(
+                            w.get("wind_kmh"),
+                            w.get("windKmh"),
+                            w.get("wind_speed"),
+                            w.get("wind"),
+                        )
                     ),
-                    uv_index=_parse_optional_number(w.get("uv_index") or w.get("uv") or w.get("uvi")),
+                    uv_index=_parse_optional_number(
+                        _first_present_value(
+                            w.get("uv_index"),
+                            w.get("uv"),
+                            w.get("uvi"),
+                        )
+                    ),
                 )
             )
         except Exception:

@@ -34,6 +34,11 @@ class LocationResolverTests(unittest.TestCase):
     def test_unknown_when_no_auto_and_no_configured_location(self) -> None:
         self.assertEqual(resolve_dashboard_location(""), "Unknown")
 
+    @patch.dict("os.environ", {}, clear=True)
+    @patch("app.data.location.detect_city_from_network", return_value="DetectedCity")
+    def test_configured_location_takes_priority_over_auto_detect(self, _mock_detect) -> None:
+        self.assertEqual(resolve_dashboard_location("ConfiguredCity"), "ConfiguredCity")
+
     @patch("app.data.location.urlopen")
     def test_detect_city_uses_first_available_source(self, mock_urlopen) -> None:
         mock_urlopen.return_value = _FakeResponse({"success": True, "city": "Vancouver"})
@@ -47,4 +52,3 @@ class LocationResolverTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

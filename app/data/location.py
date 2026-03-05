@@ -83,11 +83,14 @@ def resolve_dashboard_location(configured_location: object) -> str:
     if manual:
         return manual
 
+    # Preserve an explicitly configured city from dashboard data.
+    configured = _clean_text(configured_location)
+    if configured:
+        return configured
+
     if _env_flag("LOCATION_AUTO_DETECT", True):
         city = detect_city_from_network()
         if city:
             return city
 
-    fallback = _clean_text(configured_location)
-    return fallback or "Unknown"
-
+    return "Unknown"

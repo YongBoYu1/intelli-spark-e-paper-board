@@ -112,6 +112,26 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         nxt = rec._next_weather_refresh_at(now, 6.0)
         self.assertAlmostEqual(nxt, now + 6 * 3600, delta=0.1)
 
+    def test_weather_days_from_rows_preserves_zero_metric_values(self) -> None:
+        rows = [
+            {
+                "dow": "MON",
+                "icon": "sun",
+                "hi": 10,
+                "lo": 1,
+                "wind_kmh": 0,
+                "uv_index": 0,
+                "feels_like": 0,
+            }
+        ]
+
+        days = rec._weather_days_from_rows(rows)
+
+        self.assertEqual(len(days), 1)
+        self.assertEqual(days[0].wind_kmh, 0.0)
+        self.assertEqual(days[0].uv_index, 0.0)
+        self.assertEqual(days[0].feels_like, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
