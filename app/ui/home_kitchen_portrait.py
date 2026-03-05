@@ -416,10 +416,11 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         tw, th = text_size(draw, temp, f_temp)
         icon_size = int(t["bp_weather_icon_size"])
         weather_right = weather_x1 - 2
-        icon_y = weather_top
-        icon_x = weather_right - icon_size
-        temp_y = icon_y + icon_size + int(t.get("bp_weather_temp_icon_gap", 8))
+        # Keep the first header row semantically aligned: big clock (left) vs big temp (right).
+        temp_y = weather_top
         temp_x = weather_right - tw
+        icon_y = temp_y + th + int(t.get("bp_weather_temp_icon_gap", 8))
+        icon_x = weather_right - icon_size
         _draw_weather_icon_pack(
             image,
             draw,
@@ -441,7 +442,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         desc_w = text_width_spaced(draw, desc, f_weather_desc, spacing=desc_spacing)
         desc_h = text_size(draw, "Ag", f_weather_desc)[1]
         desc_x = weather_right - desc_w
-        desc_y = temp_y + th + int(t.get("bp_weather_meta_gap", 8))
+        desc_y = icon_y + icon_size + int(t.get("bp_weather_meta_gap", 8))
         draw_text_spaced(
             draw,
             desc,
@@ -471,8 +472,8 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
                     fill=muted,
                 )
     else:
-        draw.text((weather_x1 - 92, weather_top + 8), "--°", font=f_temp, fill=ink)
-        draw_text_spaced(draw, "NO DATA", weather_x1 - 72, weather_top + 72, f_weather_desc, spacing=1, fill=muted)
+        draw.text((weather_x1 - 92, weather_top), "--°", font=f_temp, fill=ink)
+        draw_text_spaced(draw, "NO DATA", weather_x1 - 72, weather_top + 60, f_weather_desc, spacing=1, fill=muted)
 
     # Memo section
     mx0, mx1 = x0 + pad, x1 - pad
