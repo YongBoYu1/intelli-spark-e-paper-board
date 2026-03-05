@@ -356,8 +356,8 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
     if screen == Screen.CALENDAR:
         right_x = int(w * 0.45)
         return {
-            "left_grid": (0, 82, right_x, h),
-            "right_header": (right_x, 0, w, 96),
+            "left_panel": (0, 0, right_x, h),
+            "right_panel": (right_x, 0, w, h),
             "right_agenda": (right_x, 90, w, h),
         }
     # HOME / fallback
@@ -505,6 +505,20 @@ def infer_dirty_rects(prev: UiSnapshot, curr: UiSnapshot, width: int, height: in
 
 def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: int, height: int) -> tuple[list[Rect], list[str]]:
     if prev.screen != curr.screen:
+        regions = _screen_regions(curr.screen, width, height, rotation_deg=curr.rotation_deg)
+        if curr.screen == Screen.MEMO:
+            return [regions["header"], regions["card"], regions["footer"]], ["screen.change_to_memo"]
+        if curr.screen in (Screen.INVENTORY, Screen.REMINDERS):
+            return [
+                regions["header"],
+                regions["summary"],
+                regions["list_left"],
+                regions["list_right"],
+                regions["divider"],
+                regions["footer"],
+            ], ["screen.change_to_list"]
+        if curr.screen == Screen.CALENDAR:
+            return [regions["left_panel"], regions["right_panel"]], ["screen.change_to_calendar"]
         return [], []
     if int(prev.rotation_deg) != int(curr.rotation_deg):
         return [], []
@@ -601,7 +615,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             or prev.reminders_digest != curr.reminders_digest
             or prev.calendar_digest != curr.calendar_digest
         ):
-            rects.extend([regions["left_grid"], regions["right_header"], regions["right_agenda"]])
+            rects.extend([regions["left_panel"], regions["right_panel"]])
             reasons.append("calendar.date_or_mode_or_data")
             return rects, reasons
         if prev.calendar_selected_index != curr.calendar_selected_index:

@@ -644,6 +644,27 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     return screen_name in set(names)
 
 
+def _screen_change_partial_enabled_with_theme(prev_screen: Screen, curr_screen: Screen, theme: dict) -> bool:
+    if bool(theme.get("refresh_force_full_on_screen_change", False)):
+        return False
+
+    default_screens = "memo,calendar,inventory,reminders"
+    raw = theme.get("refresh_partial_screen_change_screens", default_screens)
+    if isinstance(raw, str):
+        names = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, (list, tuple)):
+        names = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
+
+    curr_name = str(curr_screen.value if isinstance(curr_screen, Screen) else curr_screen).strip().lower()
+    if curr_name not in set(names):
+        return False
+
+    # Respect per-screen partial switch as well.
+    return _screen_partial_enabled_with_theme(curr_screen, theme)
+
+
 def _rects_overlap_or_near(a: tuple[int, int, int, int], b: tuple[int, int, int, int], *, slack: int = 4) -> bool:
     ax0, ay0, ax1, ay1 = a
     bx0, by0, bx1, by1 = b
@@ -1585,17 +1606,27 @@ def main() -> int:
                             dirty_rects.append(diff_box)
                             dirty_reasons.append("diff_fallback")
                         elif not rect_contains(merged_dirty, diff_box, slack=4):
-                            # BBox can be overly large when a few distant pixels change.
-                            # Only trust bbox fallback when changed-pixel ratio is meaningful.
-                            fallback_ratio_min = float(theme.get("refresh_diff_fallback_min_ratio", 0.10) or 0.10)
-                            if diff_ratio >= fallback_ratio_min:
-                                dirty_rects.append(diff_box)
-                                dirty_reasons.append("diff_fallback")
-                            elif refresh_debug:
-                                print(
-                                    f"[refresh] DIFF_FALLBACK_SKIP screen={curr_snapshot.screen.value} "
-                                    f"diff_ratio={diff_ratio:.4f} threshold={fallback_ratio_min:.4f}"
-                                )
+                            if committed_snapshot.screen != curr_snapshot.screen:
+                                # For cross-screen transitions we use structural dirty regions on purpose.
+                                # Avoid inflating to a massive bbox fallback, which would force full refresh.
+                                if refresh_debug:
+                                    print(
+                                        f"[refresh] DIFF_FALLBACK_SKIP screen={curr_snapshot.screen.value} "
+                                        "reason=screen_changed"
+                                    )
+                                pass
+                            else:
+                                # BBox can be overly large when a few distant pixels change.
+                                # Only trust bbox fallback when changed-pixel ratio is meaningful.
+                                fallback_ratio_min = float(theme.get("refresh_diff_fallback_min_ratio", 0.10) or 0.10)
+                                if diff_ratio >= fallback_ratio_min:
+                                    dirty_rects.append(diff_box)
+                                    dirty_reasons.append("diff_fallback")
+                                elif refresh_debug:
+                                    print(
+                                        f"[refresh] DIFF_FALLBACK_SKIP screen={curr_snapshot.screen.value} "
+                                        f"diff_ratio={diff_ratio:.4f} threshold={fallback_ratio_min:.4f}"
+                                    )
                     else:
                         dirty_rects = [diff_box]
                         dirty_reasons = ["diff_only"]
@@ -1635,6 +1666,14 @@ def main() -> int:
                 force_full_clean = bool(full_clean_reason)
                 screen_changed = pending_snapshot.screen != committed_snapshot.screen
                 rotation_changed = pending_snapshot.rotation_deg != committed_snapshot.rotation_deg
+                screen_change_partial = (
+                    screen_changed
+                    and _screen_change_partial_enabled_with_theme(
+                        committed_snapshot.screen,
+                        pending_snapshot.screen,
+                        theme,
+                    )
+                )
                 font_size_changed = pending_snapshot.font_size != committed_snapshot.font_size
                 force_flush = force_full_clean or screen_changed or rotation_changed
 
@@ -1651,14 +1690,22 @@ def main() -> int:
                                     f"full_every={full_every_text} mode={policy_mode} "
                                     f"dirty={','.join(pending_reasons) or '-'}"
                                 )
-                        elif screen_changed or rotation_changed:
+                        elif rotation_changed:
                             driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
                             refresh_runtime.mark_fast_full(now)
                             if refresh_debug:
-                                reason = "screen_changed" if screen_changed else "rotation_changed"
                                 print(
                                     f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} "
-                                    f"reason={reason} mode={policy_mode} "
+                                    f"reason=rotation_changed mode={policy_mode} "
+                                    f"fast={'on' if fast_full else 'off'}"
+                                )
+                        elif screen_changed and not screen_change_partial:
+                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
+                            refresh_runtime.mark_fast_full(now)
+                            if refresh_debug:
+                                print(
+                                    f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} "
+                                    f"reason=screen_changed mode={policy_mode} "
                                     f"fast={'on' if fast_full else 'off'}"
                                 )
                         elif pending_snapshot.screen == Screen.SETTINGS and font_size_changed:
