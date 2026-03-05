@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date, datetime, timedelta
 import time
 from typing import Optional
 
+from app.core.calendar_utils import resolve_event_date
 from app.core.kitchen_queue import (
     KITCHEN_FOCUS_INVENTORY_HEADER,
     KITCHEN_FOCUS_INVENTORY_ITEM,
@@ -201,6 +203,39 @@ def _selected_list_item_model_index(state: AppState) -> int | None:
     idx = max(0, min(int(state.ui.list_focused_index or 0), len(order) - 1))
     state.ui.list_focused_index = idx
     return order[idx]
+
+
+def _calendar_cursor_date(state: AppState, *, base_date: date | None = None) -> date:
+    base = base_date if isinstance(base_date, date) else datetime.now().date()
+    offset = int(state.ui.calendar_offset_days or 0)
+    return base + timedelta(days=offset)
+
+
+def _calendar_selected_indices(state: AppState, *, base_date: date | None = None) -> tuple[list[int], list[int]]:
+    base = base_date if isinstance(base_date, date) else datetime.now().date()
+    target = _calendar_cursor_date(state, base_date=base)
+    event_indices: list[int] = []
+    reminder_indices: list[int] = []
+
+    for idx, ev in enumerate(state.model.calendar):
+        ev_day = resolve_event_date(ev, base_date=base)
+        if ev_day is None:
+            if target == base:
+                event_indices.append(idx)
+            continue
+        if ev_day == target:
+            event_indices.append(idx)
+
+    for idx, reminder in enumerate(state.model.reminders):
+        due_day = resolve_event_date(reminder, base_date=base)
+        if due_day is None:
+            if target == base:
+                reminder_indices.append(idx)
+            continue
+        if due_day == target:
+            reminder_indices.append(idx)
+
+    return event_indices, reminder_indices
 
 
 def _apply_reorder(state: AppState) -> None:
@@ -549,16 +584,14 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             pass
         elif state.ui.screen == Screen.CALENDAR:
             if (state.ui.calendar_mode or "date") == "agenda":
-                if state.ui.calendar_offset_days != 0:
+                event_indices, reminder_indices = _calendar_selected_indices(state)
+                agenda_len = len(event_indices) + len(reminder_indices)
+                if agenda_len <= 0:
                     state.ui.calendar_selected_index = 0
                 else:
-                    agenda_len = len(state.model.calendar) + len(state.model.reminders)
-                    if agenda_len <= 0:
-                        state.ui.calendar_selected_index = 0
-                    else:
-                        cur = int(state.ui.calendar_selected_index or 0)
-                        cur = max(0, min(cur + event.delta, agenda_len - 1))
-                        state.ui.calendar_selected_index = cur
+                    cur = int(state.ui.calendar_selected_index or 0)
+                    cur = max(0, min(cur + event.delta, agenda_len - 1))
+                    state.ui.calendar_selected_index = cur
             else:
                 state.ui.calendar_offset_days = int(state.ui.calendar_offset_days or 0) + event.delta
         elif state.ui.screen == Screen.MEMO:
@@ -643,20 +676,17 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             else:
                 _toggle_task_completed(state, items_per_page)
         elif state.ui.screen == Screen.CALENDAR:
-            # Click toggles calendar mode (date <-> agenda) or toggles selected task in agenda mode.
+            # Click enters agenda mode from date mode; in agenda mode it toggles selected task.
             if (state.ui.calendar_mode or "date") == "date":
                 state.ui.calendar_mode = "agenda"
                 state.ui.calendar_selected_index = 0
             else:
-                if state.ui.calendar_offset_days != 0:
-                    # Free-day screen: click returns to date mode so user can continue navigating dates.
-                    state.ui.calendar_mode = "date"
-                else:
-                    n_events = len(state.model.calendar)
-                    idx = int(state.ui.calendar_selected_index or 0)
-                    if idx >= n_events:
-                        task_idx = idx - n_events
-                        _toggle_task_completed_by_index(state, task_idx)
+                event_indices, reminder_indices = _calendar_selected_indices(state)
+                idx = int(state.ui.calendar_selected_index or 0)
+                if idx >= len(event_indices):
+                    reminder_pos = idx - len(event_indices)
+                    if 0 <= reminder_pos < len(reminder_indices):
+                        _toggle_task_completed_by_index(state, reminder_indices[reminder_pos])
         elif state.ui.screen == Screen.TIMER:
             _handle_timer_click(state, now, theme=theme)
         elif state.ui.screen == Screen.MEMO:

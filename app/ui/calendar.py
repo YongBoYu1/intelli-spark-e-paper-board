@@ -4,8 +4,9 @@ from datetime import date, datetime, timedelta
 
 from PIL import ImageDraw
 
+from app.core.calendar_utils import events_for_date
 from app.core.state import AppState
-from app.shared.draw import truncate_text, text_size, rounded_rect, draw_checkbox
+from app.shared.draw import truncate_text, text_size, draw_checkbox
 from app.shared.panel_font_templates import apply_panel_font_template
 
 
@@ -96,8 +97,17 @@ def render_calendar(image, state: AppState, fonts, theme: dict) -> None:
     # Day cells
     x0 = left_pad
     y0 = grid_top
-    has_any_event = len(state.model.calendar) > 0
-    has_any_task = any(not r.completed for r in state.model.reminders)
+    calendar_events = list(state.model.calendar or [])
+    reminder_events = list(state.model.reminders or [])
+    event_days: set[int] = set()
+    task_days: set[int] = set()
+    for day in range(1, days_in_month + 1):
+        day_date = date(year, month, day)
+        if events_for_date(calendar_events, target_date=day_date, base_date=today):
+            event_days.add(day)
+        if events_for_date(reminder_events, target_date=day_date, base_date=today):
+            task_days.add(day)
+
     for day in range(1, days_in_month + 1):
         idx = start_offset + (day - 1)
         row = idx // 7
@@ -128,9 +138,9 @@ def render_calendar(image, state: AppState, fonts, theme: dict) -> None:
         lw, lh = text_size(draw, label, day_font)
         draw.text((cx - lw // 2, cy - lh // 2), label, font=day_font, fill=label_fill)
 
-        # Event/task markers (available for selected day until real per-day data arrives)
-        has_event = (day == cursor.day and off == 0 and has_any_event)
-        has_task = (day == cursor.day and off == 0 and has_any_task)
+        # Event/task markers for the specific day.
+        has_event = day in event_days
+        has_task = day in task_days
         dot_y = cy1 - 8
         dot_r = 2
         dx = cx - 5
@@ -165,26 +175,13 @@ def render_calendar(image, state: AppState, fonts, theme: dict) -> None:
     row_h = 56
     row_gap = 8
 
-    # In shifted dates we currently have no per-day dataset: show explicit empty state.
-    if off != 0:
-        empty_title = "NO ITEMS"
-        empty_sub = "Rotate to change date"
-        tw, th = text_size(draw, empty_title, right_title_font)
-        sw, sh = text_size(draw, empty_sub, mode_font)
-        cx = right_x + (right_w // 2)
-        cy = list_top + ((list_bottom - list_top) // 2)
-        draw.text((cx - (tw // 2), cy - th), empty_title, font=right_title_font, fill=muted)
-        draw.text((cx - (sw // 2), cy + 8), empty_sub, font=mode_font, fill=muted)
-        footer = "ROTATE: DATE  CLICK: BACK TO DATE MODE"
-        footer = truncate_text(draw, footer, footer_font, max(80, w - 24))
-        draw.text((12, h - 24), footer, font=footer_font, fill=muted)
-        return
-
-    # Build agenda rows: events first, then reminders.
+    # Build agenda rows for the selected date: events first, then reminders.
+    selected_events = events_for_date(calendar_events, target_date=cursor, base_date=today)
+    selected_tasks = events_for_date(reminder_events, target_date=cursor, base_date=today)
     items: list[dict] = []
-    for ev in state.model.calendar:
+    for ev in selected_events:
         items.append({"kind": "event", "title": str(ev.title or ""), "when": str(ev.when or "")})
-    for r in state.model.reminders:
+    for r in selected_tasks:
         items.append(
             {
                 "kind": "task",
@@ -203,7 +200,10 @@ def render_calendar(image, state: AppState, fonts, theme: dict) -> None:
         cy = list_top + ((list_bottom - list_top) // 2)
         draw.text((cx - (tw // 2), cy - th), empty_title, font=right_title_font, fill=muted)
         draw.text((cx - (sw // 2), cy + 8), empty_sub, font=mode_font, fill=muted)
-        footer = "ROTATE: DATE  CLICK: AGENDA"
+        if mode == "agenda":
+            footer = "ROTATE: ITEM  CLICK: TOGGLE TASK  BACK: HOME"
+        else:
+            footer = "ROTATE: DATE  CLICK: OPEN AGENDA  BACK: HOME"
         footer = truncate_text(draw, footer, footer_font, max(80, w - 24))
         draw.text((12, h - 24), footer, font=footer_font, fill=muted)
         return

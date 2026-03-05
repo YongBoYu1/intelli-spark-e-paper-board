@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.core.state import AppState, DashboardModel, MemoItem, MenuItemId, Reminder, Screen
+from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen
 from app.render.refresh_policy import (
     RefreshPolicyRuntime,
     align_rect_for_partial,
@@ -370,6 +370,21 @@ class RefreshPolicyTests(unittest.TestCase):
         # Reminders section is in the lower half; if this maps near top rows,
         # focus-row geometry is still using a fixed inventory span.
         self.assertGreater(y0, 220)
+
+    def test_calendar_data_change_generates_calendar_reason(self) -> None:
+        prev_model = DashboardModel()
+        prev_model.calendar = [CalendarEvent(eid="e1", title="Doctor", when="09:00", date_iso="2026-03-05")]
+        prev = AppState(model=prev_model)
+        prev.ui.screen = Screen.CALENDAR
+
+        curr_model = DashboardModel()
+        curr_model.calendar = [CalendarEvent(eid="e1", title="Dentist", when="09:00", date_iso="2026-03-05")]
+        curr = AppState(model=curr_model)
+        curr.ui.screen = Screen.CALENDAR
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("calendar.date_or_mode_or_data", reasons)
+        self.assertGreaterEqual(len(rects), 1)
 
 if __name__ == "__main__":
     unittest.main()

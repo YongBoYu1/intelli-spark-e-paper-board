@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import datetime
 import unittest
 
 from app.core.reducer import Back, Click, LongPress, Rotate, Tick, reduce
-from app.core.state import AppState, DashboardModel, MemoItem, MenuItemId, Reminder, Screen, WeatherDay, WidgetMode
+from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen, WeatherDay, WidgetMode
 
 
 class TimerReducerTests(unittest.TestCase):
@@ -225,6 +226,43 @@ class TimerReducerTests(unittest.TestCase):
 
         reduce(self.state, Rotate(-1))
         self.assertEqual(self.state.ui.weather_day_index, 1)
+
+    def test_calendar_agenda_rotation_uses_selected_date_items_only(self) -> None:
+        today = datetime.date.today()
+        tomorrow = today + datetime.timedelta(days=1)
+        self.state.ui.screen = Screen.CALENDAR
+        self.state.ui.calendar_mode = "agenda"
+        self.state.ui.calendar_offset_days = 1
+        self.state.ui.calendar_selected_index = 0
+        self.state.model.calendar = [
+            CalendarEvent(eid="e0", title="Today event", when="09:00", date_iso=today.isoformat()),
+        ]
+        self.state.model.reminders = [
+            Reminder(rid="r0", title="Today task", right=today.isoformat(), completed=False, category="general"),
+        ]
+
+        reduce(self.state, Rotate(+1), theme={})
+
+        # Offset=+1 has no items; selection must stay clamped at 0.
+        self.assertEqual(self.state.ui.calendar_selected_index, 0)
+
+    def test_calendar_agenda_click_toggles_task_for_selected_date(self) -> None:
+        today = datetime.date.today()
+        tomorrow = today + datetime.timedelta(days=1)
+        self.state.ui.screen = Screen.CALENDAR
+        self.state.ui.calendar_mode = "agenda"
+        self.state.ui.calendar_offset_days = 1
+        self.state.ui.calendar_selected_index = 0
+        self.state.model.calendar = []
+        self.state.model.reminders = [
+            Reminder(rid="r0", title="Today task", right=today.isoformat(), completed=False, category="general"),
+            Reminder(rid="r1", title="Tomorrow task", right=tomorrow.isoformat(), completed=False, category="general"),
+        ]
+
+        reduce(self.state, Click(), theme={})
+
+        self.assertFalse(self.state.model.reminders[0].completed)
+        self.assertTrue(self.state.model.reminders[1].completed)
 
     def test_tick_pauses_home_memo_rotation_while_voice_active(self) -> None:
         self.state.ui.screen = Screen.HOME

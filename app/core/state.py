@@ -60,6 +60,7 @@ class CalendarEvent:
     eid: str
     title: str
     when: str
+    date_iso: str = ""
 
 
 @dataclass

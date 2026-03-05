@@ -29,7 +29,9 @@ def screen_partial_area_limit(screen: Screen, mode: str) -> float:
     if screen == Screen.TIMER:
         return min(0.95, base + 0.20)
     if screen == Screen.MEMO:
-        return max(0.45, min(base, 0.72))
+        # Memo page updates mostly touch the content body; allow a larger partial region
+        # to avoid unnecessary full-screen flashes when changing memo focus/content.
+        return max(0.60, min(base + 0.10, 0.78))
     if screen in (Screen.INVENTORY, Screen.REMINDERS):
         return max(0.45, min(base, 0.72))
     if screen == Screen.MENU:
@@ -211,6 +213,7 @@ class UiSnapshot:
     widget_mode: str
     weather_day_index: int
     weather_digest: tuple
+    calendar_digest: tuple
     calendar_offset_days: int
     calendar_mode: str
     calendar_selected_index: int
@@ -251,6 +254,15 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
         weather_digest=tuple(
             (str(w.dow), str(w.icon), int(w.hi), int(w.lo), w.humidity, w.feels_like, w.wind_kmh, w.uv_index)
             for w in state.model.weather
+        ),
+        calendar_digest=tuple(
+            (
+                str(c.eid),
+                str(c.title),
+                str(c.when),
+                str(getattr(c, "date_iso", "")),
+            )
+            for c in state.model.calendar
         ),
         calendar_offset_days=int(state.ui.calendar_offset_days or 0),
         calendar_mode=str(state.ui.calendar_mode or "date"),
@@ -587,9 +599,10 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             prev.calendar_offset_days != curr.calendar_offset_days
             or prev.calendar_mode != curr.calendar_mode
             or prev.reminders_digest != curr.reminders_digest
+            or prev.calendar_digest != curr.calendar_digest
         ):
             rects.extend([regions["left_grid"], regions["right_header"], regions["right_agenda"]])
-            reasons.append("calendar.date_or_mode_or_tasks")
+            reasons.append("calendar.date_or_mode_or_data")
             return rects, reasons
         if prev.calendar_selected_index != curr.calendar_selected_index:
             rects.append(regions["right_agenda"])
