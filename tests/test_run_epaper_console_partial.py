@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import unittest
 from unittest.mock import patch
 
@@ -93,6 +94,23 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         state.model.location = "B"
         sig_b = rec._state_render_sig(state)
         self.assertNotEqual(sig_a, sig_b)
+
+    def test_next_weather_refresh_at_12h_aligns_to_noon(self) -> None:
+        now = datetime.datetime(2026, 1, 15, 11, 59, 30).timestamp()
+        nxt = rec._next_weather_refresh_at(now, 12.0)
+        expected = datetime.datetime(2026, 1, 15, 12, 0, 0).timestamp()
+        self.assertAlmostEqual(nxt, expected, delta=1.0)
+
+    def test_next_weather_refresh_at_12h_aligns_to_next_midnight(self) -> None:
+        now = datetime.datetime(2026, 1, 15, 12, 1, 0).timestamp()
+        nxt = rec._next_weather_refresh_at(now, 12.0)
+        expected = datetime.datetime(2026, 1, 16, 0, 0, 0).timestamp()
+        self.assertAlmostEqual(nxt, expected, delta=1.0)
+
+    def test_next_weather_refresh_at_non_12h_keeps_interval(self) -> None:
+        now = datetime.datetime(2026, 1, 15, 7, 0, 0).timestamp()
+        nxt = rec._next_weather_refresh_at(now, 6.0)
+        self.assertAlmostEqual(nxt, now + 6 * 3600, delta=0.1)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ Note: Uses unified refresh strategy:
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import select
@@ -249,6 +250,24 @@ def _refresh_live_weather(state: AppState) -> bool:
         state.ui.weather_day_index = 0
 
     return (state.model.location != prev_location) or (next_digest != prev_digest)
+
+
+def _next_weather_refresh_at(now_ts: float, refresh_hours: float) -> float:
+    hours = max(0.0, float(refresh_hours or 0.0))
+    if hours <= 0:
+        return 0.0
+
+    # For the default 12h schedule, align to local wall-clock boundaries:
+    # noon and midnight (00:00 / 12:00), instead of startup+12h drift.
+    if abs(hours - 12.0) < 1e-6:
+        now_local = datetime.datetime.fromtimestamp(now_ts)
+        today_noon = now_local.replace(hour=12, minute=0, second=0, microsecond=0)
+        if now_local < today_noon:
+            return today_noon.timestamp()
+        tomorrow_midnight = (now_local + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return tomorrow_midnight.timestamp()
+
+    return now_ts + (hours * 3600.0)
 
 
 def _load_model(repo_root: str) -> DashboardModel:
@@ -1031,7 +1050,7 @@ def main() -> int:
         "--weather-refresh-hours",
         type=float,
         default=float(os.environ.get("WEATHER_REFRESH_HOURS", "12")),
-        help="Live weather refresh interval in hours (default: 12; <=0 disables periodic refresh)",
+        help="Live weather refresh interval in hours (default: 12; at 12h it aligns to local 00:00/12:00; <=0 disables periodic refresh)",
     )
     parser.add_argument("--voice-api-url", default=os.environ.get("VOICE_API_URL", ""), help="Backend URL for POST /voice/interpret")
     parser.add_argument("--voice-locale", default=os.environ.get("VOICE_LOCALE", "zh-CN"), help="Locale sent to backend")
@@ -1185,7 +1204,7 @@ def main() -> int:
     try:
         print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice, R rotate screen, S settings, W weather, B/Esc back, Q quit")
         next_tick = time.time()
-        next_weather_refresh_at = (next_tick + weather_refresh_s) if weather_refresh_s > 0 else 0.0
+        next_weather_refresh_at = _next_weather_refresh_at(next_tick, weather_refresh_hours)
         if weather_refresh_s > 0:
             print(f"[weather] periodic refresh enabled: every {weather_refresh_hours:g}h")
         while True:
@@ -1201,7 +1220,7 @@ def main() -> int:
                         )
                 except Exception as e:
                     print(f"[warn] periodic weather refresh failed: {e}")
-                next_weather_refresh_at = now + weather_refresh_s
+                next_weather_refresh_at = _next_weather_refresh_at(now, weather_refresh_hours)
             key = _read_key_nonblocking()
 
             ev = None
