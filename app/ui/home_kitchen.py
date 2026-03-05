@@ -640,11 +640,15 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     family_w = text_width_spaced(draw, "FAMILY BOARD", f_micro, spacing=int(t["b_left_micro_spacing"]))
     max_row_w = max(64, lx1 - (lx0 + family_w + 22))
     for a in authors:
-        tw = text_width_spaced(draw, a, f_family_name, spacing=name_spacing)
-        extra = (name_gap if labels else 0) + tw
-        if row_total + extra > max_row_w:
+        avail = max_row_w - row_total - (name_gap if labels else 0)
+        if avail <= 0:
             break
-        labels.append((a, tw))
+        shown = truncate_text(draw, a, f_family_name, avail)
+        tw = text_width_spaced(draw, shown, f_family_name, spacing=name_spacing)
+        extra = (name_gap if labels else 0) + tw
+        if tw <= 0 or row_total + extra > max_row_w:
+            break
+        labels.append((shown, tw))
         row_total += extra
 
     row_x = lx1 - row_total - int(t.get("b_family_names_right_inset", 0))
@@ -807,7 +811,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     for item in fridge[:inv_max_rows]:
         if y + inv_row_h > mid_y - 8:
             break
-        is_focus = (not state.ui.idle) and (focus_rid == item.rid and not item.completed)
+        is_focus = (not state.ui.idle) and (focus_rid == item.rid)
         if not item.completed:
             rendered_focus_rids.append(item.rid)
 
@@ -1033,7 +1037,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     for item in shop[:shop_max_rows]:
         if y + shop_row_h > shop_bottom:
             break
-        is_focus = (not state.ui.idle) and (focus_rid == item.rid and not item.completed)
+        is_focus = (not state.ui.idle) and (focus_rid == item.rid)
         if not item.completed:
             rendered_focus_rids.append(item.rid)
         
@@ -1119,6 +1123,11 @@ def _kitchen_focus_rid(state: AppState, focused_index: int, theme: dict | None =
     # focused_index: 0 is left panel; 1.. maps to visible tasks list
     if focused_index <= 0:
         return ""
+    hold_rid = str(getattr(state.ui, "kitchen_focus_rid_override", "") or "").strip()
+    if hold_rid:
+        for r in state.model.reminders:
+            if str(r.rid or "") == hold_rid:
+                return hold_rid
     visible_idxs = kitchen_visible_task_indices(state, theme)
     pos = focused_index - 1
     if 0 <= pos < len(visible_idxs):

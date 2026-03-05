@@ -1086,7 +1086,7 @@ def main() -> int:
             rotate_btn_ready = False
 
     try:
-        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice, R rotate screen, S settings, W weather, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice, R rotate screen (+90°), S settings, W weather, B/Esc back, Q quit")
         next_tick = time.time()
         while True:
             now = time.time()

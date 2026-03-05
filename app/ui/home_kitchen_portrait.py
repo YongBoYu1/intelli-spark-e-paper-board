@@ -29,38 +29,80 @@ def _font_px(v) -> int:
     return max(1, int(round(float(v))))
 
 
+def _bbox_at(draw, text: str, font, x: int = 0, y: int = 0):
+    txt = str(text or "")
+    try:
+        return draw.textbbox((x, y), txt, font=font)
+    except Exception:
+        w, h = text_size(draw, txt, font)
+        return (x, y, x + w, y + h)
+
+
+def _items_label(count: int) -> str:
+    try:
+        n = max(0, int(count))
+    except Exception:
+        n = 0
+    return f"{n} ITEM" if n == 1 else f"{n} ITEMS"
+
+
+def _progress_label(open_count: int, total_count: int) -> str:
+    try:
+        total = max(0, int(total_count))
+    except Exception:
+        total = 0
+    try:
+        opened = max(0, int(open_count))
+    except Exception:
+        opened = 0
+    if total > 0:
+        opened = min(opened, total)
+    return f"{opened}/{total}"
+
+
 def _theme(theme: dict) -> dict:
     t = dict(theme or {})
 
     # Layout
     t.setdefault("bp_margin", 16)
-    t.setdefault("bp_section_gap", 12)
-    t.setdefault("bp_inner_pad", 18)
-    t.setdefault("bp_header_ratio", 0.29)
-    t.setdefault("bp_memo_ratio", 0.30)
+    t.setdefault("bp_section_gap", 4)
+    t.setdefault("bp_inner_pad", 16)
+    t.setdefault("bp_header_ratio", 0.24)
+    t.setdefault("bp_memo_ratio", 0.25)
     t.setdefault("bp_weather_col_w", 156)
     t.setdefault("bp_header_col_gap", 16)
     t.setdefault("bp_header_rule_w", 2)
-    t.setdefault("bp_list_split_ratio", 0.42)
+    t.setdefault("bp_list_split_ratio", 0.48)
+    t.setdefault("bp_shop_min_h", 104)
+    t.setdefault("bp_list_bottom_reserve", 20)
+    t.setdefault("bp_top_meta_size", 13)
+    t.setdefault("bp_top_meta_spacing", 2)
+    t.setdefault("bp_top_meta_rule_gap", 7)
+    t.setdefault("bp_top_meta_time_gap", 10)
+    t.setdefault("bp_top_meta_right", "")
 
     # Header typography
     t.setdefault("bp_time_size", 112)
     t.setdefault("bp_time_min_size", 68)
     t.setdefault("bp_weekday_size", 15)
     t.setdefault("bp_weekday_spacing", 3)
+    t.setdefault("bp_weekday_gap", 4)
     t.setdefault("bp_date_size", 19)
+    t.setdefault("bp_date_gap", 8)
     t.setdefault("bp_temp_size", 58)
     t.setdefault("bp_weather_desc_size", 14)
     t.setdefault("bp_weather_desc_spacing", 1)
     t.setdefault("bp_weather_desc_gap", 8)
-    t.setdefault("bp_weather_icon_size", 42)
-    t.setdefault("bp_weather_icon_gap", 10)
+    t.setdefault("bp_weather_icon_size", 34)
+    t.setdefault("bp_weather_temp_icon_gap", 8)
+    t.setdefault("bp_weather_meta_gap", 14)
     t.setdefault("bp_weather_icon_stroke", 3)
     t.setdefault("bp_weather_top", 4)
     t.setdefault("bp_weather_humidity_size", 14)
     t.setdefault("bp_weather_humidity_spacing", 1)
     t.setdefault("bp_weather_humidity_prefix", "HUM")
     t.setdefault("bp_weather_humidity_gap", 8)
+    t.setdefault("bp_time_nudge_y", -6)
 
     # Memo section
     t.setdefault("bp_memo_title_size", 15)
@@ -82,27 +124,41 @@ def _theme(theme: dict) -> dict:
     t.setdefault("bp_author_max_tags", 4)
     t.setdefault("bp_log_compact_day_time", True)
     t.setdefault("bp_log_datetime_format", "%a %H:%M")
+    t.setdefault("bp_memo_box_enabled", True)
+    t.setdefault("bp_memo_box_gap_top", 8)
+    t.setdefault("bp_memo_box_gap_bottom", 8)
+    t.setdefault("bp_memo_box_w", 2)
+    t.setdefault("bp_memo_box_inner_x", 14)
+    t.setdefault("bp_memo_box_inner_y", 10)
+    t.setdefault("bp_memo_box_shadow", 1)
+    t.setdefault("bp_memo_box_shadow_w", 1)
 
     # Lists
-    t.setdefault("bp_inventory_title_size", 14)
+    t.setdefault("bp_inventory_title_size", 13)
     t.setdefault("bp_inventory_title_spacing", 2)
-    t.setdefault("bp_inventory_header_gap", 24)
+    t.setdefault("bp_inventory_header_gap", 20)
     t.setdefault("bp_inventory_item_size", 19)
-    t.setdefault("bp_inventory_row_h", 40)
+    t.setdefault("bp_inventory_row_h", 36)
     t.setdefault("bp_badge_size", 13)
     t.setdefault("bp_badge_max_w", 134)
     t.setdefault("bp_badge_gap", 12)
-    t.setdefault("bp_shopping_title_size", 14)
+    t.setdefault("bp_badge_box", False)
+    t.setdefault("bp_inventory_min_title_w", 166)
+    t.setdefault("bp_badge_px", 6)
+    t.setdefault("bp_badge_py", 2)
+    t.setdefault("bp_badge_w", 1)
+    t.setdefault("bp_badge_radius", 0)
+    t.setdefault("bp_shopping_title_size", 13)
     t.setdefault("bp_shopping_title_spacing", 1)
-    t.setdefault("bp_shopping_header_gap", 22)
+    t.setdefault("bp_shopping_header_gap", 18)
     t.setdefault("bp_shopping_item_size", 18)
-    t.setdefault("bp_shopping_row_h", 40)
+    t.setdefault("bp_shopping_row_h", 36)
     t.setdefault("bp_checkbox_size", 16)
     t.setdefault("bp_checkbox_radius", 3)
     t.setdefault("bp_checkbox_w", 2)
 
     # Keep queue defaults aligned with reducer fallback.
-    t.setdefault("b_inventory_max_rows", 3)
+    t.setdefault("b_inventory_max_rows", 4)
     t.setdefault("b_shopping_max_rows", 5)
 
     # Focus rendering
@@ -229,6 +285,11 @@ def _compact_badge(text: str) -> str:
 def _kitchen_focus_rid(state: AppState, focused_index: int, theme: dict | None = None) -> str:
     if focused_index <= 0:
         return ""
+    hold_rid = str(getattr(state.ui, "kitchen_focus_rid_override", "") or "").strip()
+    if hold_rid:
+        for r in state.model.reminders:
+            if str(r.rid or "") == hold_rid:
+                return hold_rid
     visible_idxs = kitchen_visible_task_indices(state, theme)
     pos = focused_index - 1
     if 0 <= pos < len(visible_idxs):
@@ -283,8 +344,6 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     list_y1 = y1
 
     section_rule_w = max(1, int(t.get("bp_header_rule_w", 1)))
-    draw.line((x0, header_y1, x1, header_y1), fill=ink, width=section_rule_w)
-    draw.line((x0, memo_y1, x1, memo_y1), fill=ink, width=section_rule_w)
 
     # Keep dynamic regions stable for MCU dirty-rect mapping:
     # header(clock/weather), memo body, and lists are fixed-height zones.
@@ -330,10 +389,11 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     f_temp = fonts.get("inter_black", _font_px(t["bp_temp_size"]))
     f_weather_desc = fonts.get(meta_key, _font_px(t["bp_weather_desc_size"]))
     f_weather_humidity = fonts.get(meta_key, _font_px(t["bp_weather_humidity_size"]))
+    time_y = hy0 + int(t.get("bp_time_nudge_y", -4))
 
-    draw.text((left_x0, hy0), time_str, font=f_time, fill=ink)
-    _, time_h = text_size(draw, time_str, f_time)
-    week_y = hy0 + time_h + 4
+    draw.text((left_x0, time_y), time_str, font=f_time, fill=ink)
+    time_bbox = _bbox_at(draw, time_str, f_time, left_x0, time_y)
+    week_y = int(time_bbox[3]) + int(t.get("bp_weekday_gap", 4))
     draw_text_spaced(
         draw,
         weekday,
@@ -343,44 +403,27 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         spacing=int(t["bp_weekday_spacing"]),
         fill=ink,
     )
-    week_h = text_size(draw, "Ag", f_weekday)[1]
-    date_y = week_y + week_h + 8
+    week_bbox = _bbox_at(draw, weekday, f_weekday, left_x0, week_y)
+    date_y = int(week_bbox[3]) + int(t.get("bp_date_gap", 8))
     draw.text((left_x0, date_y), month_day, font=f_date, fill=date_muted)
 
-    weather_top = hy0 + int(t["bp_weather_top"])
+    weather_top = time_y + int(t["bp_weather_top"])
     if state.model.weather:
         w0 = state.model.weather[0]
         temp = f"{int(w0.hi)}°"
         tw, th = text_size(draw, temp, f_temp)
-        temp_x = weather_x1 - tw
-        draw.text((temp_x, weather_top), temp, font=f_temp, fill=ink)
-
-        desc = _weather_word(getattr(w0, "icon", "sun"))
-        desc_w = text_width_spaced(draw, desc, f_weather_desc, spacing=int(t["bp_weather_desc_spacing"]))
-        desc_h = text_size(draw, "Ag", f_weather_desc)[1]
-        desc_x = weather_x1 - desc_w
-        desc_y = weather_top + th + int(t["bp_weather_desc_gap"])
-        draw_text_spaced(
-            draw,
-            desc,
-            desc_x,
-            desc_y,
-            f_weather_desc,
-            spacing=int(t["bp_weather_desc_spacing"]),
-            fill=ink,
-        )
-
         icon_size = int(t["bp_weather_icon_size"])
-        icon_y = desc_y + desc_h + int(t["bp_weather_icon_gap"])
-        icon_x = weather_x1 - icon_size
-        icon_theme = dict(t)
-        icon_theme["weather_icon_alpha_threshold"] = int(
-            t.get("b_weather_icon_alpha_threshold", t.get("weather_icon_alpha_threshold", 185)) or 185
-        )
+        icon_gap = int(t.get("bp_weather_temp_icon_gap", 8))
+        top_line_h = max(th, icon_size)
+        top_line_y = weather_top
+        icon_x = weather_x1 - (icon_size + icon_gap + tw)
+        icon_y = top_line_y + max(0, (top_line_h - icon_size) // 2)
+        temp_x = icon_x + icon_size + icon_gap
+        temp_y = top_line_y + max(0, (top_line_h - th) // 2)
         _draw_weather_icon_pack(
             image,
             draw,
-            icon_theme,
+            dict(t),
             w0.icon,
             int(icon_x),
             int(icon_y),
@@ -390,39 +433,41 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
             stroke=int(t.get("bp_weather_icon_stroke", 3)),
             thicken=bool(t.get("b_weather_icon_thicken", False)),
         )
-
+        draw.text((temp_x, temp_y), temp, font=f_temp, fill=ink)
+        desc = _weather_word(getattr(w0, "icon", "sun"))
         humidity = getattr(w0, "humidity", None)
-        humidity_text = ""
+        meta_text = desc
         if humidity is not None:
             try:
-                humidity_text = f"{str(t['bp_weather_humidity_prefix']).upper()} {int(humidity)}%"
+                hum_label = str(t["bp_weather_humidity_prefix"]).upper()
+                meta_text = f"{desc}  {hum_label} {int(humidity)}%"
             except Exception:
-                humidity_text = ""
-        if humidity_text:
-            hum_w = text_width_spaced(
+                meta_text = desc
+        if meta_text:
+            meta_w = text_width_spaced(
                 draw,
-                humidity_text,
-                f_weather_humidity,
+                meta_text,
+                f_weather_desc,
                 spacing=int(t["bp_weather_humidity_spacing"]),
             )
-            hum_y = icon_y + icon_size + int(t["bp_weather_humidity_gap"])
-            hum_x = weather_x1 - hum_w
+            meta_x = weather_x1 - meta_w
+            meta_y = top_line_y + top_line_h + int(t.get("bp_weather_meta_gap", 10))
             draw_text_spaced(
                 draw,
-                humidity_text,
-                hum_x,
-                hum_y,
-                f_weather_humidity,
+                meta_text,
+                meta_x,
+                meta_y,
+                f_weather_desc,
                 spacing=int(t["bp_weather_humidity_spacing"]),
                 fill=muted,
             )
     else:
         draw.text((weather_x1 - 92, weather_top + 8), "--°", font=f_temp, fill=ink)
-        draw_text_spaced(draw, "NO DATA", weather_x0, weather_top + 86, f_weather_desc, spacing=1, fill=muted)
+        draw_text_spaced(draw, "NO DATA", weather_x1 - 72, weather_top + 72, f_weather_desc, spacing=1, fill=muted)
 
     # Memo section
     mx0, mx1 = x0 + pad, x1 - pad
-    my0 = memo_y0 + 10
+    my0 = memo_y0
     f_memo_title = fonts.get(meta_key, _font_px(t["bp_memo_title_size"]))
     f_family_name = fonts.get(meta_key, _font_px(t["bp_family_name_size"]))
     draw_text_spaced(
@@ -457,11 +502,15 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     title_w = text_width_spaced(draw, "FAMILY BOARD", f_memo_title, spacing=int(t["bp_memo_title_spacing"]))
     max_row_w = max(80, mx1 - (mx0 + title_w + 20))
     for a in authors:
-        tw = text_width_spaced(draw, a, f_family_name, spacing=name_spacing)
-        extra = (name_gap if labels else 0) + tw
-        if row_total + extra > max_row_w:
+        avail = max_row_w - row_total - (name_gap if labels else 0)
+        if avail <= 0:
             break
-        labels.append((a, tw))
+        shown = truncate_text(draw, a, f_family_name, avail)
+        tw = text_width_spaced(draw, shown, f_family_name, spacing=name_spacing)
+        extra = (name_gap if labels else 0) + tw
+        if tw <= 0 or row_total + extra > max_row_w:
+            break
+        labels.append((shown, tw))
         row_total += extra
 
     row_x = max(mx0 + title_w + 14, mx1 - row_total)
@@ -475,7 +524,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
             draw.line((cx, uy, cx + tw, uy), fill=ink, width=underline_w)
         cx += tw + name_gap
 
-    memo_rule_y = max(my0 + text_size(draw, "Ag", f_memo_title)[1], row_y + name_h + underline_gap + underline_w) + 8
+    memo_rule_y = max(my0 + text_size(draw, "Ag", f_memo_title)[1], row_y + name_h + underline_gap + underline_w) + 6
     draw.line((mx0, memo_rule_y, mx1, memo_rule_y), fill=ink, width=section_rule_w)
 
     quote = (memo.text.strip() if memo and memo.text else "No messages.")
@@ -487,10 +536,37 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     posted_label = (
         truncate_text(draw, posted_label_raw, f_posted, max(40, mx1 - mx0 - 10)) if posted_label_raw else ""
     )
-
+    quote_x0, quote_x1 = mx0, mx1
     quote_y0 = memo_rule_y + int(t["bp_quote_top_gap"])
     quote_y1 = memo_y1 - pad - posted_h - int(t["bp_quote_bottom_gap"])
-    quote_w = max(120, mx1 - mx0)
+    posted_bottom_y = memo_y1 - pad
+    if bool(t.get("bp_memo_box_enabled", True)):
+        box_x0, box_x1 = mx0, mx1
+        box_y0 = memo_rule_y + int(t.get("bp_memo_box_gap_top", 10))
+        box_y1 = memo_y1 - int(t.get("bp_memo_box_gap_bottom", 10))
+        if box_y1 - box_y0 > 52:
+            draw.rectangle((box_x0, box_y0, box_x1, box_y1), outline=ink, width=max(1, int(t.get("bp_memo_box_w", 2))))
+            shadow = int(t.get("bp_memo_box_shadow", 3))
+            if shadow > 0:
+                shadow_w = max(1, int(t.get("bp_memo_box_shadow_w", 2)))
+                draw.line(
+                    (box_x0 + shadow, box_y1 + shadow, box_x1 + shadow, box_y1 + shadow),
+                    fill=ink,
+                    width=shadow_w,
+                )
+                draw.line(
+                    (box_x1 + shadow, box_y0 + shadow, box_x1 + shadow, box_y1 + shadow),
+                    fill=ink,
+                    width=shadow_w,
+                )
+            inner_x = int(t.get("bp_memo_box_inner_x", 14))
+            inner_y = int(t.get("bp_memo_box_inner_y", 12))
+            quote_x0 = box_x0 + inner_x
+            quote_x1 = box_x1 - inner_x
+            quote_y0 = box_y0 + inner_y
+            posted_bottom_y = box_y1 - inner_y
+            quote_y1 = posted_bottom_y - posted_h - int(t["bp_quote_bottom_gap"])
+    quote_w = max(120, quote_x1 - quote_x0)
     quote_size = int(t["bp_quote_size"])
     quote_min = int(t["bp_quote_min_size"])
     target_lines = max(1, int(t["bp_quote_target_lines"]))
@@ -524,19 +600,23 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         y = quote_y0 + i * quote_line_h
         if y + quote_line_h > quote_y1:
             break
-        draw.text((mx0, y), ln, font=quote_font, fill=ink)
+        draw.text((quote_x0, y), ln, font=quote_font, fill=ink)
 
     if posted_label:
         posted_w = text_size(draw, posted_label, f_posted)[0]
-        posted_x = max(mx0, mx1 - int(t["bp_posted_right_inset"]) - posted_w)
-        posted_y = memo_y1 - pad - posted_h
+        posted_x = max(quote_x0, quote_x1 - int(t["bp_posted_right_inset"]) - posted_w)
+        posted_y = posted_bottom_y - posted_h
         draw.text((posted_x, posted_y), posted_label, font=f_posted, fill=ink)
 
     # Lists
     lx0, lx1 = x0 + pad, x1 - pad
-    ly0, ly1 = list_y0 + pad, list_y1 - pad
+    list_bottom_reserve = max(0, int(t.get("bp_list_bottom_reserve", 0)))
+    ly0, ly1 = list_y0 + pad, list_y1 - pad - list_bottom_reserve
+    if ly1 <= ly0:
+        ly1 = ly0 + 1
     list_h = max(80, ly1 - ly0)
-    inv_zone_bottom = min(ly1 - 116, ly0 + max(102, int(list_h * float(t["bp_list_split_ratio"]))))
+    shop_min_h = max(72, int(t.get("bp_shop_min_h", 96)))
+    inv_zone_bottom = min(ly1 - shop_min_h, ly0 + max(96, int(list_h * float(t["bp_list_split_ratio"]))))
 
     focus_idx = int(state.ui.focused_index or 0)
     focus_rid = _kitchen_focus_rid(state, focus_idx, t)
@@ -574,25 +654,70 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     focus_radius = int(t["bp_focus_radius"])
     focus_w = max(1, int(t["bp_focus_w"]))
 
-    inv_title_spacing = int(t["bp_inventory_title_spacing"])
-    inv_title_y = ly0
-    draw_text_spaced(draw, "INVENTORY", lx0, inv_title_y, f_inv_title, spacing=inv_title_spacing, fill=ink)
-    fridge_due = sum(1 for r in fridge if not r.completed)
-    if fridge_due > 0:
-        count = str(fridge_due)
-        count_w = text_width_spaced(draw, count, f_inv_title, spacing=inv_title_spacing)
-        draw_text_spaced(draw, count, lx1 - count_w, inv_title_y, f_inv_title, spacing=inv_title_spacing, fill=ink)
+    def _draw_list_header_line(
+        y: int,
+        *,
+        title: str,
+        count_text: str,
+        title_font,
+        count_font,
+        title_spacing: int,
+        count_spacing: int,
+    ) -> None:
+        line_y = int(y)
+        title_txt = str(title or "").upper()
+        count_txt = str(count_text or "").upper()
+        title_w = text_width_spaced(draw, title_txt, title_font, spacing=title_spacing)
+        count_w = text_width_spaced(draw, count_txt, count_font, spacing=count_spacing)
+        title_h = text_size(draw, "Ag", title_font)[1]
+        count_h = text_size(draw, "Ag", count_font)[1]
+        txt_h = max(title_h, count_h)
+        txt_y = line_y - (txt_h // 2) - 1
+        title_x = lx0
+        count_x = max(lx0 + title_w + 20, lx1 - count_w)
+        draw.line((lx0, line_y, lx1, line_y), fill=ink, width=section_rule_w)
+        # Carve line gaps under text to keep divider+title in a single row.
+        draw.rectangle((title_x - 4, txt_y - 2, title_x + title_w + 4, txt_y + txt_h + 2), fill=card)
+        draw.rectangle((count_x - 4, txt_y - 2, count_x + count_w + 4, txt_y + txt_h + 2), fill=card)
+        draw_text_spaced(draw, title_txt, title_x, txt_y, title_font, spacing=title_spacing, fill=muted)
+        draw_text_spaced(draw, count_txt, count_x, txt_y, count_font, spacing=count_spacing, fill=ink)
 
-    inv_row_y = inv_title_y + int(t["bp_inventory_header_gap"])
+    inv_title_spacing = int(t["bp_inventory_title_spacing"])
+    inv_title_h = text_size(draw, "Ag", f_inv_title)[1]
+    inv_header_y = ly0 + max(8, inv_title_h // 2 + 2)
+    fridge_due = sum(1 for r in fridge if not r.completed)
+    fridge_total = len(fridge)
+    inv_count = _progress_label(fridge_due, fridge_total)
+    inv_count_spacing = max(0, inv_title_spacing - 1)
+    _draw_list_header_line(
+        inv_header_y,
+        title="INVENTORY",
+        count_text=inv_count,
+        title_font=f_inv_title,
+        count_font=f_inv_title,
+        title_spacing=inv_title_spacing,
+        count_spacing=inv_count_spacing,
+    )
+
+    inv_row_y = inv_header_y + int(t["bp_inventory_header_gap"])
     inv_row_h = int(t["bp_inventory_row_h"])
     inv_max_rows = max(1, int(t["b_inventory_max_rows"]))
     badge_gap = int(t["bp_badge_gap"])
     badge_max_w = int(t["bp_badge_max_w"])
+    badge_box = bool(t.get("bp_badge_box", True))
+    badge_px = max(0, int(t.get("bp_badge_px", 6)))
+    badge_py = max(0, int(t.get("bp_badge_py", 2)))
+    badge_w = max(1, int(t.get("bp_badge_w", 1)))
+    badge_radius = max(0, int(t.get("bp_badge_radius", 3)))
+    row_w = max(120, lx1 - lx0)
+    badge_overhead_w = badge_px * 2 if badge_box else 0
+    inv_min_title_w = max(80, int(t.get("bp_inventory_min_title_w", 166)))
+    inv_min_title_w = min(inv_min_title_w, max(80, row_w - badge_gap - 20 - badge_overhead_w))
 
     for item in fridge[:inv_max_rows]:
         if inv_row_y + inv_row_h > inv_zone_bottom:
             break
-        is_focus = (not state.ui.idle) and (focus_rid == item.rid and not item.completed)
+        is_focus = (not state.ui.idle) and (focus_rid == item.rid)
         if not item.completed:
             rendered_focus_rids.append(item.rid)
 
@@ -611,16 +736,83 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
                     fill=None,
                 )
 
-        badge_text = _compact_badge(item.right or ("OUT" if item.completed else "STOCKED"))
-        badge_text = truncate_text(draw, badge_text, f_badge, badge_max_w)
-        badge_w = text_width_spaced(draw, badge_text, f_badge, spacing=meta_spacing)
-        badge_h = text_size(draw, "Ag", f_badge)[1]
-        badge_x = lx1 - badge_w
-        badge_y = inv_row_y + max(0, (inv_row_h - badge_h) // 2)
-        draw_text_spaced(draw, badge_text, badge_x, badge_y, f_badge, spacing=meta_spacing, fill=ink)
+        badge_text_raw = _compact_badge(item.right or ("OUT" if item.completed else "STOCKED"))
+        badge_budget_w = max(
+            20,
+            min(
+                badge_max_w,
+                row_w - badge_gap - inv_min_title_w - badge_overhead_w,
+            ),
+        )
+        badge_text = truncate_text(draw, badge_text_raw, f_badge, badge_budget_w)
+        badge_text_w = text_width_spaced(draw, badge_text, f_badge, spacing=meta_spacing)
+        badge_text_h = text_size(draw, "Ag", f_badge)[1]
+        if badge_box:
+            badge_outer_w = badge_text_w + badge_px * 2
+            badge_outer_h = badge_text_h + badge_py * 2
+            badge_x = lx1 - badge_outer_w
+            badge_y = inv_row_y + max(0, (inv_row_h - badge_outer_h) // 2)
+            if badge_radius > 0:
+                rounded_rect(
+                    draw,
+                    (badge_x, badge_y, badge_x + badge_outer_w, badge_y + badge_outer_h),
+                    radius=min(badge_radius, max(0, badge_outer_h // 2)),
+                    outline=ink,
+                    width=badge_w,
+                    fill=None,
+                )
+            else:
+                draw.rectangle(
+                    (badge_x, badge_y, badge_x + badge_outer_w, badge_y + badge_outer_h),
+                    outline=ink,
+                    width=badge_w,
+                    fill=None,
+                )
+            badge_text_x = badge_x + badge_px
+            badge_text_y = badge_y + badge_py
+        else:
+            badge_x = lx1 - badge_text_w
+            badge_text_x = badge_x
+            badge_text_y = inv_row_y + max(0, (inv_row_h - badge_text_h) // 2)
+        draw_text_spaced(draw, badge_text, badge_text_x, badge_text_y, f_badge, spacing=meta_spacing, fill=ink)
 
         title_font = f_inv_item_focus if is_focus else f_inv_item
         title_max_w = max(80, badge_x - badge_gap - lx0)
+        if title_max_w < inv_min_title_w:
+            rebudget_w = max(20, row_w - badge_gap - inv_min_title_w - badge_overhead_w)
+            badge_text = truncate_text(draw, badge_text_raw, f_badge, rebudget_w)
+            badge_text_w = text_width_spaced(draw, badge_text, f_badge, spacing=meta_spacing)
+            badge_text_h = text_size(draw, "Ag", f_badge)[1]
+            if badge_box:
+                badge_outer_w = badge_text_w + badge_px * 2
+                badge_outer_h = badge_text_h + badge_py * 2
+                badge_x = lx1 - badge_outer_w
+                badge_y = inv_row_y + max(0, (inv_row_h - badge_outer_h) // 2)
+                if badge_radius > 0:
+                    rounded_rect(
+                        draw,
+                        (badge_x, badge_y, badge_x + badge_outer_w, badge_y + badge_outer_h),
+                        radius=min(badge_radius, max(0, badge_outer_h // 2)),
+                        outline=ink,
+                        width=badge_w,
+                        fill=card,
+                    )
+                else:
+                    draw.rectangle(
+                        (badge_x, badge_y, badge_x + badge_outer_w, badge_y + badge_outer_h),
+                        outline=ink,
+                        width=badge_w,
+                        fill=card,
+                    )
+                badge_text_x = badge_x + badge_px
+                badge_text_y = badge_y + badge_py
+            else:
+                badge_x = lx1 - badge_text_w
+                badge_text_x = badge_x
+                badge_text_y = inv_row_y + max(0, (inv_row_h - badge_text_h) // 2)
+            draw_text_spaced(draw, badge_text, badge_text_x, badge_text_y, f_badge, spacing=meta_spacing, fill=ink)
+            title_max_w = max(80, badge_x - badge_gap - lx0)
+
         title = truncate_text(draw, item.title, title_font, title_max_w)
         title_h = text_size(draw, "Ag", title_font)[1]
         title_y = inv_row_y + max(0, (inv_row_h - title_h) // 2)
@@ -634,24 +826,21 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         inv_row_y += inv_row_h
 
     shop_title_spacing = int(t["bp_shopping_title_spacing"])
-    shop_line_y = max(inv_zone_bottom, inv_row_y + 8)
-    shop_title_h = text_size(draw, "Ag", f_shop_title)[1]
-    shop_title_y = max(inv_row_y + 8, shop_line_y - shop_title_h - 8)
-    draw_text_spaced(draw, "SHOPPING LIST", lx0, shop_title_y, f_shop_title, spacing=shop_title_spacing, fill=ink)
-    shop_count = str(len(shop))
-    shop_count_w = text_width_spaced(draw, shop_count, f_shop_title, spacing=max(0, shop_title_spacing - 1))
-    draw_text_spaced(
-        draw,
-        shop_count,
-        lx1 - shop_count_w,
-        shop_title_y,
-        f_shop_title,
-        spacing=max(0, shop_title_spacing - 1),
-        fill=ink,
+    shop_header_y = max(inv_zone_bottom, inv_row_y + 8)
+    shop_due = sum(1 for r in shop if not r.completed)
+    shop_count = _progress_label(shop_due, len(shop))
+    shop_count_spacing = max(0, shop_title_spacing - 1)
+    _draw_list_header_line(
+        shop_header_y,
+        title="SHOPPING LIST",
+        count_text=shop_count,
+        title_font=f_shop_title,
+        count_font=f_shop_title,
+        title_spacing=shop_title_spacing,
+        count_spacing=shop_count_spacing,
     )
-    draw.line((lx0, shop_line_y, lx1, shop_line_y), fill=ink, width=section_rule_w)
 
-    shop_row_y = max(shop_line_y + 10, shop_title_y + int(t["bp_shopping_header_gap"]))
+    shop_row_y = shop_header_y + int(t["bp_shopping_header_gap"])
     shop_row_h = int(t["bp_shopping_row_h"])
     shop_max_rows = max(1, int(t["b_shopping_max_rows"]))
     cb_size = int(t["bp_checkbox_size"])
@@ -659,7 +848,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     for item in shop[:shop_max_rows]:
         if shop_row_y + shop_row_h > ly1:
             break
-        is_focus = (not state.ui.idle) and (focus_rid == item.rid and not item.completed)
+        is_focus = (not state.ui.idle) and (focus_rid == item.rid)
         if not item.completed:
             rendered_focus_rids.append(item.rid)
 

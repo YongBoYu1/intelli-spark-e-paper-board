@@ -43,7 +43,12 @@ def _full_refresh_text(raw: int) -> str:
 
 
 def _rotation_text(raw: int) -> str:
-    return "180" if int(raw or 0) == 180 else "0"
+    try:
+        deg = int(raw or 0)
+    except Exception:
+        deg = 0
+    deg = (((deg % 360) + 45) // 90 * 90) % 360
+    return str(deg)
 
 
 def _connectivity_text(state: AppState) -> str:

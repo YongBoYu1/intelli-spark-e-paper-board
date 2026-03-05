@@ -512,17 +512,38 @@ def _center_text_y(draw: ImageDraw.ImageDraw, text: str, *, font, top: int, heig
         return int(top + max(0, (height - int(getattr(font, "size", 12))) // 2))
 
 
+def _resolved_home_variant(theme: dict, *, rotation_deg: int = 0) -> str:
+    variant = str((theme or {}).get("home_variant") or "kitchen").strip().lower()
+    try:
+        deg = int(rotation_deg or 0)
+    except Exception:
+        deg = 0
+    rot = (((deg % 360) + 45) // 90 * 90) % 360
+    # Portrait layout should only apply for portrait rotations.
+    # Keep 0/180 behavior identical to existing kitchen landscape layout.
+    if variant == "kitchen_portrait" and rot in (0, 180):
+        return "kitchen"
+    return variant
+
+
 def _draw_voice_overlay(image, state: AppState, fonts, theme: dict) -> None:
     now = time.time()
     pending_confirm = bool(state.ui.voice_confirm_tool) and float(state.ui.voice_confirm_due_at or 0.0) > now
     active = bool(state.ui.voice_active) or pending_confirm
 
-    variant = str((theme or {}).get("home_variant") or "kitchen").strip().lower()
+    variant = _resolved_home_variant(theme, rotation_deg=int(state.ui.rotation_deg or 0))
     show_idle_home_zone = bool(theme.get("voice_zone_show_idle_home", True))
+    show_idle_home_zone_portrait = bool(theme.get("voice_zone_show_idle_home_portrait", show_idle_home_zone))
     if not active:
-        if not show_idle_home_zone:
+        if state.ui.screen != Screen.HOME:
             return
-        if state.ui.screen != Screen.HOME or variant != "kitchen":
+        if variant == "kitchen":
+            if not show_idle_home_zone:
+                return
+        elif variant == "kitchen_portrait":
+            if not show_idle_home_zone_portrait:
+                return
+        else:
             return
 
     phase = str(state.ui.voice_phase or "idle").strip().lower()
@@ -633,6 +654,30 @@ def _font_scale(state: AppState) -> float:
     return 1.0
 
 
+def _normalized_right_angle(raw) -> int:
+    try:
+        deg = int(raw or 0)
+    except Exception:
+        deg = 0
+    deg = (((deg % 360) + 45) // 90 * 90) % 360
+    return deg
+
+
+def _rotate_quarter_turns(image, rotation: int):
+    rot = _normalized_right_angle(rotation)
+    transpose = getattr(Image, "Transpose", None)
+    rot90 = transpose.ROTATE_90 if transpose is not None else Image.ROTATE_90
+    rot180 = transpose.ROTATE_180 if transpose is not None else Image.ROTATE_180
+    rot270 = transpose.ROTATE_270 if transpose is not None else Image.ROTATE_270
+    if rot == 90:
+        return image.transpose(rot90)
+    if rot == 180:
+        return image.transpose(rot180)
+    if rot == 270:
+        return image.transpose(rot270)
+    return image
+
+
 def _mode_color(image, value):
     if image.mode == "RGB":
         if isinstance(value, tuple):
@@ -670,7 +715,7 @@ def _render_no_rotation(image, state: AppState, fonts, theme: dict) -> None:
         return
 
     # HOME: choose renderer variant based on theme (default: kitchen).
-    variant = str((theme or {}).get("home_variant") or "kitchen").strip().lower()
+    variant = _resolved_home_variant(theme, rotation_deg=int(state.ui.rotation_deg or 0))
     if variant == "kitchen_portrait":
         render_home_kitchen_portrait(image, state, fonts, theme)
         _draw_voice_overlay(image, state, fonts, theme)
@@ -727,7 +772,7 @@ def _render_no_rotation(image, state: AppState, fonts, theme: dict) -> None:
 def render_app(image, state: AppState, fonts, theme: dict) -> None:
     scale = _font_scale(state)
     scaled_fonts = fonts if abs(scale - 1.0) < 1e-6 else _ScaledFontBook(fonts, scale)
-    rotation = 180 if int(state.ui.rotation_deg or 0) == 180 else 0
+    rotation = _normalized_right_angle(state.ui.rotation_deg)
 
     if rotation == 0:
         _render_no_rotation(image, state, scaled_fonts, theme)
@@ -735,7 +780,12 @@ def render_app(image, state: AppState, fonts, theme: dict) -> None:
         return
 
     bg = _mode_color(image, (theme or {}).get("bg", (theme or {}).get("card", 255)))
-    canvas = Image.new(image.mode, image.size, bg)
+    # For 90/270, render on a portrait canvas first, then rotate into panel space.
+    if rotation in (90, 270):
+        canvas_size = (image.height, image.width)
+    else:
+        canvas_size = image.size
+    canvas = Image.new(image.mode, canvas_size, bg)
     _render_no_rotation(canvas, state, scaled_fonts, theme)
     _draw_voice_overlay(canvas, state, scaled_fonts, theme)
-    image.paste(canvas.rotate(180))
+    image.paste(_rotate_quarter_turns(canvas, rotation))
