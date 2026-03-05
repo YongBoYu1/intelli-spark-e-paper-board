@@ -94,14 +94,14 @@ def _theme(theme: dict) -> dict:
     t.setdefault("bp_weather_desc_spacing", 1)
     t.setdefault("bp_weather_desc_gap", 8)
     t.setdefault("bp_weather_icon_size", 34)
-    t.setdefault("bp_weather_temp_icon_gap", 8)
-    t.setdefault("bp_weather_meta_gap", 8)
+    t.setdefault("bp_weather_temp_icon_gap", 10)
+    t.setdefault("bp_weather_meta_gap", 11)
     t.setdefault("bp_weather_icon_stroke", 3)
     t.setdefault("bp_weather_top", -4)
     t.setdefault("bp_weather_humidity_size", 14)
     t.setdefault("bp_weather_humidity_spacing", 1)
     t.setdefault("bp_weather_humidity_prefix", "HUM")
-    t.setdefault("bp_weather_humidity_gap", 6)
+    t.setdefault("bp_weather_humidity_gap", 8)
     t.setdefault("bp_time_nudge_y", -22)
 
     # Memo section
@@ -621,6 +621,11 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     # Lists
     lx0, lx1 = x0 + pad, x1 - pad
     list_bottom_reserve = max(0, int(t.get("bp_list_bottom_reserve", 0)))
+    # Keep list rows clear of the persistent voice lane so the last row never gets clipped.
+    voice_margin = max(0, int(t.get("voice_zone_margin", 14) or 14))
+    voice_lane_h = max(0, int(t.get("voice_zone_lane_h", 29) or 29))
+    voice_guard = max(0, voice_margin + voice_lane_h - int(m) - int(pad) + 4)
+    list_bottom_reserve = max(list_bottom_reserve, voice_guard)
     ly0, ly1 = list_y0 + pad, list_y1 - pad - list_bottom_reserve
     if ly1 <= ly0:
         ly1 = ly0 + 1
