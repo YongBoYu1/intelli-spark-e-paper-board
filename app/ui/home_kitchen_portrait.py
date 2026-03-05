@@ -64,9 +64,9 @@ def _theme(theme: dict) -> dict:
     t = dict(theme or {})
 
     # Layout
-    t.setdefault("bp_margin", 10)
+    t.setdefault("bp_margin", 8)
     t.setdefault("bp_section_gap", 4)
-    t.setdefault("bp_inner_pad", 10)
+    t.setdefault("bp_inner_pad", 8)
     t.setdefault("bp_header_ratio", 0.21)
     t.setdefault("bp_memo_ratio", 0.25)
     t.setdefault("bp_weather_col_w", 156)
@@ -97,12 +97,12 @@ def _theme(theme: dict) -> dict:
     t.setdefault("bp_weather_temp_icon_gap", 8)
     t.setdefault("bp_weather_meta_gap", 8)
     t.setdefault("bp_weather_icon_stroke", 3)
-    t.setdefault("bp_weather_top", -4)
+    t.setdefault("bp_weather_top", -6)
     t.setdefault("bp_weather_humidity_size", 14)
     t.setdefault("bp_weather_humidity_spacing", 1)
     t.setdefault("bp_weather_humidity_prefix", "HUM")
     t.setdefault("bp_weather_humidity_gap", 6)
-    t.setdefault("bp_time_nudge_y", -16)
+    t.setdefault("bp_time_nudge_y", -24)
 
     # Memo section
     t.setdefault("bp_memo_title_size", 15)
@@ -389,7 +389,8 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     f_temp = fonts.get("inter_black", _font_px(t["bp_temp_size"]))
     f_weather_desc = fonts.get(meta_key, _font_px(t["bp_weather_desc_size"]))
     f_weather_humidity = fonts.get(meta_key, _font_px(t["bp_weather_humidity_size"]))
-    time_y = hy0 + int(t.get("bp_time_nudge_y", -4))
+    # Allow slight negative y so the big clock can visually sit closer to top edge.
+    time_y = max(-8, hy0 + int(t.get("bp_time_nudge_y", -4)))
 
     draw.text((left_x0, time_y), time_str, font=f_time, fill=ink)
     time_bbox = _bbox_at(draw, time_str, f_time, left_x0, time_y)
@@ -407,18 +408,16 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     date_y = int(week_bbox[3]) + int(t.get("bp_date_gap", 8))
     draw.text((left_x0, date_y), month_day, font=f_date, fill=date_muted)
 
-    weather_top = time_y + int(t["bp_weather_top"])
+    weather_top = max(0, time_y + int(t["bp_weather_top"]))
     if state.model.weather:
         w0 = state.model.weather[0]
         temp = f"{int(w0.hi)}°"
         tw, th = text_size(draw, temp, f_temp)
         icon_size = int(t["bp_weather_icon_size"])
-        temp_y = weather_top
+        icon_y = weather_top
+        icon_x = weather_x1 - icon_size
+        temp_y = icon_y + icon_size + int(t.get("bp_weather_temp_icon_gap", 8))
         temp_x = weather_x1 - tw
-        icon_top_gap = int(t.get("bp_weather_desc_gap", 8))
-        icon_band_w = max(icon_size, tw)
-        icon_x = weather_x1 - icon_band_w + max(0, (icon_band_w - icon_size) // 2)
-        icon_y = temp_y + th + icon_top_gap
         _draw_weather_icon_pack(
             image,
             draw,
@@ -440,7 +439,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         desc_w = text_width_spaced(draw, desc, f_weather_desc, spacing=desc_spacing)
         desc_h = text_size(draw, "Ag", f_weather_desc)[1]
         desc_x = weather_x1 - desc_w
-        desc_y = icon_y + icon_size + int(t.get("bp_weather_meta_gap", 8))
+        desc_y = temp_y + th + int(t.get("bp_weather_meta_gap", 8))
         draw_text_spaced(
             draw,
             desc,
