@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.core.reducer import Back, Click, LongPress, Rotate, Tick, reduce
-from app.core.state import AppState, DashboardModel, MemoItem, MenuItemId, Screen, WidgetMode
+from app.core.state import AppState, DashboardModel, MemoItem, MenuItemId, Screen, WeatherDay, WidgetMode
 
 
 class TimerReducerTests(unittest.TestCase):
@@ -123,6 +123,21 @@ class TimerReducerTests(unittest.TestCase):
 
         self.assertEqual(self.state.ui.menu_focused, MenuItemId.TIMER)
         self.assertEqual(self.state.ui.focused_index, 3)
+
+    def test_rotate_on_weather_is_disabled(self) -> None:
+        self.state.ui.screen = Screen.WEATHER
+        self.state.ui.weather_day_index = 1
+        self.state.model.weather = [
+            WeatherDay(dow="MON", icon="sun", hi=20, lo=10),
+            WeatherDay(dow="TUE", icon="cloud", hi=21, lo=11),
+            WeatherDay(dow="WED", icon="rain", hi=22, lo=12),
+        ]
+
+        reduce(self.state, Rotate(+1))
+        self.assertEqual(self.state.ui.weather_day_index, 1)
+
+        reduce(self.state, Rotate(-1))
+        self.assertEqual(self.state.ui.weather_day_index, 1)
 
     def test_tick_pauses_home_memo_rotation_while_voice_active(self) -> None:
         self.state.ui.screen = Screen.HOME

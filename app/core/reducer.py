@@ -290,6 +290,13 @@ def _timer_max_s(theme: dict) -> int:
     return max(1, value)
 
 
+def _kitchen_left_click_action(theme: dict) -> str:
+    raw = str(theme.get("kitchen_left_click_action", "weather") or "weather").strip().lower()
+    if raw in ("timer", "timer_toggle", "toggle_timer"):
+        return "timer_toggle"
+    return "weather"
+
+
 def _timer_alert_show_s(theme: dict) -> float:
     try:
         value = float(theme.get("timer_alert_show_s", 6.0) or 6.0)
@@ -486,8 +493,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             else:
                 _clamp_focus_home(state, items_per_page)
         elif state.ui.screen == Screen.WEATHER:
-            n = max(1, min(4, len(state.model.weather)))
-            state.ui.weather_day_index = (int(state.ui.weather_day_index) + event.delta) % n
+            # Weather-page day rotation is intentionally disabled for now.
+            pass
         elif state.ui.screen == Screen.CALENDAR:
             if (state.ui.calendar_mode or "date") == "agenda":
                 if state.ui.calendar_offset_days != 0:
@@ -535,7 +542,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             if variant == "kitchen":
                 target_kind, target_idx = kitchen_focus_target(state, int(state.ui.focused_index or 0), theme)
                 if target_kind == KITCHEN_FOCUS_LEFT_PANEL:
-                    if state.ui.widget_mode == WidgetMode.TIMER:
+                    left_click_action = _kitchen_left_click_action(theme)
+                    if left_click_action == "timer_toggle" and state.ui.widget_mode == WidgetMode.TIMER:
                         state.ui.timer_running = not state.ui.timer_running
                         state.ui.timer_last_tick_at = now
                     else:

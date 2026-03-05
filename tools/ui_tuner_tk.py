@@ -12,6 +12,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, Reminder, WeatherDay
+from app.data.location import resolve_dashboard_location
+from app.data.weather_api import resolve_weather_data
 from app.render.panel import build_panel_theme, quantize_for_panel
 from app.shared.fonts import FontBook
 from app.shared.paths import find_repo_root
@@ -143,6 +145,9 @@ def load_model(repo_root):
     else:
         d = {}
 
+    location = resolve_dashboard_location(d.get("location"))
+    location, weather_rows = resolve_weather_data(location, d.get("weather"))
+
     tasks = d.get("tasks")
     reminders = []
     if isinstance(tasks, list) and tasks:
@@ -173,7 +178,7 @@ def load_model(repo_root):
             ] + reminders
 
     weather = []
-    for w in d.get("weather") or []:
+    for w in weather_rows:
         try:
             weather.append(
                 WeatherDay(
@@ -220,7 +225,7 @@ def load_model(repo_root):
         ]
 
     return DashboardModel(
-        location=str(d.get("location") or "New York"),
+        location=location,
         battery=int(d.get("battery") or 84),
         reminders=reminders,
         weather=weather,

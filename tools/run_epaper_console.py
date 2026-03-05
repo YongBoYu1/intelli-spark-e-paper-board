@@ -14,6 +14,7 @@ Note: Uses unified refresh strategy:
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import select
@@ -33,6 +34,8 @@ if REPO_ROOT not in sys.path:
 
 from app.core.reducer import reduce, Rotate, Click, LongPress, RotateButton, Back, Tick
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
+from app.data.location import resolve_dashboard_location
+from app.data.weather_api import resolve_weather_data
 from app.render.epd import init_epd
 from app.render.panel import build_panel_theme, quantize_for_panel
 from app.render.refresh_policy import (
@@ -171,6 +174,128 @@ def _parse_optional_number(raw) -> float | None:
         return None
 
 
+def _first_present_value(*values):
+    for v in values:
+        if v is None:
+            continue
+        if isinstance(v, str) and not v.strip():
+            continue
+        return v
+    return None
+
+
+def _weather_rows_from_model(state: AppState) -> list[dict]:
+    rows: list[dict] = []
+    for w in list(getattr(state.model, "weather", []) or []):
+        row = {
+            "dow": str(getattr(w, "dow", "") or ""),
+            "icon": str(getattr(w, "icon", "sun") or "sun"),
+            "hi": int(getattr(w, "hi", 0) or 0),
+            "lo": int(getattr(w, "lo", 0) or 0),
+        }
+        if getattr(w, "humidity", None) is not None:
+            row["humidity"] = int(getattr(w, "humidity"))
+        if getattr(w, "feels_like", None) is not None:
+            row["feels_like"] = float(getattr(w, "feels_like"))
+        if getattr(w, "wind_kmh", None) is not None:
+            row["wind_kmh"] = float(getattr(w, "wind_kmh"))
+        if getattr(w, "uv_index", None) is not None:
+            row["uv_index"] = float(getattr(w, "uv_index"))
+        rows.append(row)
+    return rows
+
+
+def _weather_days_from_rows(rows: object) -> list[WeatherDay]:
+    days: list[WeatherDay] = []
+    if not isinstance(rows, list):
+        return days
+    for w in rows:
+        if not isinstance(w, dict):
+            continue
+        try:
+            days.append(
+                WeatherDay(
+                    dow=str(w.get("dow", "")),
+                    icon=str(w.get("icon", "sun")),
+                    hi=int(w.get("hi", 0)),
+                    lo=int(w.get("lo", 0)),
+                    humidity=_parse_optional_humidity(w.get("humidity")),
+                    feels_like=_parse_optional_number(
+                        _first_present_value(
+                            w.get("feels_like"),
+                            w.get("feelsLike"),
+                            w.get("feels"),
+                            w.get("apparent_temp"),
+                        )
+                    ),
+                    wind_kmh=_parse_optional_number(
+                        _first_present_value(
+                            w.get("wind_kmh"),
+                            w.get("windKmh"),
+                            w.get("wind_speed"),
+                            w.get("wind"),
+                        )
+                    ),
+                    uv_index=_parse_optional_number(
+                        _first_present_value(
+                            w.get("uv_index"),
+                            w.get("uv"),
+                            w.get("uvi"),
+                        )
+                    ),
+                )
+            )
+        except Exception:
+            continue
+    return days
+
+
+def _weather_digest(days: list[WeatherDay]) -> tuple:
+    return tuple((d.dow, d.icon, d.hi, d.lo, d.humidity, d.feels_like, d.wind_kmh, d.uv_index) for d in days)
+
+
+def _refresh_live_weather(state: AppState) -> bool:
+    base_location = resolve_dashboard_location(getattr(state.model, "location", ""))
+    fallback_rows = _weather_rows_from_model(state)
+    next_location, rows = resolve_weather_data(base_location, fallback_rows)
+    next_days = _weather_days_from_rows(rows)
+    if not next_days:
+        return False
+
+    prev_location = str(getattr(state.model, "location", "") or "")
+    prev_digest = _weather_digest(list(getattr(state.model, "weather", []) or []))
+    next_digest = _weather_digest(next_days)
+
+    state.model.location = str(next_location or prev_location or "Unknown")
+    state.model.weather = next_days
+
+    # Keep selected index in bounds if day count changes.
+    if state.model.weather:
+        state.ui.weather_day_index = int(state.ui.weather_day_index or 0) % len(state.model.weather)
+    else:
+        state.ui.weather_day_index = 0
+
+    return (state.model.location != prev_location) or (next_digest != prev_digest)
+
+
+def _next_weather_refresh_at(now_ts: float, refresh_hours: float) -> float:
+    hours = max(0.0, float(refresh_hours or 0.0))
+    if hours <= 0:
+        return 0.0
+
+    # For the default 12h schedule, align to local wall-clock boundaries:
+    # noon and midnight (00:00 / 12:00), instead of startup+12h drift.
+    if abs(hours - 12.0) < 1e-6:
+        now_local = datetime.datetime.fromtimestamp(now_ts)
+        today_noon = now_local.replace(hour=12, minute=0, second=0, microsecond=0)
+        if now_local < today_noon:
+            return today_noon.timestamp()
+        tomorrow_midnight = (now_local + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return tomorrow_midnight.timestamp()
+
+    return now_ts + (hours * 3600.0)
+
+
 def _load_model(repo_root: str) -> DashboardModel:
     path = os.path.join(repo_root, "data", "dashboard.json")
     if os.path.exists(path):
@@ -178,6 +303,9 @@ def _load_model(repo_root: str) -> DashboardModel:
             d = json.load(f)
     else:
         d = {}
+
+    location = resolve_dashboard_location(d.get("location"))
+    location, weather_rows = resolve_weather_data(location, d.get("weather"))
 
     tasks = d.get("tasks")
     reminders = []
@@ -209,7 +337,7 @@ def _load_model(repo_root: str) -> DashboardModel:
             ] + reminders
 
     weather = []
-    for w in d.get("weather") or []:
+    for w in weather_rows:
         try:
             weather.append(
                 WeatherDay(
@@ -219,12 +347,28 @@ def _load_model(repo_root: str) -> DashboardModel:
                     lo=int(w.get("lo", 0)),
                     humidity=_parse_optional_humidity(w.get("humidity")),
                     feels_like=_parse_optional_number(
-                        w.get("feels_like") or w.get("feelsLike") or w.get("feels") or w.get("apparent_temp")
+                        _first_present_value(
+                            w.get("feels_like"),
+                            w.get("feelsLike"),
+                            w.get("feels"),
+                            w.get("apparent_temp"),
+                        )
                     ),
                     wind_kmh=_parse_optional_number(
-                        w.get("wind_kmh") or w.get("windKmh") or w.get("wind_speed") or w.get("wind")
+                        _first_present_value(
+                            w.get("wind_kmh"),
+                            w.get("windKmh"),
+                            w.get("wind_speed"),
+                            w.get("wind"),
+                        )
                     ),
-                    uv_index=_parse_optional_number(w.get("uv_index") or w.get("uv") or w.get("uvi")),
+                    uv_index=_parse_optional_number(
+                        _first_present_value(
+                            w.get("uv_index"),
+                            w.get("uv"),
+                            w.get("uvi"),
+                        )
+                    ),
                 )
             )
         except Exception:
@@ -254,7 +398,7 @@ def _load_model(repo_root: str) -> DashboardModel:
         ]
 
     return DashboardModel(
-        location=str(d.get("location") or "New York"),
+        location=location,
         battery=int(d.get("battery") or 84),
         reminders=reminders,
         weather=weather,
@@ -324,6 +468,7 @@ def _render_frame(
 
 def _state_render_sig(state: AppState):
     return (
+        state.model.location,
         state.ui.screen,
         state.ui.focused_index,
         state.ui.page,
@@ -943,6 +1088,12 @@ def main() -> int:
         default=180,
         help="Debounce window for rotate button GPIO edge detection in ms (default: 180)",
     )
+    parser.add_argument(
+        "--weather-refresh-hours",
+        type=float,
+        default=float(os.environ.get("WEATHER_REFRESH_HOURS", "12")),
+        help="Live weather refresh interval in hours (default: 12; at 12h it aligns to local 00:00/12:00; <=0 disables periodic refresh)",
+    )
     parser.add_argument("--voice-api-url", default=os.environ.get("VOICE_API_URL", ""), help="Backend URL for POST /voice/interpret")
     parser.add_argument("--voice-locale", default=os.environ.get("VOICE_LOCALE", "zh-CN"), help="Locale sent to backend")
     parser.add_argument("--voice-timezone", default=os.environ.get("VOICE_TIMEZONE", "UTC"), help="Timezone sent to backend")
@@ -985,6 +1136,8 @@ def main() -> int:
     panel_muted = int(args.panel_muted if args.panel_muted is not None else theme.get("panel_muted", 150))
     panel_gamma = float(args.panel_gamma if args.panel_gamma is not None else theme.get("panel_gamma", 1.0))
     panel_dither = bool(args.panel_dither or theme.get("panel_dither", False))
+    weather_refresh_hours = max(0.0, float(args.weather_refresh_hours or 0.0))
+    weather_refresh_s = weather_refresh_hours * 3600.0
     fonts = _build_fonts(repo_root)
     _warn_missing_fonts(fonts)
     state = AppState(model=_load_model(repo_root))
@@ -1093,9 +1246,23 @@ def main() -> int:
     try:
         print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice, R rotate screen, S settings, W weather, B/Esc back, Q quit")
         next_tick = time.time()
+        next_weather_refresh_at = _next_weather_refresh_at(next_tick, weather_refresh_hours)
+        if weather_refresh_s > 0:
+            print(f"[weather] periodic refresh enabled: every {weather_refresh_hours:g}h")
         while True:
             now = time.time()
             expire_pending_voice_confirmation(state, now=now)
+            if weather_refresh_s > 0 and now >= next_weather_refresh_at:
+                try:
+                    changed = _refresh_live_weather(state)
+                    if refresh_debug:
+                        print(
+                            f"[weather] periodic_refresh changed={bool(changed)} "
+                            f"city={state.model.location} days={len(state.model.weather)}"
+                        )
+                except Exception as e:
+                    print(f"[warn] periodic weather refresh failed: {e}")
+                next_weather_refresh_at = _next_weather_refresh_at(now, weather_refresh_hours)
             key = _read_key_nonblocking()
 
             ev = None

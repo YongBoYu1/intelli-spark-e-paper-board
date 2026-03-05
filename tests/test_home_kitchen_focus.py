@@ -7,7 +7,7 @@ import unittest
 from PIL import Image, ImageDraw
 
 from app.core.reducer import Click, Rotate, reduce
-from app.core.state import AppState, DashboardModel, MemoItem, Reminder, Screen
+from app.core.state import AppState, DashboardModel, MemoItem, Reminder, Screen, WidgetMode
 from app.render.panel import build_panel_theme
 from app.shared.fonts import FontBook
 from app.ui.app import render_app
@@ -89,6 +89,34 @@ class HomeKitchenFocusTests(unittest.TestCase):
 
         reduce(state, Click(), theme={"home_variant": "kitchen"})
         self.assertEqual(state.ui.screen, Screen.REMINDERS)
+
+    def test_kitchen_click_left_panel_opens_weather_even_with_timer_widget(self) -> None:
+        state = AppState(model=DashboardModel())
+        state.ui.screen = Screen.HOME
+        state.ui.focused_index = 0
+        state.ui.widget_mode = WidgetMode.TIMER
+        state.ui.timer_running = False
+
+        reduce(state, Click(), theme={"home_variant": "kitchen"})
+
+        self.assertEqual(state.ui.screen, Screen.WEATHER)
+        self.assertFalse(state.ui.timer_running)
+
+    def test_kitchen_click_left_panel_can_toggle_timer_when_enabled_by_theme(self) -> None:
+        state = AppState(model=DashboardModel())
+        state.ui.screen = Screen.HOME
+        state.ui.focused_index = 0
+        state.ui.widget_mode = WidgetMode.TIMER
+        state.ui.timer_running = False
+
+        reduce(
+            state,
+            Click(),
+            theme={"home_variant": "kitchen", "kitchen_left_click_action": "timer_toggle"},
+        )
+
+        self.assertEqual(state.ui.screen, Screen.HOME)
+        self.assertTrue(state.ui.timer_running)
 
     def test_large_font_posted_timestamp_does_not_overlap_voice_lane(self) -> None:
         model = DashboardModel()

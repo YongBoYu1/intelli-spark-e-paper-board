@@ -117,6 +117,10 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_weather_humidity_prefix", "HUM")
     t.setdefault("b_show_weather_humidity", True)
     t.setdefault("b_show_weather_humidity_placeholder", True)
+    t.setdefault("b_weather_city_size", 13)
+    t.setdefault("b_weather_city_spacing", 1)
+    t.setdefault("b_weather_city_gap", 6)
+    t.setdefault("b_weather_city_upper", True)
     t.setdefault("b_header_gap", 28)
     t.setdefault("b_header_rule_w", 0)
     t.setdefault("b_left_micro_size", 16)
@@ -422,6 +426,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     f_temp = fonts.get("inter_black", _font_px(t["b_temp_size"]))
     f_weather_desc = fonts.get("jet_bold", _font_px(t["b_weather_desc_size"]))
     f_weather_humidity = fonts.get("jet_bold", _font_px(t["b_weather_humidity_size"]))
+    f_weather_city = fonts.get("inter_semibold", _font_px(t["b_weather_city_size"]))
     f_micro = fonts.get("jet_extrabold", _font_px(t["b_left_micro_size"]))
     f_family_name = fonts.get("jet_bold", _font_px(t["b_family_name_size"]))
     # Use a slightly heavier serif to survive 1-bit panel quantization.
@@ -518,6 +523,26 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     _, dh = text_size(draw, month_day, f_date)
 
     weather_bottom = dy + dh
+    location = str(getattr(state.model, "location", "") or "").strip()
+    if location:
+        city_text = location.upper() if bool(t.get("b_weather_city_upper", True)) else location
+        city_text = truncate_text(draw, city_text, f_weather_city, max(60, weather_col_w))
+        city_w = text_width_spaced(draw, city_text, f_weather_city, spacing=int(t["b_weather_city_spacing"]))
+        city_h = text_size(draw, city_text, f_weather_city)[1]
+        temp_top = top_y + int(t["b_weather_top"])
+        city_y = max(oy0 + 4, temp_top - city_h - int(t["b_weather_city_gap"]))
+        city_x = weather_right - city_w
+        draw_text_spaced(
+            draw,
+            city_text,
+            city_x,
+            city_y,
+            f_weather_city,
+            spacing=int(t["b_weather_city_spacing"]),
+            fill=muted,
+        )
+        weather_bottom = max(weather_bottom, city_y + city_h)
+
     if state.model.weather:
         w0 = state.model.weather[0]
         temp_str = f"{int(w0.hi)}°"

@@ -145,6 +145,19 @@ def _fit_font_to_width(draw, fonts, key: str, text: str, start: int, minimum: in
     return font, clipped, minimum
 
 
+def _fit_font_full_text_to_width(draw, fonts, key: str, text: str, start: int, minimum: int, max_width: int):
+    """Fit full text into width by shrinking only; never apply ellipsis truncation."""
+    size = max(minimum, start)
+    while size >= minimum:
+        font = fonts.get(key, size)
+        w, _ = text_size(draw, text, font)
+        if w <= max_width:
+            return font, text, size
+        size -= 1
+    font = fonts.get(key, minimum)
+    return font, text, minimum
+
+
 def _draw_centered_text_clamped(draw, text: str, font, cx: int, y: int, xmin: int, xmax: int, fill) -> None:
     tw, _ = text_size(draw, text, font)
     x = cx - tw // 2
@@ -366,6 +379,16 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     forecast_y0 = metric_y1
     forecast_y1 = forecast_y0 + forecast_h
 
+    # Reuse exact forecast column centers as anchor points for top-left city
+    # and top-right current-weather icon, so both align with bottom columns.
+    forecast_w = cx1 - cx0 + 1
+    forecast_col_w = max(1, forecast_w // 3)
+    forecast_col_centers: list[int] = []
+    for col in range(3):
+        col_x0 = cx0 + col * forecast_col_w
+        col_x1 = cx1 if col == 2 else col_x0 + forecast_col_w
+        forecast_col_centers.append(col_x0 + ((col_x1 - col_x0) // 2))
+
     draw.line((cx0, metric_y1, cx1, metric_y1), fill=ink, width=2)
 
     days, sel, current = _select_days(state)
@@ -391,12 +414,36 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     # 1) Hero block: feels line + big temp + H/L line, with icon at right.
     panel_w = cx1 - cx0 + 1
     icon_box_w = max(96, min(124, int(panel_w * 0.16)))
-    icon_x1 = cx1 - 6
-    icon_x0 = icon_x1 - icon_box_w
-    text_xmin = cx0 + 8
+    right_anchor_cx = forecast_col_centers[2]
+    icon_x0 = right_anchor_cx - (icon_box_w // 2)
+    icon_x1 = icon_x0 + icon_box_w
+    if icon_x1 > cx1 - 2:
+        shift = icon_x1 - (cx1 - 2)
+        icon_x0 -= shift
+        icon_x1 -= shift
+    if icon_x0 < cx0 + 2:
+        shift = (cx0 + 2) - icon_x0
+        icon_x0 += shift
+        icon_x1 += shift
+
+    city_text = str(getattr(state.model, "location", "") or "").strip()
+    show_city = bool(city_text)
+    city_box_w = icon_box_w if show_city else 0
+    left_anchor_cx = forecast_col_centers[0]
+    city_box_x0 = (left_anchor_cx - (city_box_w // 2)) if show_city else cx0 + 6
+    city_box_x1 = city_box_x0 + city_box_w
+    if show_city and city_box_x0 < cx0 + 2:
+        shift = (cx0 + 2) - city_box_x0
+        city_box_x0 += shift
+        city_box_x1 += shift
+    if show_city and city_box_x1 > cx1 - 2:
+        shift = city_box_x1 - (cx1 - 2)
+        city_box_x0 -= shift
+        city_box_x1 -= shift
+    text_xmin = city_box_x1 + 12 if show_city else cx0 + 8
     text_xmax = icon_x0 - 12
     text_w = max(100, text_xmax - text_xmin)
-    text_cx = (cx0 + cx1) // 2
+    text_cx = (text_xmin + text_xmax) // 2
 
     feels_txt = f"Feels Like {_format_temp_with_unit(feels_val)}"
     temp_txt = _format_temp_with_unit(current_temp_raw)
@@ -465,6 +512,28 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     hero_icon_size = max(62, min(92, icon_box_w - 10, icon_box_h))
     hero_icon_x = icon_x0 + (icon_box_w - hero_icon_size) // 2
     hero_icon_y = hero_y0 + (hero_h - hero_icon_size) // 2
+
+    if show_city:
+        city_frame_size = hero_icon_size
+        city_frame_x0 = city_box_x0 + max(0, (city_box_w - city_frame_size) // 2)
+        city_frame_y0 = hero_icon_y
+
+        city_font, city_label, _ = _fit_font_full_text_to_width(
+            draw,
+            fonts,
+            body_focus_key,
+            city_text,
+            max(18, int(body_base * 2.15)),
+            max(4, int(theme.get("weather_city_min_font_size", 4) or 4)),
+            max(24, city_frame_size - 8),
+        )
+        city_bb = draw.textbbox((0, 0), city_label, font=city_font)
+        city_w = city_bb[2] - city_bb[0]
+        city_h = city_bb[3] - city_bb[1]
+        city_x = city_frame_x0 + max(0, (city_frame_size - city_w) // 2) - city_bb[0]
+        city_y = city_frame_y0 + max(0, (city_frame_size - city_h) // 2) - city_bb[1]
+        draw.text((city_x, city_y), city_label, font=city_font, fill=ink)
+
     _draw_weather_icon_pack(
         image,
         draw,
@@ -530,9 +599,8 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
 
     # 3) Forecast row: next three days with vertical separators.
     forecast_inner_top = forecast_y0 + 8
-    forecast_inner_bottom = forecast_y1 - 6
-    forecast_w = cx1 - cx0 + 1
-    forecast_col_w = max(1, forecast_w // 3)
+    forecast_bottom_pad = int(theme.get("weather_forecast_bottom_pad", 12) or 12)
+    forecast_inner_bottom = forecast_y1 - max(6, forecast_bottom_pad)
     for i in (1, 2):
         vx = cx0 + i * forecast_col_w
         draw.line((vx, forecast_inner_top, vx, forecast_inner_bottom), fill=ink, width=1)
@@ -589,22 +657,31 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
             max(60, col_w - 20),
         )
 
-        dw, dh = text_size(draw, day_label, day_font)
-        tw2, th2 = text_size(draw, temp_range, temp_font)
+        day_bb = draw.textbbox((0, 0), day_label, font=day_font)
+        temp_bb = draw.textbbox((0, 0), temp_range, font=temp_font)
+        day_w = day_bb[2] - day_bb[0]
+        day_h = day_bb[3] - day_bb[1]
+        temp_w = temp_bb[2] - temp_bb[0]
 
-        day_y = forecast_inner_top + 2
-        temp_y = forecast_inner_bottom - th2 - 2
-        icon_room = max(24, temp_y - (day_y + dh + 8))
+        # Place labels with bbox-aware anchors so descenders never get clipped at the bottom.
+        day_y = (forecast_inner_top + 2) - day_bb[1]
+        temp_bottom_limit = forecast_inner_bottom - 2
+        temp_y = temp_bottom_limit - temp_bb[3]
+        day_bottom = day_y + day_bb[3]
+        temp_top = temp_y + temp_bb[1]
+        icon_room = max(24, temp_top - (day_bottom + 8))
         icon_size = min(max(24, int(icon_room * 0.98)), max(34, int((forecast_inner_bottom - forecast_inner_top) * 0.34)))
         icon_scale_w, icon_scale_h = _forecast_icon_visual_scale(theme, getattr(day, "icon", "sun"))
         draw_icon_w = max(18, int(round(icon_size * icon_scale_w)))
         draw_icon_h = max(16, int(round(icon_size * icon_scale_h)))
         icon_box_x = x0 + (col_w - icon_size) // 2
-        icon_box_y = day_y + dh + max(6, (icon_room - icon_size) // 2)
+        icon_box_y = day_bottom + max(6, (icon_room - icon_size) // 2)
         icon_x = icon_box_x + (icon_size - draw_icon_w) // 2
         icon_y = icon_box_y + (icon_size - draw_icon_h) // 2
 
-        draw.text((x0 + (col_w - dw) // 2, day_y), day_label, font=day_font, fill=ink)
+        day_x = x0 + (col_w - day_w) // 2 - day_bb[0]
+        temp_x = x0 + (col_w - temp_w) // 2 - temp_bb[0]
+        draw.text((day_x, day_y), day_label, font=day_font, fill=ink)
         _draw_weather_icon_pack(
             image,
             draw,
@@ -618,4 +695,4 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
             stroke=max(2, int(max(draw_icon_w, draw_icon_h) * 0.10)),
             thicken=False,
         )
-        draw.text((x0 + (col_w - tw2) // 2, temp_y), temp_range, font=temp_font, fill=ink)
+        draw.text((temp_x, temp_y), temp_range, font=temp_font, fill=ink)
