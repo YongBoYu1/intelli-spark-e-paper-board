@@ -91,6 +91,20 @@ class HomeKitchenFocusTests(unittest.TestCase):
         reduce(state, Click(), theme={"home_variant": "kitchen"})
         self.assertEqual(state.ui.screen, Screen.REMINDERS)
 
+    def test_kitchen_portrait_theme_uses_landscape_click_routing_at_zero_deg(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="r1", title="A", category="fridge"),
+            Reminder(rid="r2", title="B", category="shopping"),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 0
+        state.ui.focused_index = 1
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.screen, Screen.INVENTORY)
+
     def test_kitchen_click_left_panel_opens_weather_even_with_timer_widget(self) -> None:
         state = AppState(model=DashboardModel())
         state.ui.screen = Screen.HOME
@@ -130,6 +144,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         ]
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
         state.ui.focused_index = 2
         state.ui.reminders_version = 1
 
@@ -148,6 +163,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         ]
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
         # focus queue: [LEFT, s1, s2, s3]
         state.ui.focused_index = 2
 
@@ -172,6 +188,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         ]
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
         state.ui.focused_index = 2
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
@@ -181,6 +198,26 @@ class HomeKitchenFocusTests(unittest.TestCase):
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
         self.assertFalse(state.model.reminders[1].completed)
         self.assertEqual(state.ui.kitchen_focus_rid_override, "s2")
+
+    def test_kitchen_portrait_rotate_clamps_to_actionable_rows(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="s1", title="A", category="shopping", completed=False),
+            Reminder(rid="s2", title="B", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        state.ui.focused_index = 0
+
+        for _ in range(6):
+            reduce(state, Rotate(+1), theme={"home_variant": "kitchen_portrait"})
+
+        self.assertEqual(state.ui.focused_index, 2)
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+        self.assertFalse(state.model.reminders[0].completed)
+        self.assertTrue(state.model.reminders[1].completed)
 
     def test_large_font_posted_timestamp_does_not_overlap_voice_lane(self) -> None:
         model = DashboardModel()

@@ -71,6 +71,23 @@ def _home_variant(theme: dict) -> str:
     return str(theme.get("home_variant") or "kitchen").strip().lower()
 
 
+def _normalized_right_angle(raw) -> int:
+    try:
+        deg = int(raw or 0)
+    except (ValueError, TypeError):
+        deg = 0
+    return (((deg % 360) + 45) // 90 * 90) % 360
+
+
+def _resolved_home_variant(theme: dict, *, rotation_deg: int = 0) -> str:
+    variant = _home_variant(theme)
+    rot = _normalized_right_angle(rotation_deg)
+    # Keep reducer interaction semantics aligned with renderer variant fallback.
+    if variant == "kitchen_portrait" and rot in (0, 180):
+        return "kitchen"
+    return variant
+
+
 def _is_kitchen_variant(variant: str) -> bool:
     v = str(variant or "").strip().lower()
     return v in ("kitchen", "kitchen_portrait")
@@ -149,8 +166,13 @@ def _clamp_focus_home(state: AppState, items_per_page: int) -> None:
 
 
 def _clamp_focus_kitchen(state: AppState, theme: Optional[dict] = None) -> None:
-    # Focus queue: [LEFT_PANEL, INVENTORY_HEADER, INVENTORY_ITEMS..., REMINDERS_HEADER, REMINDERS_ITEMS...]
-    n = kitchen_focus_count(state, theme)
+    variant = _resolved_home_variant(theme or {}, rotation_deg=int(state.ui.rotation_deg or 0))
+    if variant == "kitchen_portrait":
+        # Portrait queue: [LEFT_PANEL, VISIBLE_TASKS...]
+        n = 1 + len(_kitchen_visible_task_indices(state, theme))
+    else:
+        # Landscape queue: [LEFT_PANEL, INVENTORY_HEADER, INVENTORY_ITEMS..., REMINDERS_HEADER, REMINDERS_ITEMS...]
+        n = kitchen_focus_count(state, theme)
     if n <= 0:
         state.ui.focused_index = 0
         state.ui.kitchen_focus_rid_override = ""
@@ -440,7 +462,7 @@ def _handle_timer_click(state: AppState, now: float, *, theme: dict) -> None:
 
 def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> AppState:
     theme = theme or {}
-    variant = _home_variant(theme)
+    variant = _resolved_home_variant(theme, rotation_deg=int(state.ui.rotation_deg or 0))
     items_per_page = _items_per_page_for_layout(theme)
     now = time.time()
 
