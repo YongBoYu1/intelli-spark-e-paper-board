@@ -199,6 +199,30 @@ class HomeKitchenFocusTests(unittest.TestCase):
         self.assertFalse(state.model.reminders[1].completed)
         self.assertEqual(state.ui.kitchen_focus_rid_override, "s2")
 
+    def test_kitchen_portrait_reverse_rotate_after_click_only_releases_hold(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="s1", title="A", category="shopping", completed=False),
+            Reminder(rid="s2", title="B", category="shopping", completed=False),
+            Reminder(rid="s3", title="C", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        state.ui.focused_index = 2
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.kitchen_focus_rid_override, "s2")
+
+        reduce(state, Rotate(-1), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.kitchen_focus_rid_override, "")
+        self.assertEqual(state.ui.focused_index, 2)
+
+        idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
+        pos = int(state.ui.focused_index) - 1
+        self.assertTrue(0 <= pos < len(idxs))
+        self.assertEqual(state.model.reminders[idxs[pos]].rid, "s3")
+
     def test_kitchen_portrait_rotate_clamps_to_actionable_rows(self) -> None:
         model = DashboardModel()
         model.reminders = [

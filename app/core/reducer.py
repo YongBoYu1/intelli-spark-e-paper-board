@@ -554,8 +554,6 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 # First rotate after click releases pinned-focus hold.
                 if str(state.ui.kitchen_focus_rid_override or "").strip():
                     state.ui.kitchen_focus_rid_override = ""
-                    if int(event.delta) < 0:
-                        state.ui.focused_index -= 1
                 else:
                     state.ui.focused_index += event.delta
                 _clamp_focus_kitchen(state, theme)
