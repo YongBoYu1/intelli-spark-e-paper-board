@@ -150,3 +150,21 @@ def events_for_date(events: Iterable[Any], *, target_date: date, base_date: date
     if target_date == base:
         out.extend(unresolved)
     return out
+
+
+def event_indices_for_date(events: Iterable[Any], *, target_date: date, base_date: date | None = None) -> list[int]:
+    base = base_date if isinstance(base_date, date) else datetime.now().date()
+    out: list[int] = []
+    unresolved: list[int] = []
+    for idx, ev in enumerate(events or []):
+        ev_day = resolve_event_date(ev, base_date=base)
+        if ev_day is None:
+            unresolved.append(idx)
+            continue
+        if ev_day == target_date:
+            out.append(idx)
+
+    # Keep unresolved legacy events visible on "today".
+    if target_date == base:
+        out.extend(unresolved)
+    return out

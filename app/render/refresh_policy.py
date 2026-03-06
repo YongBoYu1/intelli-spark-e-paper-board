@@ -505,20 +505,17 @@ def infer_dirty_rects(prev: UiSnapshot, curr: UiSnapshot, width: int, height: in
 
 def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: int, height: int) -> tuple[list[Rect], list[str]]:
     if prev.screen != curr.screen:
-        regions = _screen_regions(curr.screen, width, height, rotation_deg=curr.rotation_deg)
+        w = max(1, int(width))
+        h = max(1, int(height))
         if curr.screen == Screen.MEMO:
-            return [regions["header"], regions["card"], regions["footer"]], ["screen.change_to_memo"]
+            mid = w // 2
+            return [(0, 0, mid, h), (mid, 0, w, h)], ["screen.change_to_memo"]
         if curr.screen in (Screen.INVENTORY, Screen.REMINDERS):
-            return [
-                regions["header"],
-                regions["summary"],
-                regions["list_left"],
-                regions["list_right"],
-                regions["divider"],
-                regions["footer"],
-            ], ["screen.change_to_list"]
+            split = max(1, min(w - 1, int(w * 0.40)))
+            return [(0, 0, split, h), (split, 0, w, h)], ["screen.change_to_list"]
         if curr.screen == Screen.CALENDAR:
-            return [regions["left_panel"], regions["right_panel"]], ["screen.change_to_calendar"]
+            split = max(1, min(w - 1, int(w * 0.45)))
+            return [(0, 0, split, h), (split, 0, w, h)], ["screen.change_to_calendar"]
         return [], []
     if int(prev.rotation_deg) != int(curr.rotation_deg):
         return [], []

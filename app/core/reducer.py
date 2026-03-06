@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 import time
 from typing import Optional
 
-from app.core.calendar_utils import resolve_event_date
+from app.core.calendar_utils import event_indices_for_date
 from app.core.kitchen_queue import (
     KITCHEN_FOCUS_INVENTORY_HEADER,
     KITCHEN_FOCUS_INVENTORY_ITEM,
@@ -214,27 +214,8 @@ def _calendar_cursor_date(state: AppState, *, base_date: date | None = None) -> 
 def _calendar_selected_indices(state: AppState, *, base_date: date | None = None) -> tuple[list[int], list[int]]:
     base = base_date if isinstance(base_date, date) else datetime.now().date()
     target = _calendar_cursor_date(state, base_date=base)
-    event_indices: list[int] = []
-    reminder_indices: list[int] = []
-
-    for idx, ev in enumerate(state.model.calendar):
-        ev_day = resolve_event_date(ev, base_date=base)
-        if ev_day is None:
-            if target == base:
-                event_indices.append(idx)
-            continue
-        if ev_day == target:
-            event_indices.append(idx)
-
-    for idx, reminder in enumerate(state.model.reminders):
-        due_day = resolve_event_date(reminder, base_date=base)
-        if due_day is None:
-            if target == base:
-                reminder_indices.append(idx)
-            continue
-        if due_day == target:
-            reminder_indices.append(idx)
-
+    event_indices = event_indices_for_date(state.model.calendar, target_date=target, base_date=base)
+    reminder_indices = event_indices_for_date(state.model.reminders, target_date=target, base_date=base)
     return event_indices, reminder_indices
 
 
@@ -683,10 +664,16 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             else:
                 event_indices, reminder_indices = _calendar_selected_indices(state)
                 idx = int(state.ui.calendar_selected_index or 0)
+                toggled = False
                 if idx >= len(event_indices):
                     reminder_pos = idx - len(event_indices)
                     if 0 <= reminder_pos < len(reminder_indices):
                         _toggle_task_completed_by_index(state, reminder_indices[reminder_pos])
+                        toggled = True
+                # Preserve an explicit path back to date mode when agenda has no selectable reminder.
+                if not toggled:
+                    state.ui.calendar_mode = "date"
+                    state.ui.calendar_selected_index = 0
         elif state.ui.screen == Screen.TIMER:
             _handle_timer_click(state, now, theme=theme)
         elif state.ui.screen == Screen.MEMO:

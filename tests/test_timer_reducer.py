@@ -264,6 +264,22 @@ class TimerReducerTests(unittest.TestCase):
         self.assertFalse(self.state.model.reminders[0].completed)
         self.assertTrue(self.state.model.reminders[1].completed)
 
+    def test_calendar_agenda_click_without_reminder_returns_date_mode(self) -> None:
+        today = datetime.date.today()
+        self.state.ui.screen = Screen.CALENDAR
+        self.state.ui.calendar_mode = "agenda"
+        self.state.ui.calendar_offset_days = 0
+        self.state.ui.calendar_selected_index = 0
+        self.state.model.calendar = [
+            CalendarEvent(eid="e0", title="Event only", when="10:00", date_iso=today.isoformat()),
+        ]
+        self.state.model.reminders = []
+
+        reduce(self.state, Click(), theme={})
+
+        self.assertEqual(self.state.ui.calendar_mode, "date")
+        self.assertEqual(self.state.ui.calendar_selected_index, 0)
+
     def test_tick_pauses_home_memo_rotation_while_voice_active(self) -> None:
         self.state.ui.screen = Screen.HOME
         self.state.ui.focused_index = 2

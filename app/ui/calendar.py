@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 
 from PIL import ImageDraw
 
-from app.core.calendar_utils import events_for_date
+from app.core.calendar_utils import events_for_date, resolve_event_date
 from app.core.state import AppState
 from app.shared.draw import truncate_text, text_size, draw_checkbox
 from app.shared.panel_font_templates import apply_panel_font_template
@@ -99,14 +99,15 @@ def render_calendar(image, state: AppState, fonts, theme: dict) -> None:
     y0 = grid_top
     calendar_events = list(state.model.calendar or [])
     reminder_events = list(state.model.reminders or [])
-    event_days: set[int] = set()
-    task_days: set[int] = set()
-    for day in range(1, days_in_month + 1):
-        day_date = date(year, month, day)
-        if events_for_date(calendar_events, target_date=day_date, base_date=today):
-            event_days.add(day)
-        if events_for_date(reminder_events, target_date=day_date, base_date=today):
-            task_days.add(day)
+    event_dates = [resolve_event_date(ev, base_date=today) for ev in calendar_events]
+    task_dates = [resolve_event_date(r, base_date=today) for r in reminder_events]
+    event_days: set[int] = {d.day for d in event_dates if d is not None and d.year == year and d.month == month}
+    task_days: set[int] = {d.day for d in task_dates if d is not None and d.year == year and d.month == month}
+    if today.year == year and today.month == month:
+        if any(d is None for d in event_dates):
+            event_days.add(today.day)
+        if any(d is None for d in task_dates):
+            task_days.add(today.day)
 
     for day in range(1, days_in_month + 1):
         idx = start_offset + (day - 1)
