@@ -13,7 +13,7 @@ from tkinter import ttk
 import re
 from datetime import datetime
 
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageTk
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
@@ -529,13 +529,20 @@ class Simulator(tk.Tk):
         self.theme = load_theme(self.theme_path)
         self.fonts = build_fonts(self.repo_root)
         self.state = AppState(model=load_model(self.repo_root))
+        self.state.ui.rotation_deg = self._rotation_value(self.theme.get("rotation_deg", 0))
 
         self.preview_mode = tk.StringVar(value="Panel")
+        self.display_mode = tk.StringVar(value=str(self.theme.get("preview_display_mode", "Fit-Board")))
         self.panel_threshold = tk.IntVar(value=int(self.theme.get("panel_threshold", 168)))
         self.panel_muted = tk.IntVar(value=int(self.theme.get("panel_muted", 150)))
         self.panel_gamma = tk.DoubleVar(value=float(self.theme.get("panel_gamma", 1.0)))
         self.panel_dither = tk.BooleanVar(value=bool(self.theme.get("panel_dither", False)))
+        self.home_variant = tk.StringVar(
+            value=str(self.theme.get("home_variant", "kitchen_portrait")).strip().lower() or "kitchen_portrait"
+        )
         self.badge_style = tk.StringVar(value=str(self.theme.get("b_badge_style", "text")))
+        self.rotation_var = tk.StringVar(value=self._rotation_label(int(self.state.ui.rotation_deg or 0)))
+        self._rotation_syncing = False
         self.voice_mic_mode = tk.StringVar(value=str(self.theme.get("voice_zone_mic_mode", "tabler_state")))
         self.voice_mic_style = tk.StringVar(value=str(self.theme.get("voice_zone_mic_style", "tabler_outline")))
         self.voice_api_url = tk.StringVar(value=os.environ.get("VOICE_SIM_API_URL", os.environ.get("VOICE_API_URL", "")))
@@ -571,22 +578,39 @@ class Simulator(tk.Tk):
             state="readonly",
             width=10,
         ).grid(row=0, column=1, padx=(0, 12), sticky="w")
-        ttk.Label(self.controls, text="Threshold").grid(row=0, column=2, padx=(0, 6), sticky="w")
-        ttk.Spinbox(self.controls, from_=0, to=255, textvariable=self.panel_threshold, width=6).grid(row=0, column=3, padx=(0, 10), sticky="w")
-        ttk.Label(self.controls, text="Muted").grid(row=0, column=4, padx=(0, 6), sticky="w")
-        ttk.Spinbox(self.controls, from_=0, to=255, textvariable=self.panel_muted, width=6).grid(row=0, column=5, padx=(0, 10), sticky="w")
-        ttk.Label(self.controls, text="Gamma").grid(row=0, column=6, padx=(0, 6), sticky="w")
-        ttk.Spinbox(self.controls, from_=0.1, to=4.0, increment=0.05, textvariable=self.panel_gamma, width=6).grid(row=0, column=7, padx=(0, 10), sticky="w")
-        ttk.Checkbutton(self.controls, text="Dither", variable=self.panel_dither, command=self._render).grid(row=0, column=8, sticky="w")
-        ttk.Label(self.controls, text="Badge").grid(row=0, column=9, padx=(14, 6), sticky="w")
+        ttk.Label(self.controls, text="Home").grid(row=0, column=2, padx=(0, 6), sticky="w")
+        ttk.Combobox(
+            self.controls,
+            textvariable=self.home_variant,
+            values=("kitchen_portrait", "kitchen", "classic"),
+            state="readonly",
+            width=16,
+        ).grid(row=0, column=3, padx=(0, 12), sticky="w")
+        ttk.Label(self.controls, text="Rotation").grid(row=0, column=4, padx=(0, 6), sticky="w")
+        ttk.Combobox(
+            self.controls,
+            textvariable=self.rotation_var,
+            values=("0°", "90°", "180°", "270°"),
+            state="readonly",
+            width=7,
+        ).grid(row=0, column=5, padx=(0, 6), sticky="w")
+        ttk.Button(self.controls, text="Rotate", command=self._rotate_ui).grid(row=0, column=6, padx=(0, 12), sticky="w")
+        ttk.Label(self.controls, text="Threshold").grid(row=0, column=7, padx=(0, 6), sticky="w")
+        ttk.Spinbox(self.controls, from_=0, to=255, textvariable=self.panel_threshold, width=6).grid(row=0, column=8, padx=(0, 10), sticky="w")
+        ttk.Label(self.controls, text="Muted").grid(row=0, column=9, padx=(0, 6), sticky="w")
+        ttk.Spinbox(self.controls, from_=0, to=255, textvariable=self.panel_muted, width=6).grid(row=0, column=10, padx=(0, 10), sticky="w")
+        ttk.Label(self.controls, text="Gamma").grid(row=0, column=11, padx=(0, 6), sticky="w")
+        ttk.Spinbox(self.controls, from_=0.1, to=4.0, increment=0.05, textvariable=self.panel_gamma, width=6).grid(row=0, column=12, padx=(0, 10), sticky="w")
+        ttk.Checkbutton(self.controls, text="Dither", variable=self.panel_dither, command=self._render).grid(row=0, column=13, sticky="w")
+        ttk.Label(self.controls, text="Badge").grid(row=0, column=14, padx=(14, 6), sticky="w")
         ttk.Combobox(
             self.controls,
             textvariable=self.badge_style,
             values=("text", "text_focus_invert", "outline", "invert", "focus_invert"),
             state="readonly",
             width=16,
-        ).grid(row=0, column=10, padx=(0, 6), sticky="w")
-        ttk.Label(self.controls, text="Mic Style").grid(row=0, column=11, padx=(10, 6), sticky="w")
+        ).grid(row=0, column=15, padx=(0, 6), sticky="w")
+        ttk.Label(self.controls, text="Mic Style").grid(row=0, column=16, padx=(10, 6), sticky="w")
         ttk.Combobox(
             self.controls,
             textvariable=self.voice_mic_style,
@@ -601,15 +625,15 @@ class Simulator(tk.Tk):
             ),
             state="readonly",
             width=16,
-        ).grid(row=0, column=12, padx=(0, 6), sticky="w")
-        ttk.Label(self.controls, text="Mic Mode").grid(row=0, column=13, padx=(8, 6), sticky="w")
+        ).grid(row=0, column=17, padx=(0, 6), sticky="w")
+        ttk.Label(self.controls, text="Mic Mode").grid(row=0, column=18, padx=(8, 6), sticky="w")
         ttk.Combobox(
             self.controls,
             textvariable=self.voice_mic_mode,
             values=("tabler_state", "manual"),
             state="readonly",
             width=12,
-        ).grid(row=0, column=14, padx=(0, 6), sticky="w")
+        ).grid(row=0, column=19, padx=(0, 6), sticky="w")
         ttk.Label(self.controls, text="Voice API").grid(row=1, column=0, padx=(0, 6), pady=(8, 0), sticky="w")
         ttk.Entry(self.controls, textvariable=self.voice_api_url, width=42).grid(row=1, column=1, columnspan=5, pady=(8, 0), sticky="ew")
         ttk.Label(self.controls, text="Max").grid(row=1, column=6, padx=(6, 4), pady=(8, 0), sticky="w")
@@ -617,6 +641,14 @@ class Simulator(tk.Tk):
         ttk.Label(self.controls, text="Timeout").grid(row=1, column=8, padx=(10, 6), pady=(8, 0), sticky="w")
         ttk.Spinbox(self.controls, from_=1.0, to=60.0, increment=0.5, textvariable=self.voice_timeout_s, width=6).grid(row=1, column=9, pady=(8, 0), sticky="w")
         ttk.Button(self.controls, text="Record/Stop", command=self._toggle_record_button).grid(row=1, column=10, pady=(8, 0), sticky="w")
+        ttk.Label(self.controls, text="Display").grid(row=1, column=11, padx=(12, 6), pady=(8, 0), sticky="w")
+        ttk.Combobox(
+            self.controls,
+            textvariable=self.display_mode,
+            values=("Fit-Board", "1:1"),
+            state="readonly",
+            width=10,
+        ).grid(row=1, column=12, pady=(8, 0), sticky="w")
         ttk.Label(self.controls, text="Mic Input").grid(row=2, column=0, padx=(0, 6), pady=(8, 0), sticky="w")
         self.mic_combo = ttk.Combobox(
             self.controls,
@@ -628,9 +660,6 @@ class Simulator(tk.Tk):
         self.mic_combo.grid(row=2, column=1, columnspan=3, padx=(0, 8), pady=(8, 0), sticky="w")
         self.mic_combo.bind("<<ComboboxSelected>>", self._on_mic_selected)
         ttk.Button(self.controls, text="Refresh Mic", command=self._refresh_ffmpeg_devices).grid(row=2, column=4, pady=(8, 0), sticky="w")
-        ttk.Label(self.controls, text="Mic Gallery").grid(row=3, column=0, padx=(0, 6), pady=(8, 0), sticky="nw")
-        self.mic_gallery = ttk.Label(self.controls)
-        self.mic_gallery.grid(row=3, column=1, columnspan=12, padx=(0, 6), pady=(8, 0), sticky="w")
 
         self.preview = ttk.Label(self)
         self.preview.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
@@ -644,7 +673,7 @@ class Simulator(tk.Tk):
             "Keys: \n"
             "  ←/→ = Rotate (move focus / auto page)\n"
             "  Enter = Click (open detail / toggle task / select menu)\n"
-            "  R = Rotate screen (0°/180°)\n"
+            "  R = Rotate screen (+90°)\n"
             "  S = Open settings\n"
             "  T = Open timer (home only)\n"
             "  Hold Space = Record, Release Space = Send to Voice API\n"
@@ -678,6 +707,8 @@ class Simulator(tk.Tk):
 
         for v in (
             self.preview_mode,
+            self.display_mode,
+            self.home_variant,
             self.panel_threshold,
             self.panel_muted,
             self.panel_gamma,
@@ -686,10 +717,70 @@ class Simulator(tk.Tk):
             self.voice_mic_style,
         ):
             v.trace_add("write", lambda *_: self._render())
+        self.rotation_var.trace_add("write", lambda *_: self._on_rotation_selected())
 
         self._last_tick_render_sig = None
         self.after(100, self._tick)
         self._render()
+
+    @staticmethod
+    def _rotation_label(raw: int) -> str:
+        try:
+            deg = int(raw or 0)
+        except Exception:
+            deg = 0
+        deg = (((deg % 360) + 45) // 90 * 90) % 360
+        return f"{deg}\N{DEGREE SIGN}"
+
+    @staticmethod
+    def _rotation_value(raw) -> int:
+        text = str(raw or "").strip().replace("°", "")
+        try:
+            val = int(text)
+        except Exception:
+            val = 0
+        val = (((val % 360) + 45) // 90 * 90) % 360
+        return val
+
+    @staticmethod
+    def _viewer_oriented_image(img, rotation_deg: int):
+        rot = (((int(rotation_deg or 0) % 360) + 45) // 90 * 90) % 360
+        transpose = getattr(Image, "Transpose", None)
+        rot90 = transpose.ROTATE_90 if transpose is not None else Image.ROTATE_90
+        rot270 = transpose.ROTATE_270 if transpose is not None else Image.ROTATE_270
+        # Simulator ergonomics:
+        # Keep portrait rotations upright so developers don't need to tilt their head.
+        if rot == 90:
+            return img.transpose(rot270)
+        if rot == 270:
+            return img.transpose(rot90)
+        return img
+
+    @staticmethod
+    def _fit_to_box(img, max_w: int, max_h: int):
+        if max_w <= 0 or max_h <= 0:
+            return img, 1.0
+        iw, ih = img.size
+        if iw <= 0 or ih <= 0:
+            return img, 1.0
+        scale = min(float(max_w) / float(iw), float(max_h) / float(ih), 1.0)
+        if scale >= 0.999:
+            return img, 1.0
+        new_w = max(1, int(round(iw * scale)))
+        new_h = max(1, int(round(ih * scale)))
+        resampling = getattr(Image, "Resampling", None)
+        lanczos = resampling.LANCZOS if resampling is not None else Image.LANCZOS
+        return img.resize((new_w, new_h), resample=lanczos), float(scale)
+
+    def _sync_rotation_control(self) -> None:
+        target = self._rotation_label(int(self.state.ui.rotation_deg or 0))
+        if str(self.rotation_var.get() or "") == target:
+            return
+        self._rotation_syncing = True
+        try:
+            self.rotation_var.set(target)
+        finally:
+            self._rotation_syncing = False
 
     def _tick(self):
         before_sig = self._tick_render_sig()
@@ -760,6 +851,19 @@ class Simulator(tk.Tk):
                 self._render()
                 return
         self.state = reduce(self.state, ev, theme=self.theme)
+        self._render()
+
+    def _rotate_ui(self):
+        self._dispatch(RotateButton())
+        return "break"
+
+    def _on_rotation_selected(self):
+        if self._rotation_syncing:
+            return
+        target = self._rotation_value(self.rotation_var.get())
+        if int(self.state.ui.rotation_deg or 0) == target:
+            return
+        self.state.ui.rotation_deg = target
         self._render()
 
     def _open_settings(self):
@@ -1219,6 +1323,11 @@ class Simulator(tk.Tk):
 
     def _render(self):
         w, h = 800, 480
+        self._sync_rotation_control()
+        variant = str(self.home_variant.get() or "kitchen_portrait").strip().lower()
+        if variant not in ("kitchen", "kitchen_portrait", "classic"):
+            variant = "kitchen_portrait"
+        self.theme["home_variant"] = variant
         badge_style = str(self.badge_style.get() or "text").strip().lower()
         if badge_style not in ("text", "text_focus_invert", "outline", "invert", "focus_invert"):
             badge_style = "text"
@@ -1229,7 +1338,6 @@ class Simulator(tk.Tk):
         self.theme["voice_zone_mic_mode"] = mic_mode
         mic_style = _normalize_mic_style(str(self.voice_mic_style.get() or "tabler_outline"))
         self.theme["voice_zone_mic_style"] = mic_style
-        self._render_mic_gallery(selected=mic_style)
 
         bg = self.theme.get("bg", (229, 229, 229))
         color_img = Image.new("RGB", (w, h), bg if isinstance(bg, tuple) else (229, 229, 229))
@@ -1244,16 +1352,32 @@ class Simulator(tk.Tk):
         panel_rgb = Image.new("RGB", (w, h), panel_theme.get("bg", (255, 255, 255)))
         render_app(panel_rgb, self.state, self.fonts, panel_theme)
         panel_bw = quantize_for_panel(panel_rgb, threshold=threshold, gamma=gamma, dither=dither)
+        sim_rot = self._rotation_value(self.state.ui.rotation_deg)
 
         mode = str(self.preview_mode.get() or "Panel")
+        display_mode = str(self.display_mode.get() or "Fit-Board").strip()
+        if display_mode not in ("Fit-Board", "1:1"):
+            display_mode = "Fit-Board"
+        self.theme["preview_display_mode"] = display_mode
         if mode == "Color":
-            show_img = color_img
+            show_img = self._viewer_oriented_image(color_img, sim_rot)
         elif mode == "Panel":
-            show_img = panel_bw.convert("RGB")
+            show_img = self._viewer_oriented_image(panel_bw.convert("RGB"), sim_rot)
         else:
             show_img = Image.new("RGB", (w * 2 + 12, h), (236, 236, 236))
             show_img.paste(color_img, (0, 0))
             show_img.paste(panel_bw.convert("RGB"), (w + 12, 0))
+
+        raw_w, raw_h = show_img.size
+        shown_scale = 1.0
+        preview_w = int(self.preview.winfo_width() or 0)
+        preview_h = int(self.preview.winfo_height() or 0)
+        if display_mode == "Fit-Board" and mode in ("Color", "Panel"):
+            if preview_w <= 1 or preview_h <= 1:
+                self.update_idletasks()
+                preview_w = int(self.preview.winfo_width() or 0)
+                preview_h = int(self.preview.winfo_height() or 0)
+            show_img, shown_scale = self._fit_to_box(show_img, preview_w, preview_h)
 
         self._photo = ImageTk.PhotoImage(show_img)
         self.preview.configure(image=self._photo)
@@ -1267,52 +1391,15 @@ class Simulator(tk.Tk):
                 f"screen={ui.screen.value} focus={ui.focused_index} page={ui.page} idle={ui.idle} "
                 f"pending_reorder={ui.pending_reorder} mode={mode} th={threshold} muted={muted} "
                 f"gamma={gamma:.2f} dither={dither} badge_style={badge_style} "
+                f"home_variant={variant} rotation={int(ui.rotation_deg or 0)} "
+                f"display={display_mode} raw={raw_w}x{raw_h} shown={show_img.width}x{show_img.height} "
+                f"scale={shown_scale:.3f} box={preview_w}x{preview_h} "
                 f"mic_mode={mic_mode} mic_style={mic_style} "
                 f"focus_style={self.theme.get('b_right_focus_style', 'row_box')} fonts_ok={font_ok} "
                 f"voice={ui.voice_phase}:{voice_source} recorder={recorder} "
                 f"last_tool={self.last_tool or '-'} heard={self.last_heard or '-'}"
             )
         )
-
-    def _render_mic_gallery(self, *, selected: str) -> None:
-        styles = [
-            ("heroicons_solid", "Hero S"),
-            ("heroicons_outline", "Hero O"),
-            ("tabler_outline", "Tabler O"),
-            ("tabler_half", "Tabler H"),
-            ("tabler_filled", "Tabler F"),
-            ("bootstrap_outline", "BS O"),
-            ("bootstrap_fill", "BS F"),
-        ]
-        tile_w = 96
-        tile_h = 82
-        gap = 8
-        pad = 6
-        img_w = pad * 2 + len(styles) * tile_w + (len(styles) - 1) * gap
-        img_h = tile_h + pad * 2
-        img = Image.new("RGB", (img_w, img_h), (246, 246, 246))
-        draw = ImageDraw.Draw(img)
-        for i, (key, label) in enumerate(styles):
-            x = pad + i * (tile_w + gap)
-            y = pad
-            is_sel = (key == selected)
-            draw.rounded_rectangle(
-                (x, y, x + tile_w, y + tile_h),
-                radius=6,
-                outline=(0, 0, 0) if is_sel else (190, 190, 190),
-                width=2 if is_sel else 1,
-                fill=(255, 255, 255),
-            )
-            # Top: actual-size line sample (close to board usage).
-            _draw_mic_icon(draw, x + 7, y + 8, 16, (0, 0, 0), style=key)
-            draw.text((x + 28, y + 8), "READY", fill=(0, 0, 0), font=self.fonts.get("inter_semibold", 12))
-            draw.line((x + 7, y + 28, x + tile_w - 7, y + 28), fill=(205, 205, 205), width=1)
-            # Bottom: zoomed icon for silhouette comparison.
-            _draw_mic_icon(draw, x + 34, y + 34, 26, (0, 0, 0), style=key)
-            draw.text((x + 8, y + 63), label, fill=(0, 0, 0), font=self.fonts.get("inter_semibold", 11))
-        self._mic_gallery_photo = ImageTk.PhotoImage(img)
-        self.mic_gallery.configure(image=self._mic_gallery_photo)
-
 
 if __name__ == "__main__":
     Simulator().mainloop()

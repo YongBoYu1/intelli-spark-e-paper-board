@@ -134,6 +134,9 @@ class UiState:
     kitchen_visible_theme_key: str = ""
     # Reminder revision used when the kitchen visible queue cache was produced.
     kitchen_visible_reminders_version: int = -1
+    # UX hold: after clicking a kitchen item, keep focus pinned on that item
+    # until next explicit rotate input.
+    kitchen_focus_rid_override: str = ""
 
     # Delayed reorder: after toggling completion, wait a bit before moving completed to the bottom.
     pending_reorder: bool = False
@@ -166,7 +169,8 @@ class UiState:
     auto_sync_enabled: bool = True
     last_sync_at: float = 0.0
     sync_state: str = "never"  # never | ok | fail
-    rotation_deg: int = 0  # 0 | 180
+    # Runtime accepts right-angle values (0/90/180/270).
+    rotation_deg: int = 0
     settings_notice: str = ""
     settings_notice_due_at: float = 0.0
 
