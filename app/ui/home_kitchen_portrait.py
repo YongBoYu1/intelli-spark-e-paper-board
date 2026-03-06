@@ -920,5 +920,6 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         shop_row_y += shop_row_h
 
     state.ui.kitchen_visible_rids = rendered_focus_rids
-    state.ui.kitchen_visible_theme_key = kitchen_queue_theme_key(t)
+    state.ui.kitchen_visible_theme_key = kitchen_queue_theme_key(state, t)
+    state.ui.kitchen_visible_layout = "portrait"
     state.ui.kitchen_visible_reminders_version = int(state.ui.reminders_version or 0)

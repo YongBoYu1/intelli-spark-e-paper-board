@@ -10,6 +10,27 @@ KITCHEN_FOCUS_REMINDERS_ITEM = "reminders_item"
 KITCHEN_FOCUS_NONE = "none"
 
 
+def _normalized_right_angle(raw) -> int:
+    try:
+        deg = int(raw or 0)
+    except Exception:
+        deg = 0
+    return (((deg % 360) + 45) // 90 * 90) % 360
+
+
+def _resolved_home_variant(state: AppState | None, theme: dict | None = None) -> str:
+    variant = str((theme or {}).get("home_variant") or "kitchen").strip().lower()
+    rotation_deg = 0 if state is None else getattr(state.ui, "rotation_deg", 0)
+    rot = _normalized_right_angle(rotation_deg)
+    if variant == "kitchen_portrait" and rot in (0, 180):
+        return "kitchen"
+    return variant
+
+
+def _inventory_default_rows(state: AppState | None, theme: dict | None = None) -> int:
+    return 4 if _resolved_home_variant(state, theme) == "kitchen_portrait" else 3
+
+
 def _max_rows(theme: dict | None, key: str, default: int) -> int:
     raw = default if theme is None else theme.get(key, default)
     try:
@@ -18,9 +39,9 @@ def _max_rows(theme: dict | None, key: str, default: int) -> int:
         return default
 
 
-def kitchen_queue_theme_key(theme: dict | None = None) -> str:
+def kitchen_queue_theme_key(state: AppState | None = None, theme: dict | None = None) -> str:
     """Cache key for queue-shaping theme knobs."""
-    inv_max_rows = _max_rows(theme, "b_inventory_max_rows", 3)
+    inv_max_rows = _max_rows(theme, "b_inventory_max_rows", _inventory_default_rows(state, theme))
     shop_max_rows = _max_rows(theme, "b_shopping_max_rows", 5)
     return f"{inv_max_rows}:{shop_max_rows}"
 
@@ -34,7 +55,7 @@ def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> 
     current_reminders_version = int(getattr(state.ui, "reminders_version", 0))
     if (
         cached_rids
-        and cached_theme_key == kitchen_queue_theme_key(theme)
+        and cached_theme_key == kitchen_queue_theme_key(state, theme)
         and cached_reminders_version == current_reminders_version
     ):
         rid_to_idx = {r.rid: i for i, r in enumerate(state.model.reminders)}
@@ -51,7 +72,7 @@ def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> 
         if cached_idxs and len(cached_idxs) == len(cached_rids):
             return cached_idxs
 
-    inv_max_rows = _max_rows(theme, "b_inventory_max_rows", 3)
+    inv_max_rows = _max_rows(theme, "b_inventory_max_rows", _inventory_default_rows(state, theme))
     shop_max_rows = _max_rows(theme, "b_shopping_max_rows", 5)
 
     fridge: list[int] = []

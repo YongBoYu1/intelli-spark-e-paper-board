@@ -243,6 +243,22 @@ class HomeKitchenFocusTests(unittest.TestCase):
         self.assertFalse(state.model.reminders[0].completed)
         self.assertTrue(state.model.reminders[1].completed)
 
+    def test_kitchen_portrait_queue_defaults_allow_four_inventory_rows(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge", completed=False),
+            Reminder(rid="f2", title="Eggs", category="fridge", completed=False),
+            Reminder(rid="f3", title="Sauce", category="fridge", completed=False),
+            Reminder(rid="f4", title="Soup", category="fridge", completed=False),
+            Reminder(rid="s1", title="Bread", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+
+        idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
+        self.assertEqual([state.model.reminders[i].rid for i in idxs[:5]], ["f1", "f2", "f3", "f4", "s1"])
+
     def test_large_font_posted_timestamp_does_not_overlap_voice_lane(self) -> None:
         model = DashboardModel()
         model.memos = [MemoItem(mid="m1", text="Dinner is in the oven.", author="Mom", timestamp=time.time())]

@@ -491,6 +491,7 @@ def _state_render_sig(state: AppState):
         state.model.location,
         state.ui.screen,
         state.ui.focused_index,
+        state.ui.kitchen_focus_rid_override,
         state.ui.page,
         state.ui.idle,
         state.ui.widget_mode,
