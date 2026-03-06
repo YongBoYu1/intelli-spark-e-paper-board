@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from app.core.settings_schema import SETTINGS_GROUPS, SETTINGS_ORDER
 from app.core.state import AppState, Screen
 
 Rect = tuple[int, int, int, int]
@@ -684,6 +685,60 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
     }
 
 
+def _screen_source_size(width: int, height: int, rotation_deg: int) -> tuple[int, int]:
+    rot = _normalized_right_angle(rotation_deg)
+    if rot in (90, 270):
+        return (max(1, int(height)), max(1, int(width)))
+    return (max(1, int(width)), max(1, int(height)))
+
+
+def _settings_source_row_rect(width: int, height: int, row_index: int, *, rotation_deg: int = 0) -> Rect | None:
+    try:
+        target = int(row_index)
+    except (TypeError, ValueError):
+        return None
+    if target < 0 or target >= len(SETTINGS_ORDER):
+        return None
+
+    src_w, src_h = _screen_source_size(width, height, rotation_deg)
+    left = 24
+    right = max(left + 1, src_w - 24)
+    top = 90
+    row_h = 34
+    row_gap = 1
+    group_h = 20
+    group_gap = 7
+    y = top
+
+    index_map = {item: idx for idx, item in enumerate(SETTINGS_ORDER)}
+    for _group_name, group_items in SETTINGS_GROUPS:
+        y += group_h
+        for item in group_items:
+            current_idx = index_map.get(item, -1)
+            rect = (left, y, right, y + row_h)
+            if current_idx == target:
+                return rect
+            y += row_h + row_gap
+        y += group_gap
+    return None
+
+
+def _settings_row_rect(width: int, height: int, row_index: int, *, rotation_deg: int = 0) -> Rect | None:
+    src_w, src_h = _screen_source_size(width, height, rotation_deg)
+    source_rect = _settings_source_row_rect(width, height, row_index, rotation_deg=rotation_deg)
+    if source_rect is None:
+        return None
+    return _transform_source_rect(source_rect, src_w, src_h, rotation_deg)
+
+
+def _settings_footer_rect(width: int, height: int, *, rotation_deg: int = 0) -> Rect | None:
+    src_w, src_h = _screen_source_size(width, height, rotation_deg)
+    footer_h = 28
+    footer_top = max(0, src_h - footer_h)
+    source_rect = (24, footer_top, max(25, src_w - 24), src_h)
+    return _transform_source_rect(source_rect, src_w, src_h, rotation_deg)
+
+
 def _home_menu_overlay_region(width: int, height: int) -> Rect:
     w = max(1, int(width))
     h = max(1, int(height))
@@ -825,13 +880,21 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
 
     if curr.screen == Screen.SETTINGS:
         if prev.settings_focused_index != curr.settings_focused_index:
-            rects.append(regions["rows"])
+            prev_row = _settings_row_rect(width, height, prev.settings_focused_index, rotation_deg=curr.rotation_deg)
+            curr_row = _settings_row_rect(width, height, curr.settings_focused_index, rotation_deg=curr.rotation_deg)
+            if prev_row is not None:
+                rects.append(prev_row)
+            if curr_row is not None and curr_row != prev_row:
+                rects.append(curr_row)
+            if prev_row is None and curr_row is None:
+                rects.append(regions["rows"])
             reasons.append("settings.focus_move")
         if (
             prev.settings_notice != curr.settings_notice
             or prev.last_sync_at != curr.last_sync_at
         ):
-            rects.append(regions["footer"])
+            footer = _settings_footer_rect(width, height, rotation_deg=curr.rotation_deg)
+            rects.append(footer if footer is not None else regions["footer"])
             reasons.append("settings.footer_notice")
         if (
             prev.partial_refresh_mode != curr.partial_refresh_mode
@@ -840,7 +903,8 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             or prev.bluetooth_enabled != curr.bluetooth_enabled
             or prev.auto_sync_enabled != curr.auto_sync_enabled
         ):
-            rects.append(regions["rows"])
+            curr_row = _settings_row_rect(width, height, curr.settings_focused_index, rotation_deg=curr.rotation_deg)
+            rects.append(curr_row if curr_row is not None else regions["rows"])
             reasons.append("settings.value_change")
         return rects, reasons
 

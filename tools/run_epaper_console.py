@@ -1149,6 +1149,12 @@ def main() -> int:
         help="Debounce window for encoder KEY press in ms (default: 180)",
     )
     parser.add_argument(
+        "--encoder-key-min-press-ms",
+        type=int,
+        default=None,
+        help="Minimum stable KEY press duration required to emit a click (default: theme or 35ms)",
+    )
+    parser.add_argument(
         "--encoder-key-long-press-ms",
         type=int,
         default=450,
@@ -1282,6 +1288,10 @@ def main() -> int:
     space_last_trigger_at = 0.0
     gpio_pins_in_use = set()
     encoder_key_debounce_s = max(0.0, float(args.encoder_key_debounce_ms) / 1000.0)
+    encoder_key_min_press_ms = args.encoder_key_min_press_ms
+    if encoder_key_min_press_ms is None:
+        encoder_key_min_press_ms = theme.get("encoder_key_min_press_ms", 35)
+    encoder_key_min_press_s = max(0.0, float(encoder_key_min_press_ms) / 1000.0)
     encoder_key_long_press_s = max(0.1, float(args.encoder_key_long_press_ms) / 1000.0)
     rotate_debounce_s = max(0.0, float(args.rotate_debounce_ms) / 1000.0)
     voice_space_cooldown_s = max(0.2, float(theme.get("voice_space_cooldown_s", 1.2) or 1.2))
@@ -1404,7 +1414,11 @@ def main() -> int:
                         else:
                             if key_is_down:
                                 press_dur = max(0.0, now - key_down_at)
-                                if (not key_long_sent) and press_dur < encoder_key_long_press_s:
+                                if (
+                                    (not key_long_sent)
+                                    and press_dur >= encoder_key_min_press_s
+                                    and press_dur < encoder_key_long_press_s
+                                ):
                                     ev = Click()
                             key_is_down = False
                             key_down_at = 0.0

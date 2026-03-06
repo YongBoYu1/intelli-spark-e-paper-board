@@ -74,6 +74,28 @@ class RefreshPolicyTests(unittest.TestCase):
 
         rects = infer_dirty_rects(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertGreaterEqual(len(rects), 1)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.20)
+
+    def test_settings_value_change_prefers_focused_row_rect(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.SETTINGS
+        prev.ui.settings_focused_index = 1
+        prev.ui.partial_refresh_mode = "balanced"
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.SETTINGS
+        curr.ui.settings_focused_index = 1
+        curr.ui.partial_refresh_mode = "fast"
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("settings.value_change", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.12)
 
     def test_menu_focus_change_generates_dirty_rect(self) -> None:
         prev = AppState(model=DashboardModel())
