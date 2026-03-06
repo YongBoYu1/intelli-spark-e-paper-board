@@ -202,9 +202,9 @@ def _theme(theme: dict) -> dict:
     t.setdefault("b_shop_text_left_pad", 2)
     t.setdefault("b_right_focus_style", "row_box")
     t.setdefault("b_right_focus_pad_x", 6)
-    t.setdefault("b_right_focus_pad_y", 3)
-    t.setdefault("b_right_focus_right_trim", 2)
-    t.setdefault("b_right_focus_radius", 5)
+    t.setdefault("b_right_focus_pad_y", 4)
+    t.setdefault("b_right_focus_right_trim", 0)
+    t.setdefault("b_right_focus_radius", 6)
     t.setdefault("b_right_focus_w", 1)
     t.setdefault("b_right_focus_rail_w", 3)
     t.setdefault("b_right_focus_rail_gap", 6)
@@ -685,11 +685,15 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     family_w = text_width_spaced(draw, "FAMILY BOARD", f_micro, spacing=int(t["b_left_micro_spacing"]))
     max_row_w = max(64, lx1 - (lx0 + family_w + 22))
     for a in authors:
-        tw = text_width_spaced(draw, a, f_family_name, spacing=name_spacing)
-        extra = (name_gap if labels else 0) + tw
-        if row_total + extra > max_row_w:
+        avail = max_row_w - row_total - (name_gap if labels else 0)
+        if avail <= 0:
             break
-        labels.append((a, tw))
+        shown = truncate_text(draw, a, f_family_name, avail)
+        tw = text_width_spaced(draw, shown, f_family_name, spacing=name_spacing)
+        extra = (name_gap if labels else 0) + tw
+        if tw <= 0 or row_total + extra > max_row_w:
+            break
+        labels.append((shown, tw))
         row_total += extra
 
     row_x = lx1 - row_total - int(t.get("b_family_names_right_inset", 0))
@@ -900,12 +904,15 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     y = inv_y + int(t["b_inventory_header_gap"])
 
     inv_max_rows = max(1, int(t.get("b_inventory_max_rows", 4)))
+    hold_rid = str(getattr(state.ui, "kitchen_focus_rid_override", "") or "").strip()
     for item in fridge[:inv_max_rows]:
         if y + inv_row_h > mid_y - 8:
             break
-        is_focus = (not state.ui.idle) and (focus_rid == item.rid and not item.completed)
+        is_focus = (not state.ui.idle) and (focus_rid == item.rid)
         if not item.completed:
             rendered_focus_rids.append(item.rid)
+        is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
+        row_focus_w = focus_w + 1 if is_hold_focus else focus_w
 
         text_fill = ink 
         badge_text = ink
@@ -934,7 +941,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
                         (fx0, fy0, fx1, fy1),
                         radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
                         outline=ink,
-                        width=focus_w,
+                        width=row_focus_w,
                         fill=None,
                     )
 
@@ -1157,9 +1164,11 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     for item in shop[:shop_max_rows]:
         if y + shop_row_h > shop_bottom:
             break
-        is_focus = (not state.ui.idle) and (focus_rid == item.rid and not item.completed)
+        is_focus = (not state.ui.idle) and (focus_rid == item.rid)
         if not item.completed:
             rendered_focus_rids.append(item.rid)
+        is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
+        row_focus_w = focus_w + 1 if is_hold_focus else focus_w
         
         text_fill = ink
         box_outline = ink
@@ -1186,7 +1195,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
                         (fx0, fy0, fx1, fy1),
                         radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
                         outline=ink,
-                        width=focus_w,
+                        width=row_focus_w,
                         fill=None,
                     )
 

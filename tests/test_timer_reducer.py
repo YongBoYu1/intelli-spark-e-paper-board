@@ -3,7 +3,8 @@ from __future__ import annotations
 import datetime
 import unittest
 
-from app.core.reducer import Back, Click, LongPress, Rotate, Tick, reduce
+from app.core.reducer import Back, Click, LongPress, Rotate, RotateButton, Tick, reduce
+from app.core.settings_schema import SettingsItem, SETTINGS_ORDER
 from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen, WeatherDay, WidgetMode
 
 
@@ -326,6 +327,31 @@ class TimerReducerTests(unittest.TestCase):
 
         self.assertEqual(self.state.ui.memo_index, 0)
         self.assertEqual(self.state.ui.memo_last_rotated_at, 112.0)
+
+    def test_rotate_button_cycles_all_right_angles(self) -> None:
+        self.state.ui.rotation_deg = 0
+        reduce(self.state, RotateButton())
+        self.assertEqual(self.state.ui.rotation_deg, 90)
+
+        reduce(self.state, RotateButton())
+        self.assertEqual(self.state.ui.rotation_deg, 180)
+
+        reduce(self.state, RotateButton())
+        self.assertEqual(self.state.ui.rotation_deg, 270)
+
+        reduce(self.state, RotateButton())
+        self.assertEqual(self.state.ui.rotation_deg, 0)
+
+    def test_settings_rotation_click_cycles_all_right_angles(self) -> None:
+        self.state.ui.screen = Screen.SETTINGS
+        self.state.ui.settings_focused_index = SETTINGS_ORDER.index(SettingsItem.ROTATION)
+        self.state.ui.rotation_deg = 0
+
+        reduce(self.state, Click(), theme={})
+        self.assertEqual(self.state.ui.rotation_deg, 90)
+
+        reduce(self.state, Click(), theme={})
+        self.assertEqual(self.state.ui.rotation_deg, 180)
 
     def test_settings_rotate_cycles_only_real_rows(self) -> None:
         self.state.ui.screen = Screen.SETTINGS

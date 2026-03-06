@@ -6,6 +6,7 @@ import unittest
 
 from PIL import Image, ImageDraw
 
+from app.core.kitchen_queue import kitchen_visible_task_indices
 from app.core.reducer import Click, Rotate, reduce
 from app.core.state import AppState, DashboardModel, MemoItem, Reminder, Screen, WidgetMode
 from app.render.panel import build_panel_theme
@@ -90,6 +91,20 @@ class HomeKitchenFocusTests(unittest.TestCase):
         reduce(state, Click(), theme={"home_variant": "kitchen"})
         self.assertEqual(state.ui.screen, Screen.REMINDERS)
 
+    def test_kitchen_portrait_theme_uses_landscape_click_routing_at_zero_deg(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="r1", title="A", category="fridge"),
+            Reminder(rid="r2", title="B", category="shopping"),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 0
+        state.ui.focused_index = 1
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.screen, Screen.INVENTORY)
+
     def test_kitchen_click_left_panel_opens_weather_even_with_timer_widget(self) -> None:
         state = AppState(model=DashboardModel())
         state.ui.screen = Screen.HOME
@@ -117,6 +132,116 @@ class HomeKitchenFocusTests(unittest.TestCase):
 
         self.assertEqual(state.ui.screen, Screen.HOME)
         self.assertTrue(state.ui.timer_running)
+
+    def test_kitchen_portrait_click_uses_kitchen_visible_queue(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Fresh Milk", category="fridge", completed=True),
+            Reminder(rid="f2", title="Leftover Pizza", category="fridge", completed=True),
+            Reminder(rid="f3", title="Marinated Chicken", category="fridge", completed=True),
+            Reminder(rid="s1", title="Doctor Appointment", category="shopping", completed=False),
+            Reminder(rid="s2", title="Yoghurt Expires", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        state.ui.focused_index = 2
+        state.ui.reminders_version = 1
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+
+        self.assertTrue(state.model.reminders[0].completed)
+        self.assertFalse(state.model.reminders[3].completed)
+        self.assertTrue(state.model.reminders[4].completed)
+
+    def test_kitchen_portrait_click_holds_focus_until_rotate(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="s1", title="A", category="shopping", completed=False),
+            Reminder(rid="s2", title="B", category="shopping", completed=False),
+            Reminder(rid="s3", title="C", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        # focus queue: [LEFT, s1, s2, s3]
+        state.ui.focused_index = 2
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+        self.assertTrue(state.model.reminders[1].completed)
+        self.assertEqual(state.ui.kitchen_focus_rid_override, "s2")
+
+        # Rotate releases hold and resumes normal actionable queue navigation.
+        reduce(state, Rotate(+1), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.kitchen_focus_rid_override, "")
+        idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
+        pos = int(state.ui.focused_index) - 1
+        self.assertTrue(0 <= pos < len(idxs))
+        self.assertEqual(state.model.reminders[idxs[pos]].rid, "s3")
+
+    def test_kitchen_portrait_second_click_before_rotate_hits_held_item(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="s1", title="A", category="shopping", completed=False),
+            Reminder(rid="s2", title="B", category="shopping", completed=False),
+            Reminder(rid="s3", title="C", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        state.ui.focused_index = 2
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+        self.assertTrue(state.model.reminders[1].completed)
+        self.assertEqual(state.ui.kitchen_focus_rid_override, "s2")
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+        self.assertFalse(state.model.reminders[1].completed)
+        self.assertEqual(state.ui.kitchen_focus_rid_override, "s2")
+
+    def test_kitchen_portrait_reverse_rotate_after_click_only_releases_hold(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="s1", title="A", category="shopping", completed=False),
+            Reminder(rid="s2", title="B", category="shopping", completed=False),
+            Reminder(rid="s3", title="C", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        state.ui.focused_index = 2
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.kitchen_focus_rid_override, "s2")
+
+        reduce(state, Rotate(-1), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.kitchen_focus_rid_override, "")
+        self.assertEqual(state.ui.focused_index, 2)
+
+        idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
+        pos = int(state.ui.focused_index) - 1
+        self.assertTrue(0 <= pos < len(idxs))
+        self.assertEqual(state.model.reminders[idxs[pos]].rid, "s3")
+
+    def test_kitchen_portrait_rotate_clamps_to_actionable_rows(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="s1", title="A", category="shopping", completed=False),
+            Reminder(rid="s2", title="B", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        state.ui.focused_index = 0
+
+        for _ in range(6):
+            reduce(state, Rotate(+1), theme={"home_variant": "kitchen_portrait"})
+
+        self.assertEqual(state.ui.focused_index, 2)
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+        self.assertFalse(state.model.reminders[0].completed)
+        self.assertTrue(state.model.reminders[1].completed)
 
     def test_large_font_posted_timestamp_does_not_overlap_voice_lane(self) -> None:
         model = DashboardModel()
