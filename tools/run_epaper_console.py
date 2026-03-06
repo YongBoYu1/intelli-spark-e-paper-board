@@ -374,10 +374,30 @@ def _load_model(repo_root: str) -> DashboardModel:
         except Exception:
             continue
 
-    cal = [
-        CalendarEvent("e0", "Dinner with Alex", "19:00"),
-        CalendarEvent("e1", "Gym Session", "08:00"),
-    ]
+    cal: list[CalendarEvent] = []
+    rows = d.get("calendar")
+    if isinstance(rows, list) and rows:
+        for i, item in enumerate(rows):
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("text") or "").strip()
+            when = str(item.get("when") or item.get("time") or "").strip()
+            date_iso = str(item.get("date_iso") or item.get("date") or "").strip()
+            cal.append(
+                CalendarEvent(
+                    eid=str(item.get("id") or item.get("eid") or f"e{i}"),
+                    title=title,
+                    when=when,
+                    date_iso=date_iso,
+                )
+            )
+    if not cal:
+        today_iso = datetime.date.today().isoformat()
+        tomorrow_iso = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+        cal = [
+            CalendarEvent("e0", "Dinner with Alex", "19:00", date_iso=today_iso),
+            CalendarEvent("e1", "Gym Session", "08:00", date_iso=tomorrow_iso),
+        ]
 
     memos = []
     for i, m in enumerate(d.get("memos") or []):
@@ -496,6 +516,8 @@ def _state_render_sig(state: AppState):
         state.ui.calendar_mode,
         state.ui.calendar_selected_index,
         state.ui.memo_index,
+        state.ui.memo_expanded,
+        state.ui.list_focused_index,
         state.ui.partial_refresh_mode,
         state.ui.full_refresh_every,
         state.ui.wifi_enabled,
@@ -506,7 +528,7 @@ def _state_render_sig(state: AppState):
         state.ui.settings_notice,
         tuple((r.rid, r.completed, r.title, r.right, r.category) for r in state.model.reminders),
         tuple((w.dow, w.icon, w.hi, w.lo, w.humidity, w.feels_like, w.wind_kmh, w.uv_index) for w in state.model.weather),
-        tuple((c.eid, c.title, c.when) for c in state.model.calendar),
+        tuple((c.eid, c.title, c.when, c.date_iso) for c in state.model.calendar),
         tuple((m.mid, m.text, m.author, int(m.timestamp), m.is_new) for m in state.model.memos),
     )
 
@@ -603,8 +625,31 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     if bool(theme.get("refresh_partial_enable_all", False)):
         return True
 
-    default_screens = "settings,timer"
+    default_screens = "settings,timer,memo,calendar,inventory,reminders"
+    default_names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
     raw = theme.get("refresh_partial_screens", default_screens)
+    if isinstance(raw, str):
+        names = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, (list, tuple)):
+        names = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        names = list(default_names)
+
+    # Backward-compatible default: keep core partial screens enabled even when
+    # an older theme string only lists a subset (unless strict mode is requested).
+    if not bool(theme.get("refresh_partial_screens_strict", False)):
+        names = sorted(set(default_names) | set(names))
+
+    screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
+    return screen_name in set(names)
+
+
+def _screen_change_partial_enabled_with_theme(prev_screen: Screen, curr_screen: Screen, theme: dict) -> bool:
+    if bool(theme.get("refresh_force_full_on_screen_change", False)):
+        return False
+
+    default_screens = "memo,calendar,inventory,reminders"
+    raw = theme.get("refresh_partial_screen_change_screens", default_screens)
     if isinstance(raw, str):
         names = [x.strip().lower() for x in raw.split(",") if x.strip()]
     elif isinstance(raw, (list, tuple)):
@@ -612,8 +657,57 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     else:
         names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
 
-    screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
-    return screen_name in set(names)
+    curr_name = str(curr_screen.value if isinstance(curr_screen, Screen) else curr_screen).strip().lower()
+    if curr_name not in set(names):
+        return False
+
+    # Respect per-screen partial switch as well.
+    return _screen_partial_enabled_with_theme(curr_screen, theme)
+
+
+def _prepare_partial_rects(
+    rects: list[tuple[int, int, int, int]],
+    *,
+    width: int,
+    height: int,
+    pad: int,
+    max_rects: int,
+) -> list[tuple[int, int, int, int]]:
+    aligned: list[tuple[int, int, int, int]] = []
+    for rect in rects:
+        clipped = align_rect_for_partial(rect, width, height, pad=pad)
+        if clipped is None:
+            continue
+        # Skip duplicates/fully-contained rects.
+        if any(rect_contains(existing, clipped, slack=0) for existing in aligned):
+            continue
+        aligned = [r for r in aligned if not rect_contains(clipped, r, slack=0)]
+        aligned.append(clipped)
+
+    if not aligned:
+        return []
+
+    # Keep predictable order for debug/readability.
+    aligned.sort(key=lambda r: (r[1], r[0], (r[2] - r[0]) * (r[3] - r[1])))
+
+    max_n = max(1, int(max_rects))
+    if len(aligned) <= max_n:
+        return aligned
+
+    merged = merge_rects(aligned, width, height)
+    return [merged] if merged is not None else []
+
+
+def _diff_bbox_and_ratio(prev_frame: Image.Image, curr_frame: Image.Image) -> tuple[tuple[int, int, int, int] | None, float]:
+    diff = ImageChops.difference(prev_frame, curr_frame).convert("L")
+    bbox = diff.getbbox()
+    if bbox is None:
+        return None, 0.0
+
+    hist = diff.histogram()
+    nonzero = int(sum(hist[1:])) if hist else 0
+    total = max(1, int(diff.width) * int(diff.height))
+    return bbox, (float(nonzero) / float(total))
 
 
 def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
@@ -1456,7 +1550,7 @@ def main() -> int:
                     panel_dither=panel_dither,
                 )
                 curr_snapshot = build_ui_snapshot(state)
-                diff_box = ImageChops.difference(committed_frame, frame).getbbox()
+                diff_box, diff_ratio = _diff_bbox_and_ratio(committed_frame, frame)
                 if diff_box is None:
                     pending_frame = None
                     pending_sig = None
@@ -1474,9 +1568,31 @@ def main() -> int:
                     )
                     if dirty_rects:
                         merged_dirty = merge_rects(dirty_rects, epd.width, epd.height)
-                        if merged_dirty is None or not rect_contains(merged_dirty, diff_box, slack=4):
+                        if merged_dirty is None:
                             dirty_rects.append(diff_box)
                             dirty_reasons.append("diff_fallback")
+                        elif not rect_contains(merged_dirty, diff_box, slack=4):
+                            if committed_snapshot.screen != curr_snapshot.screen:
+                                # For cross-screen transitions we use structural dirty regions on purpose.
+                                # Avoid inflating to a massive bbox fallback, which would force full refresh.
+                                if refresh_debug:
+                                    print(
+                                        f"[refresh] DIFF_FALLBACK_SKIP screen={curr_snapshot.screen.value} "
+                                        "reason=screen_changed"
+                                    )
+                                pass
+                            else:
+                                # BBox can be overly large when a few distant pixels change.
+                                # Only trust bbox fallback when changed-pixel ratio is meaningful.
+                                fallback_ratio_min = float(theme.get("refresh_diff_fallback_min_ratio", 0.10) or 0.10)
+                                if diff_ratio >= fallback_ratio_min:
+                                    dirty_rects.append(diff_box)
+                                    dirty_reasons.append("diff_fallback")
+                                elif refresh_debug:
+                                    print(
+                                        f"[refresh] DIFF_FALLBACK_SKIP screen={curr_snapshot.screen.value} "
+                                        f"diff_ratio={diff_ratio:.4f} threshold={fallback_ratio_min:.4f}"
+                                    )
                     else:
                         dirty_rects = [diff_box]
                         dirty_reasons = ["diff_only"]
@@ -1516,6 +1632,14 @@ def main() -> int:
                 force_full_clean = bool(full_clean_reason)
                 screen_changed = pending_snapshot.screen != committed_snapshot.screen
                 rotation_changed = pending_snapshot.rotation_deg != committed_snapshot.rotation_deg
+                screen_change_partial = (
+                    screen_changed
+                    and _screen_change_partial_enabled_with_theme(
+                        committed_snapshot.screen,
+                        pending_snapshot.screen,
+                        theme,
+                    )
+                )
                 font_size_changed = pending_snapshot.font_size != committed_snapshot.font_size
                 force_flush = force_full_clean or screen_changed or rotation_changed
 
@@ -1532,14 +1656,22 @@ def main() -> int:
                                     f"full_every={full_every_text} mode={policy_mode} "
                                     f"dirty={','.join(pending_reasons) or '-'}"
                                 )
-                        elif screen_changed or rotation_changed:
+                        elif rotation_changed:
                             driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
                             refresh_runtime.mark_fast_full(now)
                             if refresh_debug:
-                                reason = "screen_changed" if screen_changed else "rotation_changed"
                                 print(
                                     f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} "
-                                    f"reason={reason} mode={policy_mode} "
+                                    f"reason=rotation_changed mode={policy_mode} "
+                                    f"fast={'on' if fast_full else 'off'}"
+                                )
+                        elif screen_changed and not screen_change_partial:
+                            driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
+                            refresh_runtime.mark_fast_full(now)
+                            if refresh_debug:
+                                print(
+                                    f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} "
+                                    f"reason=screen_changed mode={policy_mode} "
                                     f"fast={'on' if fast_full else 'off'}"
                                 )
                         elif pending_snapshot.screen == Screen.SETTINGS and font_size_changed:
@@ -1552,17 +1684,23 @@ def main() -> int:
                                     f"reason=settings.font_size_reflow mode={policy_mode}"
                                 )
                         else:
-                            merged_pending = merge_rects(refresh_runtime.pending_dirty_rects, epd.width, epd.height)
+                            pending_rects = list(refresh_runtime.pending_dirty_rects)
                             family_only = (
                                 pending_snapshot.screen == Screen.HOME
                                 and pending_reasons
                                 and all(r in ("home.family_board_update", "diff_fallback") for r in pending_reasons)
                             )
                             partial_pad = 1 if family_only else 2
-                            aligned = (
-                                align_rect_for_partial(merged_pending, epd.width, epd.height, pad=partial_pad)
-                                if merged_pending is not None
-                                else None
+                            partial_max_rects = max(
+                                1,
+                                int(theme.get("refresh_partial_max_rects", 6) or 6),
+                            )
+                            aligned_rects = _prepare_partial_rects(
+                                pending_rects,
+                                width=epd.width,
+                                height=epd.height,
+                                pad=partial_pad,
+                                max_rects=partial_max_rects,
                             )
                             partial_enabled = _screen_partial_enabled_with_theme(pending_snapshot.screen, theme)
                             mode_limit = _screen_area_limit_with_theme(
@@ -1576,24 +1714,34 @@ def main() -> int:
                                 r in ("home.menu_overlay_focus", "home.menu_overlay_toggle") for r in pending_reasons
                             ):
                                 mode_limit = max(mode_limit, _home_menu_overlay_area_limit_with_theme(theme))
-                            area_ratio = (
-                                rect_area_ratio(aligned, epd.width, epd.height)
-                                if aligned is not None
+                            max_area_ratio = (
+                                max(rect_area_ratio(r, epd.width, epd.height) for r in aligned_rects)
+                                if aligned_rects
+                                else 1.0
+                            )
+                            total_area_ratio = (
+                                min(
+                                    1.0,
+                                    sum(rect_area_ratio(r, epd.width, epd.height) for r in aligned_rects),
+                                )
+                                if aligned_rects
                                 else 1.0
                             )
                             if (
                                 supports_partial
                                 and partial_enabled
-                                and aligned is not None
-                                and area_ratio <= mode_limit
+                                and aligned_rects
+                                and max_area_ratio <= mode_limit
                             ):
-                                driver_mode = _blit_partial(epd, pending_frame, aligned, driver_mode)
+                                for rect in aligned_rects:
+                                    driver_mode = _blit_partial(epd, pending_frame, rect, driver_mode)
                                 refresh_runtime.mark_partial(now)
                                 if refresh_debug:
-                                    ax0, ay0, ax1, ay1 = aligned
+                                    rect_text = ";".join(f"{x0},{y0},{x1},{y1}" for (x0, y0, x1, y1) in aligned_rects)
                                     print(
-                                        f"[refresh] R1_PARTIAL_RECT screen={pending_snapshot.screen.value} "
-                                        f"rect=({ax0},{ay0},{ax1},{ay1}) area_ratio={area_ratio:.3f} "
+                                        f"[refresh] R1_PARTIAL_RECTS screen={pending_snapshot.screen.value} "
+                                        f"count={len(aligned_rects)} rects={rect_text} "
+                                        f"max_ratio={max_area_ratio:.3f} total_ratio={total_area_ratio:.3f} "
                                         f"limit={mode_limit:.3f} partial_count={refresh_runtime.partial_count}/{full_every_text} "
                                         f"mode={policy_mode} dirty={','.join(pending_reasons) or '-'}"
                                     )
@@ -1604,13 +1752,14 @@ def main() -> int:
                                     why = "partial_unsupported"
                                     if not partial_enabled:
                                         why = "partial_disabled_for_screen"
-                                    elif aligned is None:
+                                    elif not aligned_rects:
                                         why = "no_aligned_rect"
-                                    elif area_ratio > mode_limit:
+                                    elif max_area_ratio > mode_limit:
                                         why = "area_over_limit"
                                     print(
                                         f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} reason={why} "
-                                        f"area_ratio={area_ratio:.3f} limit={mode_limit:.3f} "
+                                        f"max_ratio={max_area_ratio:.3f} total_ratio={total_area_ratio:.3f} "
+                                        f"limit={mode_limit:.3f} "
                                         f"mode={policy_mode} fast={'on' if fast_full else 'off'} "
                                         f"dirty={','.join(pending_reasons) or '-'}"
                                     )

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date, datetime, timedelta
 import time
 from typing import Optional
 
+from app.core.calendar_utils import event_indices_for_date
 from app.core.kitchen_queue import (
     KITCHEN_FOCUS_INVENTORY_HEADER,
     KITCHEN_FOCUS_INVENTORY_ITEM,
@@ -213,6 +215,67 @@ def _toggle_task_completed_by_index(state: AppState, idx: int) -> None:
     state.ui.reorder_due_at = time.time() + 2.0
 
 
+def _list_section_indices(state: AppState) -> tuple[list[int], list[int]]:
+    inventory: list[int] = []
+    reminders: list[int] = []
+    for i, r in enumerate(state.model.reminders):
+        if str(r.category or "") == "fridge":
+            inventory.append(i)
+        else:
+            reminders.append(i)
+    return inventory, reminders
+
+
+def _list_focus_order(state: AppState) -> list[int]:
+    inventory, reminders = _list_section_indices(state)
+    return inventory + reminders
+
+
+def _clamp_focus_list(state: AppState, *, prefer_section: str | None = None) -> None:
+    inventory, reminders = _list_section_indices(state)
+    order = inventory + reminders
+    if not order:
+        state.ui.list_focused_index = 0
+        return
+
+    prefer = str(prefer_section or "").strip().lower()
+    if prefer == "inventory":
+        state.ui.list_focused_index = 0
+        return
+    if prefer == "reminders":
+        if reminders:
+            state.ui.list_focused_index = len(inventory)
+            return
+        state.ui.list_focused_index = 0
+        return
+
+    cur = int(state.ui.list_focused_index or 0)
+    state.ui.list_focused_index = max(0, min(cur, len(order) - 1))
+
+
+def _selected_list_item_model_index(state: AppState) -> int | None:
+    order = _list_focus_order(state)
+    if not order:
+        return None
+    idx = max(0, min(int(state.ui.list_focused_index or 0), len(order) - 1))
+    state.ui.list_focused_index = idx
+    return order[idx]
+
+
+def _calendar_cursor_date(state: AppState, *, base_date: date | None = None) -> date:
+    base = base_date if isinstance(base_date, date) else datetime.now().date()
+    offset = int(state.ui.calendar_offset_days or 0)
+    return base + timedelta(days=offset)
+
+
+def _calendar_selected_indices(state: AppState, *, base_date: date | None = None) -> tuple[list[int], list[int]]:
+    base = base_date if isinstance(base_date, date) else datetime.now().date()
+    target = _calendar_cursor_date(state, base_date=base)
+    event_indices = event_indices_for_date(state.model.calendar, target_date=target, base_date=base)
+    reminder_indices = event_indices_for_date(state.model.reminders, target_date=target, base_date=base)
+    return event_indices, reminder_indices
+
+
 def _apply_reorder(state: AppState) -> None:
     # Stable sort: incomplete first, then completed, preserve order within groups.
     before = list(state.model.reminders)
@@ -302,6 +365,12 @@ def _toggle_rotation(state: AppState) -> None:
 def _activate_menu_pick(state: AppState, picked: MenuItemId, now: float, *, theme: dict, items_per_page: int, variant: str) -> None:
     state.ui.active_menu = picked
     state.ui.menu_overlay_active = False
+    if picked == MenuItemId.MEMO:
+        state.ui.screen = Screen.MEMO
+        count = len(state.model.memos)
+        state.ui.memo_index = (int(state.ui.memo_index or 0) % max(1, count)) if count > 0 else 0
+        state.ui.memo_expanded = False
+        return
     if picked == MenuItemId.CALENDAR:
         state.ui.screen = Screen.CALENDAR
         return
@@ -317,11 +386,8 @@ def _activate_menu_pick(state: AppState, picked: MenuItemId, now: float, *, them
         state.ui.screen = Screen.TIMER
         return
     if picked == MenuItemId.LIST:
-        state.ui.screen = Screen.HOME
-        if _is_kitchen_variant(variant):
-            _clamp_focus_kitchen(state, theme)
-        else:
-            _clamp_focus_home(state, items_per_page)
+        state.ui.screen = Screen.REMINDERS
+        _clamp_focus_list(state, prefer_section="reminders")
         return
     if picked == MenuItemId.SETTINGS:
         state.ui.screen = Screen.SETTINGS
@@ -506,6 +572,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             _apply_reorder(state)
             if state.ui.screen == Screen.HOME and _is_kitchen_variant(variant):
                 _clamp_focus_kitchen(state, theme)
+            elif state.ui.screen in (Screen.INVENTORY, Screen.REMINDERS):
+                _clamp_focus_list(state)
             else:
                 _clamp_focus_home(state, items_per_page)
 
@@ -565,18 +633,22 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             pass
         elif state.ui.screen == Screen.CALENDAR:
             if (state.ui.calendar_mode or "date") == "agenda":
-                if state.ui.calendar_offset_days != 0:
+                event_indices, reminder_indices = _calendar_selected_indices(state)
+                agenda_len = len(event_indices) + len(reminder_indices)
+                if agenda_len <= 0:
                     state.ui.calendar_selected_index = 0
                 else:
-                    agenda_len = len(state.model.calendar) + len(state.model.reminders)
-                    if agenda_len <= 0:
-                        state.ui.calendar_selected_index = 0
-                    else:
-                        cur = int(state.ui.calendar_selected_index or 0)
-                        cur = max(0, min(cur + event.delta, agenda_len - 1))
-                        state.ui.calendar_selected_index = cur
+                    cur = int(state.ui.calendar_selected_index or 0)
+                    cur = max(0, min(cur + event.delta, agenda_len - 1))
+                    state.ui.calendar_selected_index = cur
             else:
                 state.ui.calendar_offset_days = int(state.ui.calendar_offset_days or 0) + event.delta
+        elif state.ui.screen == Screen.MEMO:
+            memo_count = len(state.model.memos)
+            if memo_count > 0:
+                cur = int(state.ui.memo_index or 0)
+                state.ui.memo_index = (cur + event.delta) % memo_count
+                state.ui.memo_expanded = False
         elif state.ui.screen == Screen.SETTINGS:
             n = max(1, len(SETTINGS_ORDER))
             cur = int(state.ui.settings_focused_index or 0)
@@ -587,6 +659,12 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             _clear_timer_alert(state)
             state.ui.timer_focused_index = int(state.ui.timer_focused_index or 0) + event.delta
             _clamp_timer_focus(state)
+        elif state.ui.screen in (Screen.INVENTORY, Screen.REMINDERS):
+            order = _list_focus_order(state)
+            if order:
+                cur = int(state.ui.list_focused_index or 0)
+                cur = max(0, min(cur + event.delta, len(order) - 1))
+                state.ui.list_focused_index = cur
         else:
             # Minimal: rotate does nothing on detail pages for now.
             pass
@@ -666,24 +744,39 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             else:
                 _toggle_task_completed(state, items_per_page)
         elif state.ui.screen == Screen.CALENDAR:
-            # Click toggles calendar mode (date <-> agenda) or toggles selected task in agenda mode.
+            # Click enters agenda mode from date mode; in agenda mode it toggles selected task.
             if (state.ui.calendar_mode or "date") == "date":
                 state.ui.calendar_mode = "agenda"
                 state.ui.calendar_selected_index = 0
             else:
-                if state.ui.calendar_offset_days != 0:
-                    # Free-day screen: click returns to date mode so user can continue navigating dates.
+                event_indices, reminder_indices = _calendar_selected_indices(state)
+                idx = int(state.ui.calendar_selected_index or 0)
+                toggled = False
+                if idx >= len(event_indices):
+                    reminder_pos = idx - len(event_indices)
+                    if 0 <= reminder_pos < len(reminder_indices):
+                        _toggle_task_completed_by_index(state, reminder_indices[reminder_pos])
+                        toggled = True
+                # Preserve an explicit path back to date mode when agenda has no selectable reminder.
+                if not toggled:
                     state.ui.calendar_mode = "date"
-                else:
-                    n_events = len(state.model.calendar)
-                    idx = int(state.ui.calendar_selected_index or 0)
-                    if idx >= n_events:
-                        task_idx = idx - n_events
-                        _toggle_task_completed_by_index(state, task_idx)
+                    state.ui.calendar_selected_index = 0
         elif state.ui.screen == Screen.TIMER:
             _handle_timer_click(state, now, theme=theme)
+        elif state.ui.screen == Screen.MEMO:
+            if state.model.memos:
+                state.ui.memo_expanded = not bool(state.ui.memo_expanded)
+                idx = int(state.ui.memo_index or 0) % len(state.model.memos)
+                current = state.model.memos[idx]
+                if bool(current.is_new):
+                    state.model.memos[idx] = replace(current, is_new=False)
         elif state.ui.screen == Screen.SETTINGS:
             _handle_settings_click(state, now)
+        elif state.ui.screen in (Screen.INVENTORY, Screen.REMINDERS):
+            selected_idx = _selected_list_item_model_index(state)
+            if selected_idx is not None:
+                _toggle_task_completed_by_index(state, selected_idx)
+                _clamp_focus_list(state)
         else:
             # Detail/placeholder: click does nothing; Back is the exit (TSX).
             pass

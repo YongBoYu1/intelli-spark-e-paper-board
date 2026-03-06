@@ -4,46 +4,57 @@ from datetime import date, datetime, timedelta
 
 from PIL import ImageDraw
 
+from app.core.calendar_utils import events_for_date, resolve_event_date
 from app.core.state import AppState
-from app.shared.draw import truncate_text, text_size, rounded_rect, draw_checkbox
+from app.shared.draw import truncate_text, text_size, draw_checkbox
+from app.shared.panel_font_templates import apply_panel_font_template
 
 
 def render_calendar(image, state: AppState, fonts, theme: dict) -> None:
-    """Calendar detail view closely matching TSX CalendarView.tsx."""
+    theme = apply_panel_font_template(theme)
     draw = ImageDraw.Draw(image)
+    if bool(theme.get("panel_mode", False)) or not bool(theme.get("panel_text_antialias", False)):
+        try:
+            draw.fontmode = "1"
+        except Exception:
+            pass
+
     w, h = image.size
 
     ink = theme.get("ink", 0)
     card = theme.get("card", 255)
     muted = theme.get("muted", ink)
+    border = theme.get("border", ink)
 
-    # For RGB themes we use light grays similar to TSX; for 1-bit everything becomes white anyway.
-    gray_50 = (249, 250, 251) if isinstance(card, tuple) else 255
-    gray_200 = (229, 231, 235) if isinstance(card, tuple) else 255
-    gray_300 = (209, 213, 219) if isinstance(card, tuple) else ink
+    body_key = str(theme.get("panel_font_body_key") or "inter_medium")
+    body_focus_key = str(theme.get("panel_font_body_focus_key") or "inter_bold")
+    meta_key = str(theme.get("panel_font_meta_key") or "jet_bold")
+    body_base = max(12, int(theme.get("panel_font_body_size", 18) or 18))
+    meta_base = max(11, int(theme.get("panel_font_meta_size", 13) or 13))
 
-    border_w = int(theme.get("detail_border_width", 4) or 4)
-    divider_w = int(theme.get("detail_divider_width", 4) or 4)
-    radius = int(theme.get("card_radius", 12) or 12) + 4
+    month_font = fonts.get(body_focus_key, max(30, int(body_base * 1.75)))
+    year_font = fonts.get(meta_key, max(16, meta_base + 2))
+    week_font = fonts.get(body_focus_key, max(14, int(body_base * 0.78)))
 
-    # Outer container
+    weekday_font = fonts.get(meta_key, max(14, meta_base + 1))
+    right_title_font = fonts.get(body_focus_key, max(28, int(body_base * 1.65)))
+    mode_font = fonts.get(meta_key, max(12, meta_base))
+    row_title_font = fonts.get(body_key, max(18, int(body_base + 1)))
+    row_focus_font = fonts.get(body_focus_key, max(18, int(body_base + 1)))
+    row_meta_font = fonts.get(meta_key, max(12, meta_base - 1))
+    footer_font = fonts.get(meta_key, max(11, meta_base - 1))
+
+    # Base frame
     draw.rectangle((0, 0, w, h), fill=card)
-    rounded_rect(draw, (0, 0, w - 1, h - 1), radius=radius, outline=ink, width=border_w, fill=card)
+    draw.rectangle((0, 0, w - 1, h - 1), outline=ink, width=2)
 
-    left_w = int(w * 0.45)
+    left_ratio = float(theme.get("calendar_left_ratio", 0.45) or 0.45)
+    left_ratio = max(0.36, min(0.56, left_ratio))
+    left_w = int(w * left_ratio)
     right_x = left_w
+    draw.line((right_x, 0, right_x, h), fill=ink, width=2)
 
-    # Left column background + divider
-    draw.rectangle((0, 0, left_w, h), fill=gray_50)
-    draw.rectangle((right_x - divider_w // 2, 0, right_x + divider_w // 2, h), fill=ink)
-
-    pad = 24
-    month_font = fonts.get("inter_black", 30)
-    year_font = fonts.get("jet_bold", 18)
-    week_font = fonts.get("inter_bold", 12)
-    day_font = fonts.get("jet_bold", 12)
-
-    # Date model: cursor follows rotary-driven offset.
+    # Date model
     now_dt = datetime.now()
     today = now_dt.date()
     off = int(state.ui.calendar_offset_days or 0)
@@ -52,187 +63,217 @@ def render_calendar(image, state: AppState, fonts, theme: dict) -> None:
     month = cursor.month
     month_name = cursor.strftime("%B").upper()
 
-    draw.text((pad, pad), month_name, font=month_font, fill=ink)
-    draw.text((pad, pad + 36), str(year), font=year_font, fill=muted)
+    # Left column: month grid
+    left_pad = 18
+    header_y = 14
+    draw.text((left_pad, header_y), month_name, font=month_font, fill=ink)
+    month_h = text_size(draw, month_name, month_font)[1]
+    year_y = header_y + month_h + 8
+    draw.text((left_pad, year_y), str(year), font=year_font, fill=muted)
+    year_h = text_size(draw, str(year), year_font)[1]
 
-    # Calendar grid
-    grid_top = pad + 76
-    cell_h = 40
-    cell_w = int((left_w - pad * 2) / 7)
+    # Keep a larger vertical gap for e-ink readability and to avoid month/year overlap.
+    week_row_y = year_y + year_h + 16
+    grid_top = week_row_y + 30
+    grid_bottom = h - 44
+    grid_h = max(120, grid_bottom - grid_top)
+    cell_w = max(24, int((left_w - (left_pad * 2)) / 7))
+    cell_h = max(24, int(grid_h / 6))
+    day_font_size = max(14, min(24, int(cell_h * 0.52)))
+    day_font = fonts.get(meta_key, day_font_size)
 
     week = ["S", "M", "T", "W", "T", "F", "S"]
     for i, ch in enumerate(week):
         tw, th = text_size(draw, ch, week_font)
-        x = pad + i * cell_w + (cell_w - tw) // 2
-        draw.text((x, grid_top), ch, font=week_font, fill=muted)
+        x = left_pad + i * cell_w + (cell_w - tw) // 2
+        draw.text((x, week_row_y), ch, font=week_font, fill=muted)
 
-    # First day of month
+    # Month shape
     first = cursor.replace(day=1)
-    start_offset = int(first.weekday() + 1) % 7  # Python Mon=0, TSX Sun=0
-    # Days in month
+    start_offset = int(first.weekday() + 1) % 7
     next_month = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
     days_in_month = (next_month - first).days
 
-    def iso(d):
-        return d.strftime("%Y-%m-%d")
+    # Day cells
+    x0 = left_pad
+    y0 = grid_top
+    calendar_events = list(state.model.calendar or [])
+    reminder_events = list(state.model.reminders or [])
+    event_dates = [resolve_event_date(ev, base_date=today) for ev in calendar_events]
+    task_dates = [resolve_event_date(r, base_date=today) for r in reminder_events]
+    event_days: set[int] = {d.day for d in event_dates if d is not None and d.year == year and d.month == month}
+    task_days: set[int] = {d.day for d in task_dates if d is not None and d.year == year and d.month == month}
+    if today.year == year and today.month == month:
+        if any(d is None for d in event_dates):
+            event_days.add(today.day)
+        if any(d is None for d in task_dates):
+            task_days.add(today.day)
 
-    today_iso = iso(now_dt)
-    cursor_iso = iso(datetime(cursor.year, cursor.month, cursor.day))
-
-    # Place each day
-    x0 = pad
-    y0 = grid_top + 18
     for day in range(1, days_in_month + 1):
         idx = start_offset + (day - 1)
         row = idx // 7
         col = idx % 7
-        cx = x0 + col * cell_w + cell_w // 2
-        cy = y0 + row * cell_h + 16
+        cx0 = x0 + col * cell_w
+        cy0 = y0 + row * cell_h
+        cx1 = cx0 + cell_w
+        cy1 = cy0 + cell_h
+        cx = (cx0 + cx1) // 2
+        cy = (cy0 + cy1) // 2 - 2
 
         is_selected = (day == cursor.day)
         is_today = (day == today.day and off == 0 and month == today.month and year == today.year)
 
-        # Circle chip (w-8/h-8)
-        r = 16
+        # Base cell separator
+        draw.rectangle((cx0, cy0, cx1, cy1), outline=border, width=1, fill=card)
+
+        # Selected / today emphasis
         if is_selected:
-            draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=ink, outline=ink, width=2)
-            fill = card
+            draw.rectangle((cx0 + 1, cy0 + 1, cx1 - 1, cy1 - 1), fill=ink)
+            label_fill = card
         else:
-            # hover not applicable; draw only outline ring for today
             if is_today:
-                draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=ink, width=2)
-            fill = ink
+                draw.rectangle((cx0 + 2, cy0 + 2, cx1 - 2, cy1 - 2), outline=ink, width=2)
+            label_fill = ink
 
         label = str(day)
         lw, lh = text_size(draw, label, day_font)
-        draw.text((cx - lw // 2, cy - lh // 2), label, font=day_font, fill=fill)
+        draw.text((cx - lw // 2, cy - lh // 2), label, font=day_font, fill=label_fill)
 
-        # Dot indicators (events + incomplete tasks) like TSX
-        # We don't have per-day dates yet in the model; approximate:
-        # Only show dots for the currently-selected cursor day (we don't have real dates yet).
-        has_event = (day == cursor.day and off == 0 and len(state.model.calendar) > 0)
-        has_task = (day == cursor.day and off == 0 and any(not r.completed for r in state.model.reminders))
-        dot_y = cy + r + 4
+        # Event/task markers for the specific day.
+        has_event = day in event_days
+        has_task = day in task_days
+        dot_y = cy1 - 8
         dot_r = 2
-        dx = cx - 4
+        dx = cx - 5
+        dot_fill = card if is_selected else ink
         if has_event:
-            draw.ellipse((dx - dot_r, dot_y, dx + dot_r, dot_y + dot_r * 2), fill=card if is_selected else ink)
+            draw.ellipse((dx - dot_r, dot_y, dx + dot_r, dot_y + dot_r * 2), fill=dot_fill)
             dx += 6
         if has_task:
-            # hollow dot
-            outline = card if is_selected else ink
-            draw.ellipse((dx - dot_r, dot_y, dx + dot_r, dot_y + dot_r * 2), outline=outline, width=1)
+            draw.ellipse((dx - dot_r, dot_y, dx + dot_r, dot_y + dot_r * 2), outline=dot_fill, width=1)
 
-    # Left footer hints are dev-only; keep them hidden on hardware by default.
-    if bool(theme.get("calendar_show_hints", False)):
-        footer_y = h - 92
-        draw.line((pad, footer_y, left_w - pad, footer_y), fill=gray_200, width=2)
-        hint_font = fonts.get("jet_bold", 10)
-        kbd_font = fonts.get("jet_bold", 10)
-        lines = [
-            ("\u2190\u2192", "CHANGE DATE"),
-            ("\u2191\u2193", "SELECT ITEM"),
-            ("ENTER", "TOGGLE TASK"),
-        ]
-        y = footer_y + 12
-        for kbd, txt in lines:
-            kw, kh = text_size(draw, kbd, kbd_font)
-            bx0 = pad
-            by0 = y - 2
-            bx1 = bx0 + kw + 10
-            by1 = by0 + kh + 6
-            rounded_rect(draw, (bx0, by0, bx1, by1), radius=4, outline=gray_300, width=1, fill=card)
-            draw.text((bx0 + 5, y + 1), kbd, font=kbd_font, fill=ink)
-            draw.text((bx1 + 10, y + 1), txt, font=hint_font, fill=muted)
-            y += 22
-
-    # Right column
+    # Right column header
     right_w = w - right_x
-    header_h = 86
-    header_pad = 26
-    draw.rectangle((right_x, 0, w, header_h), fill=card)
+    header_h = 92
+    header_pad = 20
     draw.line((right_x, header_h, w, header_h), fill=ink, width=2)
 
-    weekday_font = fonts.get("jet_bold", 11)
-    title_font = fonts.get("inter_black", 24)
     weekday = cursor.strftime("%A").upper()
     try:
         date_title = cursor.strftime("%B %-d").upper()
     except Exception:
         date_title = cursor.strftime("%B %d").upper()
-    draw.text((right_x + header_pad, 22), weekday, font=weekday_font, fill=muted)
-    draw.text((right_x + header_pad, 42), date_title, font=title_font, fill=ink)
+    draw.text((right_x + header_pad, 18), weekday, font=weekday_font, fill=muted)
+    draw.text((right_x + header_pad, 38), date_title, font=right_title_font, fill=ink)
 
-    esc = "ESC"
-    esc_w, esc_h = text_size(draw, esc, weekday_font)
-    draw.text((w - header_pad - esc_w, 24), esc, font=weekday_font, fill=muted)
+    mode = str(state.ui.calendar_mode or "date").strip().lower()
 
-    # Agenda items: only show content for "today" until mobile provides real dates.
-    if off != 0:
-        free = "FREE DAY"
-        fw, fh = text_size(draw, free, title_font)
-        draw.text((right_x + (right_w - fw) / 2, header_h + 120), free, font=title_font, fill=muted)
+    # Right column list area
+    list_x0 = right_x + 14
+    list_x1 = w - 14
+    list_top = header_h + 10
+    list_bottom = h - 34
+    row_h = 56
+    row_gap = 8
+
+    # Build agenda rows for the selected date: events first, then reminders.
+    selected_events = events_for_date(calendar_events, target_date=cursor, base_date=today)
+    selected_tasks = events_for_date(reminder_events, target_date=cursor, base_date=today)
+    items: list[dict] = []
+    for ev in selected_events:
+        items.append({"kind": "event", "title": str(ev.title or ""), "when": str(ev.when or "")})
+    for r in selected_tasks:
+        items.append(
+            {
+                "kind": "task",
+                "title": str(r.title or ""),
+                "when": str(r.right or ""),
+                "completed": bool(r.completed),
+            }
+        )
+
+    if not items:
+        empty_title = "NO EVENTS"
+        empty_sub = "Voice can add reminders and memos"
+        tw, th = text_size(draw, empty_title, right_title_font)
+        sw, sh = text_size(draw, empty_sub, mode_font)
+        cx = right_x + (right_w // 2)
+        cy = list_top + ((list_bottom - list_top) // 2)
+        draw.text((cx - (tw // 2), cy - th), empty_title, font=right_title_font, fill=muted)
+        draw.text((cx - (sw // 2), cy + 8), empty_sub, font=mode_font, fill=muted)
+        if mode == "agenda":
+            footer = "ROTATE: ITEM  CLICK: TOGGLE TASK  BACK: HOME"
+        else:
+            footer = "ROTATE: DATE  CLICK: OPEN AGENDA  BACK: HOME"
+        footer = truncate_text(draw, footer, footer_font, max(80, w - 24))
+        draw.text((12, h - 24), footer, font=footer_font, fill=muted)
         return
 
-    # Agenda items: events first, then tasks (tasks are reminders here).
-    list_x0 = right_x + 18
-    list_x1 = w - 18
-    y = header_h + 18
-    gap = 12
-
-    event_time_font = fonts.get("jet_bold", 12)
-    event_tag_font = fonts.get("jet_bold", 10)
-    event_title_font = fonts.get("inter_bold", 20)
-
-    task_title_font = fonts.get("inter_medium", 18)
-    task_meta_font = fonts.get("jet_bold", 10)
-
+    slots = max(1, (list_bottom - list_top + row_gap) // (row_h + row_gap))
     selected = int(state.ui.calendar_selected_index or 0)
-    mode = (state.ui.calendar_mode or "date")
+    if mode == "agenda":
+        selected = max(0, min(selected, len(items) - 1))
+    else:
+        selected = 0
+    start = 0
+    if len(items) > slots:
+        start = max(0, min(selected - (slots // 2), len(items) - slots))
+    visible_items = items[start : start + slots]
 
-    # Render events (from model)
-    for i, ev in enumerate(state.model.calendar[:3]):
-        # border-l highlight
-        box_h = 62
-        is_sel = (mode == "agenda" and selected == i)
-        draw.line((list_x0, y, list_x0, y + box_h), fill=ink if is_sel else gray_300, width=4)
+    y = list_top
+    for i, item in enumerate(visible_items):
+        global_idx = start + i
+        is_sel = (mode == "agenda" and global_idx == selected)
+        box = (list_x0, y, list_x1, y + row_h)
         if is_sel:
-            draw.rectangle((list_x0 + 4, y, list_x1, y + box_h), fill=gray_50)
+            draw.rectangle(box, fill=ink)
+        else:
+            draw.rectangle(box, outline=border, width=1, fill=card)
 
-        # time pill
-        time_txt = (ev.when or "08:00").split()[-1]
-        pill_w, pill_h = text_size(draw, time_txt, event_time_font)
-        pill_box = (list_x0 + 14, y + 6, list_x0 + 14 + pill_w + 10, y + 6 + pill_h + 6)
-        rounded_rect(draw, pill_box, radius=4, outline=gray_300, width=1, fill=gray_200)
-        draw.text((pill_box[0] + 5, pill_box[1] + 3), time_txt, font=event_time_font, fill=ink)
-        draw.text((pill_box[2] + 10, pill_box[1] + 4), "EVENT", font=event_tag_font, fill=muted)
-        draw.text((list_x0 + 14, y + 34), truncate_text(draw, ev.title, event_title_font, list_x1 - (list_x0 + 14)), font=event_title_font, fill=ink)
+        text_fill = card if is_sel else ink
+        meta_fill = card if is_sel else muted
+        title_font = row_focus_font if is_sel else row_title_font
 
-        y += box_h + gap
+        if item["kind"] == "event":
+            when_txt = truncate_text(draw, str(item.get("when") or "EVENT").upper(), row_meta_font, max(48, int((list_x1 - list_x0) * 0.28)))
+            title = truncate_text(draw, str(item.get("title") or "(untitled)"), title_font, int((list_x1 - list_x0) * 0.72))
+            draw.text((list_x0 + 10, y + 10), title, font=title_font, fill=text_fill)
+            ww = text_size(draw, when_txt, row_meta_font)[0]
+            draw.text((list_x1 - ww - 10, y + 12), when_txt, font=row_meta_font, fill=meta_fill)
+            draw.text((list_x0 + 10, y + 33), "EVENT", font=row_meta_font, fill=meta_fill)
+        else:
+            cb = 18
+            cb_x = list_x0 + 10
+            cb_y = y + (row_h - cb) // 2
+            draw_checkbox(
+                draw,
+                cb_x,
+                cb_y,
+                cb,
+                checked=bool(item.get("completed", False)),
+                outline=text_fill,
+                fill=(ink if is_sel else card),
+                check_fill=text_fill,
+                width=2,
+            )
+            text_x = cb_x + cb + 10
+            title = truncate_text(draw, str(item.get("title") or "(untitled)"), title_font, (list_x1 - text_x) - 14)
+            draw.text((text_x, y + 9), title, font=title_font, fill=text_fill)
+            when_txt = str(item.get("when") or "").strip()
+            meta = ("DUE: " + when_txt).upper() if when_txt else ("DONE" if bool(item.get("completed")) else "TASK")
+            draw.text((text_x, y + 32), truncate_text(draw, meta, row_meta_font, (list_x1 - text_x) - 14), font=row_meta_font, fill=meta_fill)
 
-    # Render a few tasks (reminders)
-    for ti, r in enumerate(state.model.reminders[:4]):
-        box_h = 62
-        box = (list_x0, y, list_x1, y + box_h)
-        fill = (243, 244, 246) if (isinstance(card, tuple) and r.completed) else card
-        outline = ink if not r.completed else gray_200
-        is_sel = (mode == "agenda" and selected == (len(state.model.calendar) + ti))
-        rounded_rect(draw, box, radius=10, outline=outline, width=2, fill=fill)
-        if is_sel:
-            rounded_rect(draw, box, radius=10, outline=ink, width=3, fill=fill)
+        y += row_h + row_gap
 
-        cb = 22
-        cb_x = list_x0 + 14
-        cb_y = y + (box_h - cb) // 2
-        draw_checkbox(draw, cb_x, cb_y, cb, checked=r.completed, outline=outline, fill=fill, check_fill=outline, width=2)
+    hidden = max(0, len(items) - len(visible_items) - start)
+    if hidden > 0:
+        more = f"+{hidden} MORE"
+        mw, mh = text_size(draw, more, row_meta_font)
+        draw.text((list_x1 - mw - 4, list_bottom - mh - 2), more, font=row_meta_font, fill=muted)
 
-        text_x = cb_x + cb + 12
-        title = truncate_text(draw, r.title, task_title_font, (list_x1 - text_x) - 16)
-        title_fill = muted if r.completed else ink
-        draw.text((text_x, y + 14), title, font=task_title_font, fill=title_fill)
-
-        if r.right:
-            meta = f"DUE: {r.right}"
-            draw.text((text_x, y + 38), meta.upper(), font=task_meta_font, fill=muted)
-
-        y += box_h + 10
+    if mode == "agenda":
+        footer = "ROTATE: ITEM  CLICK: TOGGLE TASK  BACK: HOME"
+    else:
+        footer = "ROTATE: DATE  CLICK: OPEN AGENDA  BACK: HOME"
+    footer = truncate_text(draw, footer, footer_font, max(80, w - 24))
+    draw.text((12, h - 24), footer, font=footer_font, fill=muted)

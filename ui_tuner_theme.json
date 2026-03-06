@@ -73,7 +73,7 @@
   "weather_icon_variant": "thin",
   "weather_icon_alpha_threshold": 185,
   "refresh_debug": true,
-  "refresh_partial_screens": "settings,timer,home,menu",
+  "refresh_partial_screens": "settings,timer,memo,calendar,inventory,reminders,home,menu",
   "refresh_mode_menu": "fast",
   "refresh_partial_budget_enabled": false,
   "refresh_area_limit_home": 0.24,

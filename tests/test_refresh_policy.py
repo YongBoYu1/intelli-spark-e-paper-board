@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.core.state import AppState, DashboardModel, MemoItem, MenuItemId, Reminder, Screen
+from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen
 from app.render.refresh_policy import (
     RefreshPolicyRuntime,
     align_rect_for_partial,
@@ -98,6 +98,82 @@ class RefreshPolicyTests(unittest.TestCase):
 
         _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("menu.focus_move", reasons)
+
+    def test_memo_rotate_change_generates_memo_focus_reason(self) -> None:
+        model = DashboardModel()
+        model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=100.0, is_new=True),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=120.0, is_new=False),
+        ]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.MEMO
+        prev.ui.memo_index = 0
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.MEMO
+        curr.ui.memo_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("memo.focus_move", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.90)
+
+    def test_memo_expand_toggle_generates_memo_expand_reason(self) -> None:
+        model = DashboardModel()
+        model.memos = [MemoItem(mid="m1", text="A", author="Mom", timestamp=100.0, is_new=False)]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.MEMO
+        prev.ui.memo_expanded = False
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.MEMO
+        curr.ui.memo_expanded = True
+
+        _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("memo.expand_toggle", reasons)
+
+    def test_unified_list_focus_change_generates_list_focus_reason(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", right="", completed=False, category="shopping"),
+        ]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.REMINDERS
+        prev.ui.list_focused_index = 0
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.REMINDERS
+        curr.ui.list_focused_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("list.focus_move", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.85)
+
+    def test_unified_list_data_change_generates_list_data_reason(self) -> None:
+        model_prev = DashboardModel()
+        model_prev.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", right="", completed=False, category="shopping"),
+        ]
+        prev = AppState(model=model_prev)
+        prev.ui.screen = Screen.REMINDERS
+
+        model_curr = DashboardModel()
+        model_curr.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", right="", completed=True, category="shopping"),
+        ]
+        curr = AppState(model=model_curr)
+        curr.ui.screen = Screen.REMINDERS
+
+        _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("list.data_change", reasons)
 
     def test_home_focus_move_prefers_row_dirty_rect(self) -> None:
         prev = AppState(model=DashboardModel())
@@ -294,6 +370,21 @@ class RefreshPolicyTests(unittest.TestCase):
         # Reminders section is in the lower half; if this maps near top rows,
         # focus-row geometry is still using a fixed inventory span.
         self.assertGreater(y0, 220)
+
+    def test_calendar_data_change_generates_calendar_reason(self) -> None:
+        prev_model = DashboardModel()
+        prev_model.calendar = [CalendarEvent(eid="e1", title="Doctor", when="09:00", date_iso="2026-03-05")]
+        prev = AppState(model=prev_model)
+        prev.ui.screen = Screen.CALENDAR
+
+        curr_model = DashboardModel()
+        curr_model.calendar = [CalendarEvent(eid="e1", title="Dentist", when="09:00", date_iso="2026-03-05")]
+        curr = AppState(model=curr_model)
+        curr.ui.screen = Screen.CALENDAR
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("calendar.date_or_mode_or_data", reasons)
+        self.assertGreaterEqual(len(rects), 1)
 
 if __name__ == "__main__":
     unittest.main()

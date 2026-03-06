@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import datetime
 import unittest
 
 from app.core.reducer import Back, Click, LongPress, Rotate, RotateButton, Tick, reduce
 from app.core.settings_schema import SettingsItem, SETTINGS_ORDER
-from app.core.state import AppState, DashboardModel, MemoItem, MenuItemId, Screen, WeatherDay, WidgetMode
+from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen, WeatherDay, WidgetMode
 
 
 class TimerReducerTests(unittest.TestCase):
@@ -22,6 +23,93 @@ class TimerReducerTests(unittest.TestCase):
         self.assertEqual(self.state.ui.timer_seconds, 300)
         self.assertFalse(self.state.ui.timer_running)
         self.assertEqual(self.state.ui.timer_focused_index, 2)
+
+    def test_menu_memo_click_opens_memo_screen(self) -> None:
+        self.state.ui.screen = Screen.MENU
+        self.state.ui.menu_focused = MenuItemId.MEMO
+        self.state.ui.memo_expanded = True
+        self.state.model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=1, is_new=True),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=2, is_new=False),
+        ]
+
+        reduce(self.state, Click(), theme={})
+
+        self.assertEqual(self.state.ui.screen, Screen.MEMO)
+        self.assertEqual(self.state.ui.memo_index, 0)
+        self.assertFalse(self.state.ui.memo_expanded)
+
+    def test_menu_list_click_opens_unified_list_screen(self) -> None:
+        self.state.ui.screen = Screen.MENU
+        self.state.ui.menu_focused = MenuItemId.LIST
+        self.state.model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", category="shopping"),
+        ]
+
+        reduce(self.state, Click(), theme={})
+
+        self.assertEqual(self.state.ui.screen, Screen.REMINDERS)
+        self.assertEqual(self.state.ui.list_focused_index, 1)
+
+    def test_rotate_on_unified_list_moves_focus(self) -> None:
+        self.state.ui.screen = Screen.REMINDERS
+        self.state.model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", category="shopping"),
+            Reminder(rid="r2", title="Pay Rent", category="general"),
+        ]
+        self.state.ui.list_focused_index = 1
+
+        reduce(self.state, Rotate(+1), theme={})
+        self.assertEqual(self.state.ui.list_focused_index, 2)
+
+        reduce(self.state, Rotate(+1), theme={})
+        self.assertEqual(self.state.ui.list_focused_index, 2)
+
+    def test_click_on_unified_list_toggles_selected_item(self) -> None:
+        self.state.ui.screen = Screen.REMINDERS
+        self.state.model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge", completed=False),
+            Reminder(rid="r1", title="Buy Eggs", category="shopping", completed=False),
+        ]
+        # Focus reminder section first item (order: inventory then reminders).
+        self.state.ui.list_focused_index = 1
+
+        reduce(self.state, Click(), theme={})
+        self.assertTrue(self.state.model.reminders[1].completed)
+
+    def test_rotate_on_memo_cycles_index_and_collapses(self) -> None:
+        self.state.ui.screen = Screen.MEMO
+        self.state.ui.memo_index = 0
+        self.state.ui.memo_expanded = True
+        self.state.model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=1, is_new=True),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=2, is_new=False),
+        ]
+
+        reduce(self.state, Rotate(-1), theme={})
+        self.assertEqual(self.state.ui.memo_index, 1)
+        self.assertFalse(self.state.ui.memo_expanded)
+
+        reduce(self.state, Rotate(+1), theme={})
+        self.assertEqual(self.state.ui.memo_index, 0)
+
+    def test_click_on_memo_toggles_expand_and_clears_new_flag(self) -> None:
+        self.state.ui.screen = Screen.MEMO
+        self.state.ui.memo_index = 0
+        self.state.ui.memo_expanded = False
+        self.state.model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=1, is_new=True),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=2, is_new=False),
+        ]
+
+        reduce(self.state, Click(), theme={})
+        self.assertTrue(self.state.ui.memo_expanded)
+        self.assertFalse(self.state.model.memos[0].is_new)
+
+        reduce(self.state, Click(), theme={})
+        self.assertFalse(self.state.ui.memo_expanded)
 
     def test_timer_rotate_cycles_focus(self) -> None:
         self.state.ui.screen = Screen.TIMER
@@ -139,6 +227,59 @@ class TimerReducerTests(unittest.TestCase):
 
         reduce(self.state, Rotate(-1))
         self.assertEqual(self.state.ui.weather_day_index, 1)
+
+    def test_calendar_agenda_rotation_uses_selected_date_items_only(self) -> None:
+        today = datetime.date.today()
+        tomorrow = today + datetime.timedelta(days=1)
+        self.state.ui.screen = Screen.CALENDAR
+        self.state.ui.calendar_mode = "agenda"
+        self.state.ui.calendar_offset_days = 1
+        self.state.ui.calendar_selected_index = 0
+        self.state.model.calendar = [
+            CalendarEvent(eid="e0", title="Today event", when="09:00", date_iso=today.isoformat()),
+        ]
+        self.state.model.reminders = [
+            Reminder(rid="r0", title="Today task", right=today.isoformat(), completed=False, category="general"),
+        ]
+
+        reduce(self.state, Rotate(+1), theme={})
+
+        # Offset=+1 has no items; selection must stay clamped at 0.
+        self.assertEqual(self.state.ui.calendar_selected_index, 0)
+
+    def test_calendar_agenda_click_toggles_task_for_selected_date(self) -> None:
+        today = datetime.date.today()
+        tomorrow = today + datetime.timedelta(days=1)
+        self.state.ui.screen = Screen.CALENDAR
+        self.state.ui.calendar_mode = "agenda"
+        self.state.ui.calendar_offset_days = 1
+        self.state.ui.calendar_selected_index = 0
+        self.state.model.calendar = []
+        self.state.model.reminders = [
+            Reminder(rid="r0", title="Today task", right=today.isoformat(), completed=False, category="general"),
+            Reminder(rid="r1", title="Tomorrow task", right=tomorrow.isoformat(), completed=False, category="general"),
+        ]
+
+        reduce(self.state, Click(), theme={})
+
+        self.assertFalse(self.state.model.reminders[0].completed)
+        self.assertTrue(self.state.model.reminders[1].completed)
+
+    def test_calendar_agenda_click_without_reminder_returns_date_mode(self) -> None:
+        today = datetime.date.today()
+        self.state.ui.screen = Screen.CALENDAR
+        self.state.ui.calendar_mode = "agenda"
+        self.state.ui.calendar_offset_days = 0
+        self.state.ui.calendar_selected_index = 0
+        self.state.model.calendar = [
+            CalendarEvent(eid="e0", title="Event only", when="10:00", date_iso=today.isoformat()),
+        ]
+        self.state.model.reminders = []
+
+        reduce(self.state, Click(), theme={})
+
+        self.assertEqual(self.state.ui.calendar_mode, "date")
+        self.assertEqual(self.state.ui.calendar_selected_index, 0)
 
     def test_tick_pauses_home_memo_rotation_while_voice_active(self) -> None:
         self.state.ui.screen = Screen.HOME
