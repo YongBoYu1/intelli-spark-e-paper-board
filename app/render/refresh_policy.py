@@ -5,6 +5,7 @@ from typing import Iterable
 
 from app.core.settings_schema import SETTINGS_GROUPS, SETTINGS_ORDER
 from app.core.state import AppState, Screen
+from app.ui.menu import home_menu_overlay_rect
 
 Rect = tuple[int, int, int, int]
 
@@ -738,19 +739,7 @@ def _settings_footer_rect(width: int, height: int, *, rotation_deg: int = 0) -> 
 
 
 def _home_menu_overlay_region(width: int, height: int) -> Rect:
-    w = max(1, int(width))
-    h = max(1, int(height))
-    gap = 12
-    pill_h = 56
-    pill_w = 116
-    count = 5
-    total_w = (count * pill_w) + ((count - 1) * gap)
-    x0 = max(16, (w - total_w) // 2 - 14)
-    x1 = min(w - 16, x0 + total_w + 28)
-    cy = h // 2
-    y0 = max(80, cy - 46)
-    y1 = min(h - 80, y0 + 102)
-    return (x0, y0, x1, y1)
+    return home_menu_overlay_rect(width, height)
 
 
 def _home_visible_section_counts(reminders_digest: tuple, *, inv_max: int = 3, rem_max: int = 5) -> tuple[int, int]:

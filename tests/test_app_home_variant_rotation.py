@@ -7,6 +7,7 @@ from PIL import Image, ImageFont
 
 from app.core.state import AppState, DashboardModel
 from app.ui.app import render_app
+from app.ui.menu import home_menu_overlay_layout
 
 
 class _DummyFonts:
@@ -65,6 +66,16 @@ class AppHomeVariantRotationTests(unittest.TestCase):
 
         self.assertTrue(render_portrait.called)
         self.assertTrue(render_overlay.called)
+
+    def test_home_navigation_overlay_compacts_for_narrow_width(self) -> None:
+        layout = home_menu_overlay_layout(480, 800)
+        content_w = int(layout["pill_w"]) * 5 + int(layout["gap"]) * 4
+
+        self.assertTrue(bool(layout["compact"]))
+        self.assertLess(int(layout["pill_w"]), 116)
+        self.assertLessEqual(int(layout["x1"]), 480)
+        self.assertGreaterEqual(int(layout["x0"]), 0)
+        self.assertLessEqual(content_w, int(layout["x1"]) - int(layout["x0"]))
 
 
 if __name__ == "__main__":
