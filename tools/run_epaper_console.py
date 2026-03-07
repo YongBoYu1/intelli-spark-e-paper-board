@@ -427,19 +427,24 @@ def _load_model(repo_root: str) -> DashboardModel:
     )
 
 
-def _read_key_nonblocking() -> str:
+def _read_key_nonblocking(escape_sequence_timeout_s: float = 0.015) -> str:
     r, _, _ = select.select([sys.stdin], [], [], 0)
     if not r:
         return ""
     ch = sys.stdin.read(1)
     if ch != "\x1b":
         return ch
-    # Arrow keys: ESC [ A/B/C/D
-    if select.select([sys.stdin], [], [], 0)[0]:
+    # Arrow keys can arrive split over multiple reads on Pi/SSH terminals.
+    # Give the tail a tiny window so ESC-prefixed arrows are not mistaken for Back.
+    tail_ready, _, _ = select.select([sys.stdin], [], [], max(0.0, float(escape_sequence_timeout_s)))
+    if tail_ready:
         ch2 = sys.stdin.read(1)
-        if ch2 == "[" and select.select([sys.stdin], [], [], 0)[0]:
-            ch3 = sys.stdin.read(1)
-            return f"\x1b[{ch3}"
+        if ch2 in ("[", "O"):
+            tail_ready, _, _ = select.select([sys.stdin], [], [], max(0.0, float(escape_sequence_timeout_s)))
+            if tail_ready:
+                ch3 = sys.stdin.read(1)
+                if ch3 in "ABCD":
+                    return f"\x1b[{ch3}"
     return "\x1b"
 
 
