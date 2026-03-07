@@ -63,6 +63,32 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
 
         self.assertEqual(key, "\x1b")
 
+    def test_read_key_nonblocking_accepts_longer_csi_arrow_sequence(self) -> None:
+        stdin_mock = type("FakeStdin", (), {})()
+        reads = iter(["\x1b", "[", "1", ";", "5", "D"])
+
+        def fake_read(_n: int) -> str:
+            return next(reads)
+
+        select_results = iter([
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+            ([], [], []),
+        ])
+
+        with (
+            patch.object(rec.sys, "stdin", stdin_mock),
+            patch.object(stdin_mock, "read", side_effect=fake_read, create=True),
+            patch.object(rec.select, "select", side_effect=lambda *_args, **_kwargs: next(select_results)),
+        ):
+            key = rec._read_key_nonblocking()
+
+        self.assertEqual(key, "\x1b[D")
+
     def test_blit_partial_uses_end_coords_and_partial_buffer(self) -> None:
         epd = _FakeEpd()
         frame = Image.new("1", (800, 480), 255)
