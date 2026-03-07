@@ -7,10 +7,8 @@ from typing import Optional
 
 from app.core.calendar_utils import event_indices_for_date
 from app.core.kitchen_queue import (
-    KITCHEN_FOCUS_INVENTORY_HEADER,
     KITCHEN_FOCUS_INVENTORY_ITEM,
     KITCHEN_FOCUS_LEFT_PANEL,
-    KITCHEN_FOCUS_REMINDERS_HEADER,
     KITCHEN_FOCUS_REMINDERS_ITEM,
     kitchen_focus_count,
     kitchen_focus_target,
@@ -686,8 +684,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 _activate_menu_pick(state, state.ui.menu_focused, now, theme=theme, items_per_page=items_per_page, variant=variant)
                 return state
             if _is_kitchen_variant(variant):
-                # Landscape kitchen keeps section-header actions (open inventory/reminders),
-                # while portrait keeps direct list focus with click-hold behavior.
+                # Kitchen home only keeps actionable stops in the rotary queue:
+                # weather entry on the left plus visible list rows.
                 if variant == "kitchen":
                     target_kind, target_idx = kitchen_focus_target(state, int(state.ui.focused_index or 0), theme)
                     if target_kind == KITCHEN_FOCUS_LEFT_PANEL:
@@ -698,10 +696,6 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                         else:
                             state.ui.screen = Screen.WEATHER
                             state.ui.weather_day_index = 0
-                    elif target_kind == KITCHEN_FOCUS_INVENTORY_HEADER:
-                        state.ui.screen = Screen.INVENTORY
-                    elif target_kind == KITCHEN_FOCUS_REMINDERS_HEADER:
-                        state.ui.screen = Screen.REMINDERS
                     elif target_kind in (KITCHEN_FOCUS_INVENTORY_ITEM, KITCHEN_FOCUS_REMINDERS_ITEM):
                         if target_idx is not None:
                             _toggle_task_completed_by_index(state, target_idx)

@@ -356,6 +356,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     body_size = int(t.get("panel_font_body_size", 18))
     meta_size = int(t.get("panel_font_meta_size", 13))
     meta_spacing = int(t.get("panel_font_meta_spacing", 0))
+    focus_idx = int(state.ui.focused_index or 0)
 
     # Header
     pad = int(t["bp_inner_pad"])
@@ -411,12 +412,13 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     draw.text((left_x0, date_y), month_day, font=f_date, fill=date_muted)
 
     weather_top = max(4, time_y + int(t["bp_weather_top"]))
+    weather_right = weather_x1 - max(2, int(t.get("bp_weather_right_inset", 2)))
+    weather_bottom = weather_top
     if state.model.weather:
         w0 = state.model.weather[0]
         temp = f"{int(w0.hi)}°"
         tw, th = text_size(draw, temp, f_temp)
         icon_size = int(t["bp_weather_icon_size"])
-        weather_right = weather_x1 - max(2, int(t.get("bp_weather_right_inset", 2)))
         # Keep the first header row semantically aligned: big clock (left) vs big temp (right).
         temp_y = weather_top
         temp_x = weather_right - tw
@@ -436,6 +438,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
             thicken=bool(t.get("b_weather_icon_thicken", False)),
         )
         draw.text((temp_x, temp_y), temp, font=f_temp, fill=ink)
+        weather_bottom = max(weather_bottom, temp_y + th, icon_y + icon_size)
         desc = _weather_word(getattr(w0, "icon", "sun"))
         humidity = getattr(w0, "humidity", None)
         desc_spacing = int(t.get("bp_weather_desc_spacing", 1))
@@ -453,6 +456,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
             spacing=desc_spacing,
             fill=muted,
         )
+        weather_bottom = max(weather_bottom, desc_y + desc_h)
         if humidity is not None:
             try:
                 hum_label = str(t["bp_weather_humidity_prefix"]).upper()
@@ -472,9 +476,36 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
                     spacing=hum_spacing,
                     fill=muted,
                 )
+                weather_bottom = max(weather_bottom, hum_y + text_size(draw, "Ag", f_weather_humidity)[1])
     else:
-        draw.text((weather_x1 - 92, weather_top), "--°", font=f_temp, fill=ink)
-        draw_text_spaced(draw, "NO DATA", weather_x1 - 72, weather_top + 60, f_weather_desc, spacing=1, fill=muted)
+        temp_x = weather_x1 - 92
+        placeholder_y = weather_top + 60
+        draw.text((temp_x, weather_top), "--°", font=f_temp, fill=ink)
+        draw_text_spaced(draw, "NO DATA", weather_x1 - 72, placeholder_y, f_weather_desc, spacing=1, fill=muted)
+        weather_bottom = max(
+            weather_bottom,
+            _bbox_at(draw, "--°", f_temp, temp_x, weather_top)[3],
+            placeholder_y + text_size(draw, "Ag", f_weather_desc)[1],
+        )
+
+    if (not state.ui.idle) and focus_idx == 0:
+        focus_pad_x = int(t["bp_focus_pad_x"])
+        focus_pad_y = int(t["bp_focus_pad_y"])
+        focus_radius = int(t["bp_focus_radius"])
+        focus_w = max(1, int(t["bp_focus_w"]))
+        fx0 = weather_x0 - focus_pad_x
+        fx1 = weather_right + focus_pad_x
+        fy0 = max(header_y0 + pad, weather_top - focus_pad_y)
+        fy1 = min(header_y1 - pad, weather_bottom + focus_pad_y)
+        if fy1 > fy0 and fx1 > fx0:
+            rounded_rect(
+                draw,
+                (fx0, fy0, fx1, fy1),
+                radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                outline=ink,
+                width=focus_w,
+                fill=None,
+            )
 
     # Memo section
     mx0, mx1 = x0 + pad, x1 - pad
@@ -634,7 +665,6 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     shop_min_h = max(72, int(t.get("bp_shop_min_h", 96)))
     inv_zone_bottom = min(ly1 - shop_min_h, ly0 + max(96, int(list_h * float(t["bp_list_split_ratio"]))))
 
-    focus_idx = int(state.ui.focused_index or 0)
     focus_rid = _kitchen_focus_rid(state, focus_idx, t)
     rendered_focus_rids: list[str] = []
     fridge, shop = _group_tasks(state)
@@ -735,8 +765,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         if inv_row_y + inv_row_h > inv_zone_bottom:
             break
         is_focus = (not state.ui.idle) and (focus_rid == item.rid)
-        if not item.completed:
-            rendered_focus_rids.append(item.rid)
+        rendered_focus_rids.append(item.rid)
         is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
         row_focus_w = focus_w + 1 if is_hold_focus else focus_w
 
@@ -868,8 +897,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         if shop_row_y + shop_row_h > ly1:
             break
         is_focus = (not state.ui.idle) and (focus_rid == item.rid)
-        if not item.completed:
-            rendered_focus_rids.append(item.rid)
+        rendered_focus_rids.append(item.rid)
         is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
         row_focus_w = focus_w + 1 if is_hold_focus else focus_w
 

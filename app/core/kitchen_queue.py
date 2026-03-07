@@ -64,30 +64,27 @@ def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> 
             idx = rid_to_idx.get(rid)
             if idx is None:
                 continue
-            if state.model.reminders[idx].completed:
-                continue
             cached_idxs.append(idx)
-        # If cache became partial (e.g., focused item just toggled to completed),
-        # rebuild from model to avoid a temporary shortened focus queue.
         if cached_idxs and len(cached_idxs) == len(cached_rids):
             return cached_idxs
 
     inv_max_rows = _max_rows(theme, "b_inventory_max_rows", _inventory_default_rows(state, theme))
     shop_max_rows = _max_rows(theme, "b_shopping_max_rows", 5)
 
-    fridge: list[int] = []
-    shop: list[int] = []
+    fridge_open: list[int] = []
+    fridge_done: list[int] = []
+    shop_open: list[int] = []
+    shop_done: list[int] = []
 
     for i, r in enumerate(state.model.reminders):
-        if r.completed:
-            continue
         if (r.category or "") == "fridge":
-            if len(fridge) < inv_max_rows:
-                fridge.append(i)
+            target = fridge_done if r.completed else fridge_open
         else:
-            if len(shop) < shop_max_rows:
-                shop.append(i)
+            target = shop_done if r.completed else shop_open
+        target.append(i)
 
+    fridge = (fridge_open + fridge_done)[:inv_max_rows]
+    shop = (shop_open + shop_done)[:shop_max_rows]
     return fridge + shop
 
 
@@ -106,8 +103,8 @@ def kitchen_visible_section_indices(state: AppState, theme: dict | None = None) 
 
 def kitchen_focus_count(state: AppState, theme: dict | None = None) -> int:
     fridge, reminders = kitchen_visible_section_indices(state, theme)
-    # [LEFT_PANEL, INVENTORY_HEADER, INVENTORY_ITEMS..., REMINDERS_HEADER, REMINDERS_ITEMS...]
-    return 3 + len(fridge) + len(reminders)
+    # [LEFT_PANEL, INVENTORY_ITEMS..., REMINDERS_ITEMS...]
+    return 1 + len(fridge) + len(reminders)
 
 
 def kitchen_focus_target(
@@ -122,17 +119,9 @@ def kitchen_focus_target(
     fridge, reminders = kitchen_visible_section_indices(state, theme)
     pos = idx - 1
 
-    if pos == 0:
-        return (KITCHEN_FOCUS_INVENTORY_HEADER, None)
-    pos -= 1
-
     if pos < len(fridge):
         return (KITCHEN_FOCUS_INVENTORY_ITEM, fridge[pos])
     pos -= len(fridge)
-
-    if pos == 0:
-        return (KITCHEN_FOCUS_REMINDERS_HEADER, None)
-    pos -= 1
 
     if pos < len(reminders):
         return (KITCHEN_FOCUS_REMINDERS_ITEM, reminders[pos])

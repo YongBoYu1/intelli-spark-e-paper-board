@@ -440,8 +440,6 @@ def _home_portrait_focus_queue_rids(
     fridge_rows, shop_rows = _home_portrait_rendered_sections(reminders_digest, inv_max=inv_max, shop_max=shop_max)
     queue: list[str] = []
     for item in fridge_rows + shop_rows:
-        if bool(item[1]):
-            continue
         queue.append(str(item[0]))
     return queue
 
@@ -760,11 +758,8 @@ def _home_visible_section_counts(reminders_digest: tuple, *, inv_max: int = 3, r
     rem_count = 0
     for item in reminders_digest or ():
         try:
-            completed = bool(item[1])
             category = str(item[4] or "")
         except Exception:
-            continue
-        if completed:
             continue
         if category == "fridge":
             if inv_count < inv_max:
@@ -815,33 +810,22 @@ def _home_focus_row_rect(width: int, height: int, focus_index: int, reminders_di
 
     inv_start_y = oy0 + max(8, right_pad - 6) + 34
     inv_row_h = 40
-    inv_count, _ = _home_visible_section_counts(reminders_digest, inv_max=3, rem_max=5)
-    inv_header_cy = oy0 + max(8, right_pad - 6) + (inv_row_h // 2)
+    inv_count, rem_count = _home_visible_section_counts(reminders_digest, inv_max=3, rem_max=5)
     shop_start_y = oy0 + int((oy1 - oy0) * 0.62)
     shop_row_h = 40
-    shop_header_cy = shop_start_y - (shop_row_h // 2)
     row_h = 56
 
     pos = int(focus_index) - 1
     if pos < 0:
         return None
 
-    if pos == 0:
-        cy = inv_header_cy
-    else:
-        pos -= 1
-
-    if pos >= 0 and pos < inv_count:
+    if pos < inv_count:
         cy = inv_start_y + (pos * inv_row_h) + (inv_row_h // 2)
-    elif pos >= inv_count:
-        pos -= inv_count
-        if pos == 0:
-            cy = shop_header_cy
-        else:
-            pos -= 1
-            cy = shop_start_y + (max(0, pos) * shop_row_h) + (shop_row_h // 2)
     else:
-        cy = inv_header_cy
+        pos -= inv_count
+        if pos < 0 or pos >= rem_count:
+            return None
+        cy = shop_start_y + (pos * shop_row_h) + (shop_row_h // 2)
 
     y0 = max(oy0, cy - (row_h // 2))
     y1 = min(oy1, y0 + row_h)
@@ -1019,7 +1003,17 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
                 rects.append(prev_row)
             if curr_row is not None and curr_row != prev_row:
                 rects.append(curr_row)
-            if prev_row is not None or curr_row is not None:
+            if int(prev.focused_index or 0) == 0 or int(curr.focused_index or 0) == 0:
+                left_focus = home_regions["header_weather"]
+                if left_focus is not None:
+                    rects.append(left_focus)
+                if prev_row is None and curr_row is None:
+                    reasons.append("home.focus_left_panel_only")
+                elif curr_row is None:
+                    reasons.append("home.focus_to_left_panel")
+                else:
+                    reasons.append("home.focus_from_left_panel")
+            elif prev_row is not None or curr_row is not None:
                 reasons.append("home.focus_move_row")
     elif prev.focused_index != curr.focused_index:
         prev_row = _home_focus_row_rect(width, height, prev.focused_index, prev.reminders_digest)
@@ -1031,17 +1025,15 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             reasons.append("home.focus_move_row")
         elif prev_row is not None and curr_row is None:
             rects.append(prev_row)
-            rects.append(regions["left_focus_indicator"])
+            rects.append(regions["left_weather"])
             reasons.append("home.focus_to_left_panel")
         elif prev_row is None and curr_row is not None:
             rects.append(curr_row)
-            rects.append(regions["left_focus_indicator"])
+            rects.append(regions["left_weather"])
             reasons.append("home.focus_from_left_panel")
         else:
-            rects.append(regions["left_focus_indicator"])
+            rects.append(regions["left_weather"])
             reasons.append("home.focus_left_panel_only")
-        # Do not force a left-panel redraw on focus entering/leaving index 0.
-        # In current kitchen renderer there is no persistent left focus ring by default.
     if prev.reminders_digest != curr.reminders_digest:
         prev_rids = tuple(str(r[0]) for r in prev.reminders_digest)
         curr_rids = tuple(str(r[0]) for r in curr.reminders_digest)

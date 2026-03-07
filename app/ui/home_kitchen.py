@@ -909,8 +909,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         if y + inv_row_h > mid_y - 8:
             break
         is_focus = (not state.ui.idle) and (focus_rid == item.rid)
-        if not item.completed:
-            rendered_focus_rids.append(item.rid)
+        rendered_focus_rids.append(item.rid)
         is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
         row_focus_w = focus_w + 1 if is_hold_focus else focus_w
 
@@ -1165,8 +1164,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         if y + shop_row_h > shop_bottom:
             break
         is_focus = (not state.ui.idle) and (focus_rid == item.rid)
-        if not item.completed:
-            rendered_focus_rids.append(item.rid)
+        rendered_focus_rids.append(item.rid)
         is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
         row_focus_w = focus_w + 1 if is_hold_focus else focus_w
         
