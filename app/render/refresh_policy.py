@@ -585,6 +585,13 @@ def _home_portrait_regions(width: int, height: int, *, rotation_deg: int) -> dic
         metrics["src_h"],
         rotation_deg,
     )
+    menu_overlay_source = home_menu_overlay_rect(metrics["src_w"], metrics["src_h"])
+    menu_overlay = _transform_source_rect(
+        menu_overlay_source,
+        metrics["src_w"],
+        metrics["src_h"],
+        rotation_deg,
+    )
     voice_source = _voice_overlay_region(metrics["src_w"], metrics["src_h"], rotation_deg=0)
     voice_overlay = _transform_source_rect(voice_source, metrics["src_w"], metrics["src_h"], rotation_deg)
     return {
@@ -592,6 +599,7 @@ def _home_portrait_regions(width: int, height: int, *, rotation_deg: int) -> dic
         "header_weather": header_weather,
         "memo": memo,
         "list_all": list_all,
+        "menu_overlay": menu_overlay,
         "voice_overlay": voice_overlay,
     }
 
@@ -960,10 +968,14 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
     portrait_home = str(curr.kitchen_visible_layout or prev.kitchen_visible_layout or "").strip().lower() == "portrait"
     home_regions = _home_portrait_regions(width, height, rotation_deg=curr.rotation_deg) if portrait_home else regions
     if prev.menu_overlay_active != curr.menu_overlay_active:
-        rects.append(regions["home_menu_overlay"])
+        rect = home_regions["menu_overlay"] if portrait_home else regions["home_menu_overlay"]
+        if rect is not None:
+            rects.append(rect)
         reasons.append("home.menu_overlay_toggle")
     if curr.menu_overlay_active and prev.menu_focused != curr.menu_focused:
-        rects.append(regions["home_menu_overlay"])
+        rect = home_regions["menu_overlay"] if portrait_home else regions["home_menu_overlay"]
+        if rect is not None:
+            rects.append(rect)
         reasons.append("home.menu_overlay_focus")
 
     if portrait_home:
