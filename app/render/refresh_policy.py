@@ -446,7 +446,7 @@ def _home_portrait_focus_queue_rids(
 
 
 def _home_portrait_effective_focus_rid(snapshot: UiSnapshot) -> str:
-    if int(snapshot.focused_index or 0) <= 0:
+    if int(snapshot.focused_index or 0) <= 1:
         return ""
 
     hold_rid = str(snapshot.kitchen_focus_rid_override or "").strip()
@@ -456,7 +456,7 @@ def _home_portrait_effective_focus_rid(snapshot: UiSnapshot) -> str:
         return hold_rid
 
     queue = _home_portrait_focus_queue_rids(snapshot.reminders_digest)
-    pos = int(snapshot.focused_index or 0) - 1
+    pos = int(snapshot.focused_index or 0) - 2
     if 0 <= pos < len(queue):
         return queue[pos]
     return ""
@@ -790,7 +790,7 @@ def _list_focus_section(list_focused_index: int, reminders_digest: tuple) -> str
 
 def _home_focus_row_rect(width: int, height: int, focus_index: int, reminders_digest: tuple) -> Rect | None:
     # Approximate row geometry from app/ui/home_kitchen.py theme defaults.
-    if int(focus_index) <= 0:
+    if int(focus_index) <= 1:
         return None
 
     w = max(1, int(width))
@@ -812,7 +812,7 @@ def _home_focus_row_rect(width: int, height: int, focus_index: int, reminders_di
     shop_row_h = 40
     row_h = 56
 
-    pos = int(focus_index) - 1
+    pos = int(focus_index) - 2
     if pos < 0:
         return None
 
@@ -831,6 +831,101 @@ def _home_focus_row_rect(width: int, height: int, focus_index: int, reminders_di
     if x1 <= x0 or y1 <= y0:
         return None
     return (x0, y0, x1, y1)
+
+
+def _home_focus_kind(focus_index: int) -> str:
+    idx = int(focus_index or 0)
+    if idx <= 0:
+        return "clock"
+    if idx == 1:
+        return "weather"
+    return "row"
+
+
+def _home_focus_transition_rect(
+    prev_rect: Rect | None,
+    curr_rect: Rect | None,
+    *,
+    width: int,
+    height: int,
+) -> Rect | None:
+    visible = [rect for rect in (prev_rect, curr_rect) if rect is not None]
+    if not visible:
+        return None
+    return merge_rects(visible, width, height)
+
+
+def _home_landscape_header_focus_rect(width: int, height: int, *, kind: str) -> Rect | None:
+    w = max(1, int(width))
+    h = max(1, int(height))
+    margin = 18
+    ox0, oy0, ox1, oy1 = margin, margin, max(margin + 1, w - margin), max(margin + 1, h - margin)
+    split_x = ox0 + int((ox1 - ox0) * 0.60)
+    left_pad = 24
+    top_y = oy0 + left_pad
+    lx0 = ox0 + left_pad
+    lx1 = split_x - left_pad
+    weather_col_w = 142
+    weather_right = lx1 - 2
+    weather_left = weather_right - weather_col_w
+    focus_pad_x = 6
+    focus_pad_y = 4
+
+    if kind == "clock":
+        x0 = lx0 - focus_pad_x
+        x1 = max(x0 + 16, weather_left - 7)
+        y0 = max(oy0 + 2, top_y - 28)
+        y1 = min(oy1, top_y + 142)
+        return _clip_rect((x0, y0, x1, y1), w, h)
+
+    if kind == "weather":
+        x0 = weather_left - focus_pad_x
+        x1 = weather_right + focus_pad_x
+        y0 = max(oy0 + 2, top_y - 6)
+        y1 = min(oy1, top_y + 150)
+        return _clip_rect((x0, y0, x1, y1), w, h)
+
+    return None
+
+
+def _home_landscape_focus_rect(
+    regions: dict[str, Rect],
+    width: int,
+    height: int,
+    *,
+    focus_index: int,
+    reminders_digest: tuple,
+) -> Rect | None:
+    kind = _home_focus_kind(focus_index)
+    if kind == "clock":
+        return _home_landscape_header_focus_rect(width, height, kind="clock")
+    if kind == "weather":
+        return _home_landscape_header_focus_rect(width, height, kind="weather")
+    return _home_focus_row_rect(width, height, focus_index, reminders_digest)
+
+
+def _home_portrait_focus_rect(
+    home_regions: dict[str, Rect | None],
+    width: int,
+    height: int,
+    *,
+    rotation_deg: int,
+    focus_index: int,
+    reminders_digest: tuple,
+    focus_rid: str,
+) -> Rect | None:
+    kind = _home_focus_kind(focus_index)
+    if kind == "clock":
+        return home_regions["header_clock"]
+    if kind == "weather":
+        return home_regions["header_weather"]
+    return _home_portrait_focus_row_rect(
+        width,
+        height,
+        rotation_deg=rotation_deg,
+        reminders_digest=reminders_digest,
+        focus_rid=focus_rid,
+    )
 
 
 def infer_dirty_rects(prev: UiSnapshot, curr: UiSnapshot, width: int, height: int) -> list[Rect]:
@@ -986,55 +1081,84 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             or prev.kitchen_focus_rid_override != curr.kitchen_focus_rid_override
             or prev_focus_rid != curr_focus_rid
         ):
-            prev_row = _home_portrait_focus_row_rect(
+            prev_kind = _home_focus_kind(prev.focused_index)
+            curr_kind = _home_focus_kind(curr.focused_index)
+            prev_focus_rect = _home_portrait_focus_rect(
+                home_regions,
                 width,
                 height,
                 rotation_deg=prev.rotation_deg,
+                focus_index=prev.focused_index,
                 reminders_digest=prev.reminders_digest,
                 focus_rid=prev_focus_rid,
             )
-            curr_row = _home_portrait_focus_row_rect(
+            curr_focus_rect = _home_portrait_focus_rect(
+                home_regions,
                 width,
                 height,
                 rotation_deg=curr.rotation_deg,
+                focus_index=curr.focused_index,
                 reminders_digest=curr.reminders_digest,
                 focus_rid=curr_focus_rid,
             )
-            if prev_row is not None:
-                rects.append(prev_row)
-            if curr_row is not None and curr_row != prev_row:
-                rects.append(curr_row)
-            if int(prev.focused_index or 0) == 0 or int(curr.focused_index or 0) == 0:
-                left_focus = home_regions["header_weather"]
-                if left_focus is not None:
-                    rects.append(left_focus)
-                if prev_row is None and curr_row is None:
-                    reasons.append("home.focus_left_panel_only")
-                elif curr_row is None:
+            left_targets = {"clock", "weather"}
+            if prev_kind == "row" and curr_kind == "row":
+                merged = _home_focus_transition_rect(prev_focus_rect, curr_focus_rect, width=width, height=height)
+                if merged is not None:
+                    rects.append(merged)
+                elif home_regions["list_all"] is not None:
+                    rects.append(home_regions["list_all"])
+                reasons.append("home.focus_move_row")
+            elif prev_kind in left_targets and curr_kind in left_targets:
+                merged = _home_focus_transition_rect(prev_focus_rect, curr_focus_rect, width=width, height=height)
+                if merged is not None:
+                    rects.append(merged)
+                reasons.append("home.focus_move_left_target")
+            else:
+                if prev_focus_rect is not None:
+                    rects.append(prev_focus_rect)
+                if curr_focus_rect is not None and curr_focus_rect != prev_focus_rect:
+                    rects.append(curr_focus_rect)
+                if curr_kind in left_targets:
                     reasons.append("home.focus_to_left_panel")
                 else:
                     reasons.append("home.focus_from_left_panel")
-            elif prev_row is not None or curr_row is not None:
-                reasons.append("home.focus_move_row")
     elif prev.focused_index != curr.focused_index:
-        prev_row = _home_focus_row_rect(width, height, prev.focused_index, prev.reminders_digest)
-        curr_row = _home_focus_row_rect(width, height, curr.focused_index, curr.reminders_digest)
-        if prev_row is not None and curr_row is not None:
-            rects.append(prev_row)
-            if curr_row != prev_row:
-                rects.append(curr_row)
+        prev_kind = _home_focus_kind(prev.focused_index)
+        curr_kind = _home_focus_kind(curr.focused_index)
+        prev_focus_rect = _home_landscape_focus_rect(
+            regions,
+            width,
+            height,
+            focus_index=prev.focused_index,
+            reminders_digest=prev.reminders_digest,
+        )
+        curr_focus_rect = _home_landscape_focus_rect(
+            regions,
+            width,
+            height,
+            focus_index=curr.focused_index,
+            reminders_digest=curr.reminders_digest,
+        )
+        left_targets = {"clock", "weather"}
+        if prev_kind == "row" and curr_kind == "row":
+            merged = _home_focus_transition_rect(prev_focus_rect, curr_focus_rect, width=width, height=height)
+            rects.append(merged if merged is not None else regions["right_list"])
             reasons.append("home.focus_move_row")
-        elif prev_row is not None and curr_row is None:
-            rects.append(prev_row)
-            rects.append(regions["left_weather"])
-            reasons.append("home.focus_to_left_panel")
-        elif prev_row is None and curr_row is not None:
-            rects.append(curr_row)
-            rects.append(regions["left_weather"])
-            reasons.append("home.focus_from_left_panel")
+        elif prev_kind in left_targets and curr_kind in left_targets:
+            merged = _home_focus_transition_rect(prev_focus_rect, curr_focus_rect, width=width, height=height)
+            if merged is not None:
+                rects.append(merged)
+            reasons.append("home.focus_move_left_target")
         else:
-            rects.append(regions["left_weather"])
-            reasons.append("home.focus_left_panel_only")
+            if prev_focus_rect is not None:
+                rects.append(prev_focus_rect)
+            if curr_focus_rect is not None and curr_focus_rect != prev_focus_rect:
+                rects.append(curr_focus_rect)
+            if curr_kind in left_targets:
+                reasons.append("home.focus_to_left_panel")
+            else:
+                reasons.append("home.focus_from_left_panel")
     if prev.reminders_digest != curr.reminders_digest:
         prev_rids = tuple(str(r[0]) for r in prev.reminders_digest)
         curr_rids = tuple(str(r[0]) for r in curr.reminders_digest)

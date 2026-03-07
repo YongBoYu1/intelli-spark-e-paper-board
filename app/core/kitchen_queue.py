@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from app.core.state import AppState
 
-KITCHEN_FOCUS_LEFT_PANEL = "left_panel"
+KITCHEN_FOCUS_CLOCK = "clock"
+KITCHEN_FOCUS_WEATHER = "weather"
 KITCHEN_FOCUS_INVENTORY_HEADER = "inventory_header"
 KITCHEN_FOCUS_INVENTORY_ITEM = "inventory_item"
 KITCHEN_FOCUS_REMINDERS_HEADER = "reminders_header"
@@ -103,8 +104,8 @@ def kitchen_visible_section_indices(state: AppState, theme: dict | None = None) 
 
 def kitchen_focus_count(state: AppState, theme: dict | None = None) -> int:
     fridge, reminders = kitchen_visible_section_indices(state, theme)
-    # [LEFT_PANEL, INVENTORY_ITEMS..., REMINDERS_ITEMS...]
-    return 1 + len(fridge) + len(reminders)
+    # [CLOCK, WEATHER, INVENTORY_ITEMS..., REMINDERS_ITEMS...]
+    return 2 + len(fridge) + len(reminders)
 
 
 def kitchen_focus_target(
@@ -114,10 +115,12 @@ def kitchen_focus_target(
 ) -> tuple[str, int | None]:
     idx = int(focused_index or 0)
     if idx <= 0:
-        return (KITCHEN_FOCUS_LEFT_PANEL, None)
+        return (KITCHEN_FOCUS_CLOCK, None)
+    if idx == 1:
+        return (KITCHEN_FOCUS_WEATHER, None)
 
     fridge, reminders = kitchen_visible_section_indices(state, theme)
-    pos = idx - 1
+    pos = idx - 2
 
     if pos < len(fridge):
         return (KITCHEN_FOCUS_INVENTORY_ITEM, fridge[pos])

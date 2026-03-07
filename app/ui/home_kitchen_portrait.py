@@ -284,7 +284,7 @@ def _compact_badge(text: str) -> str:
 
 
 def _kitchen_focus_rid(state: AppState, focused_index: int, theme: dict | None = None) -> str:
-    if focused_index <= 0:
+    if focused_index <= 1:
         return ""
     hold_rid = str(getattr(state.ui, "kitchen_focus_rid_override", "") or "").strip()
     if hold_rid:
@@ -292,7 +292,7 @@ def _kitchen_focus_rid(state: AppState, focused_index: int, theme: dict | None =
             if str(r.rid or "") == hold_rid:
                 return hold_rid
     visible_idxs = kitchen_visible_task_indices(state, theme)
-    pos = focused_index - 1
+    pos = focused_index - 2
     if 0 <= pos < len(visible_idxs):
         return state.model.reminders[visible_idxs[pos]].rid
     return ""
@@ -410,6 +410,26 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     week_bbox = _bbox_at(draw, weekday, f_weekday, left_x0, week_y)
     date_y = int(week_bbox[3]) + int(t.get("bp_date_gap", 8))
     draw.text((left_x0, date_y), month_day, font=f_date, fill=date_muted)
+    date_h = text_size(draw, "Ag", f_date)[1]
+
+    if (not state.ui.idle) and focus_idx == 0:
+        focus_pad_x = int(t["bp_focus_pad_x"])
+        focus_pad_y = int(t["bp_focus_pad_y"])
+        focus_radius = int(t["bp_focus_radius"])
+        focus_w = max(1, int(t["bp_focus_w"]))
+        fx0 = left_x0 - focus_pad_x
+        fx1 = left_x1 + focus_pad_x
+        fy0 = max(header_y0 + pad, time_y - focus_pad_y)
+        fy1 = min(header_y1 - pad, date_y + date_h + focus_pad_y)
+        if fy1 > fy0 and fx1 > fx0:
+            rounded_rect(
+                draw,
+                (fx0, fy0, fx1, fy1),
+                radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                outline=ink,
+                width=focus_w,
+                fill=None,
+            )
 
     weather_top = max(4, time_y + int(t["bp_weather_top"]))
     weather_right = weather_x1 - max(2, int(t.get("bp_weather_right_inset", 2)))
@@ -488,7 +508,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
             placeholder_y + text_size(draw, "Ag", f_weather_desc)[1],
         )
 
-    if (not state.ui.idle) and focus_idx == 0:
+    if (not state.ui.idle) and focus_idx == 1:
         focus_pad_x = int(t["bp_focus_pad_x"])
         focus_pad_y = int(t["bp_focus_pad_y"])
         focus_radius = int(t["bp_focus_radius"])

@@ -404,9 +404,9 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     split_x = ox0 + int((ox1 - ox0) * float(t["b_split_ratio"]))
     draw.line((split_x, oy0, split_x, oy1), fill=ink, width=int(t["b_divider_w"]))
 
-    # Focus on left panel (index 0)
+    # Optional whole-left-column ring for A/B compare.
     focus_idx = int(state.ui.focused_index or 0)
-    if bool(t.get("b_show_focus_ring")) and not state.ui.idle and focus_idx == 0:
+    if bool(t.get("b_show_focus_ring")) and not state.ui.idle and focus_idx in (0, 1):
         rounded_rect(
             draw,
             (ox0 + 2, oy0 + 2, split_x - 2, oy1 - 2),
@@ -521,8 +521,9 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     dy = wy + wh + int(t["b_weekday_date_gap"])
     draw.text((lx0, dy), month_day, font=f_date, fill=date_muted)
     _, dh = text_size(draw, month_day, f_date)
+    clock_bottom = dy + dh
 
-    weather_bottom = dy + dh
+    weather_bottom = clock_bottom
     location = str(getattr(state.model, "location", "") or "").strip()
     if location:
         city_text = location.upper() if bool(t.get("b_weather_city_upper", True)) else location
@@ -622,6 +623,25 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         weather_bottom = max(weather_bottom, desc_y + dh2, humidity_bottom)
 
     if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 0:
+        focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
+        focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
+        focus_radius = int(t.get("b_right_focus_radius", 5))
+        focus_w = max(1, int(t.get("b_right_focus_w", 1)))
+        fx0 = lx0 - focus_pad_x
+        fx1 = max(fx0 + 16, weather_left - max(6, int(t["b_time_weather_gap"]) // 2))
+        fy0 = max(oy0 + 2, clock_y - focus_pad_y)
+        fy1 = clock_bottom + focus_pad_y
+        if fy1 > fy0 and fx1 > fx0:
+            rounded_rect(
+                draw,
+                (fx0, fy0, fx1, fy1),
+                radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                outline=ink,
+                width=focus_w,
+                fill=None,
+            )
+
+    if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 1:
         focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
         focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
         focus_right_trim = int(t.get("b_right_focus_right_trim", 2))

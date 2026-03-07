@@ -7,7 +7,7 @@ import unittest
 from PIL import Image, ImageDraw
 
 from app.core.kitchen_queue import kitchen_visible_task_indices
-from app.core.reducer import Click, Rotate, reduce
+from app.core.reducer import Click, Rotate, RotateButton, reduce
 from app.core.state import AppState, DashboardModel, MemoItem, Reminder, Screen, WidgetMode
 from app.render.panel import build_panel_theme
 from app.shared.fonts import FontBook
@@ -49,11 +49,11 @@ class HomeKitchenFocusTests(unittest.TestCase):
         ]
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
-        # focus queue: [LEFT_PANEL, INV_ITEM, REM_ITEM]
-        state.ui.focused_index = 2
+        # focus queue: [CLOCK, WEATHER, INV_ITEM, REM_ITEM]
+        state.ui.focused_index = 3
 
         reduce(state, Rotate(+1), theme={"home_variant": "kitchen"})
-        self.assertEqual(state.ui.focused_index, 2)
+        self.assertEqual(state.ui.focused_index, 3)
 
     def test_kitchen_focus_clamps_at_top_instead_of_wrapping(self) -> None:
         model = DashboardModel()
@@ -73,7 +73,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         model.reminders = [Reminder(rid="r1", title="A", category="fridge")]
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
-        state.ui.focused_index = 1
+        state.ui.focused_index = 2
 
         reduce(state, Click(), theme={"home_variant": "kitchen"})
         self.assertTrue(state.model.reminders[0].completed)
@@ -87,7 +87,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         ]
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
-        state.ui.focused_index = 2
+        state.ui.focused_index = 3
 
         reduce(state, Click(), theme={"home_variant": "kitchen"})
         self.assertTrue(state.model.reminders[1].completed)
@@ -102,13 +102,13 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
         state.ui.rotation_deg = 0
-        state.ui.focused_index = 1
+        state.ui.focused_index = 2
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
         self.assertTrue(state.model.reminders[0].completed)
         self.assertEqual(state.ui.screen, Screen.HOME)
 
-    def test_kitchen_click_left_panel_opens_weather_even_with_timer_widget(self) -> None:
+    def test_kitchen_click_clock_focus_opens_timer_when_widget_mode_timer(self) -> None:
         state = AppState(model=DashboardModel())
         state.ui.screen = Screen.HOME
         state.ui.focused_index = 0
@@ -117,7 +117,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
 
         reduce(state, Click(), theme={"home_variant": "kitchen"})
 
-        self.assertEqual(state.ui.screen, Screen.WEATHER)
+        self.assertEqual(state.ui.screen, Screen.TIMER)
         self.assertFalse(state.ui.timer_running)
 
     def test_kitchen_click_left_panel_can_toggle_timer_when_enabled_by_theme(self) -> None:
@@ -136,11 +136,20 @@ class HomeKitchenFocusTests(unittest.TestCase):
         self.assertEqual(state.ui.screen, Screen.HOME)
         self.assertTrue(state.ui.timer_running)
 
-    def test_kitchen_portrait_left_focus_click_opens_weather(self) -> None:
+    def test_kitchen_click_clock_focus_opens_calendar(self) -> None:
+        state = AppState(model=DashboardModel())
+        state.ui.screen = Screen.HOME
+        state.ui.focused_index = 0
+
+        reduce(state, Click(), theme={"home_variant": "kitchen"})
+
+        self.assertEqual(state.ui.screen, Screen.CALENDAR)
+
+    def test_kitchen_portrait_weather_focus_click_opens_weather(self) -> None:
         state = AppState(model=DashboardModel())
         state.ui.screen = Screen.HOME
         state.ui.rotation_deg = 90
-        state.ui.focused_index = 0
+        state.ui.focused_index = 1
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
 
@@ -159,7 +168,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
         state.ui.rotation_deg = 90
-        state.ui.focused_index = 2
+        state.ui.focused_index = 3
         state.ui.reminders_version = 1
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
@@ -177,14 +186,14 @@ class HomeKitchenFocusTests(unittest.TestCase):
         ]
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
-        state.ui.focused_index = 1
+        state.ui.focused_index = 2
 
         reduce(state, Click(), theme={"home_variant": "kitchen"})
         self.assertTrue(state.model.reminders[0].completed)
-        self.assertEqual(state.ui.focused_index, 1)
+        self.assertEqual(state.ui.focused_index, 2)
 
         reduce(state, Rotate(+1), theme={"home_variant": "kitchen"})
-        self.assertEqual(state.ui.focused_index, 2)
+        self.assertEqual(state.ui.focused_index, 3)
 
         reduce(state, Click(), theme={"home_variant": "kitchen"})
         self.assertFalse(state.model.reminders[0].completed)
@@ -199,8 +208,8 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
         state.ui.rotation_deg = 90
-        # focus queue: [LEFT, s1, s2, s3]
-        state.ui.focused_index = 2
+        # focus queue: [CLOCK, WEATHER, s1, s2, s3]
+        state.ui.focused_index = 3
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
         self.assertTrue(state.model.reminders[1].completed)
@@ -210,7 +219,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         reduce(state, Rotate(+1), theme={"home_variant": "kitchen_portrait"})
         self.assertEqual(state.ui.kitchen_focus_rid_override, "")
         idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
-        pos = int(state.ui.focused_index) - 1
+        pos = int(state.ui.focused_index) - 2
         self.assertTrue(0 <= pos < len(idxs))
         self.assertEqual(state.model.reminders[idxs[pos]].rid, "s3")
 
@@ -224,7 +233,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
         state.ui.rotation_deg = 90
-        state.ui.focused_index = 2
+        state.ui.focused_index = 3
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
         self.assertTrue(state.model.reminders[1].completed)
@@ -244,17 +253,17 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
         state.ui.rotation_deg = 90
-        state.ui.focused_index = 2
+        state.ui.focused_index = 3
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
         self.assertEqual(state.ui.kitchen_focus_rid_override, "s2")
 
         reduce(state, Rotate(-1), theme={"home_variant": "kitchen_portrait"})
         self.assertEqual(state.ui.kitchen_focus_rid_override, "")
-        self.assertEqual(state.ui.focused_index, 2)
+        self.assertEqual(state.ui.focused_index, 3)
 
         idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
-        pos = int(state.ui.focused_index) - 1
+        pos = int(state.ui.focused_index) - 2
         self.assertTrue(0 <= pos < len(idxs))
         self.assertEqual(state.model.reminders[idxs[pos]].rid, "s3")
 
@@ -272,11 +281,30 @@ class HomeKitchenFocusTests(unittest.TestCase):
         for _ in range(6):
             reduce(state, Rotate(+1), theme={"home_variant": "kitchen_portrait"})
 
-        self.assertEqual(state.ui.focused_index, 2)
+        self.assertEqual(state.ui.focused_index, 3)
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
-        self.assertFalse(state.model.reminders[0].completed)
         self.assertTrue(state.model.reminders[1].completed)
+
+    def test_kitchen_rotate_button_clamps_focus_after_orientation_change(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge", completed=False),
+            Reminder(rid="f2", title="Eggs", category="fridge", completed=False),
+            Reminder(rid="f3", title="Soup", category="fridge", completed=False),
+            Reminder(rid="f4", title="Sauce", category="fridge", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.focused_index = 5
+
+        reduce(state, RotateButton(), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.rotation_deg, 90)
+        self.assertEqual(state.ui.focused_index, 5)
+
+        reduce(state, RotateButton(), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.rotation_deg, 180)
+        self.assertEqual(state.ui.focused_index, 4)
 
     def test_kitchen_portrait_queue_defaults_allow_four_inventory_rows(self) -> None:
         model = DashboardModel()

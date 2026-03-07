@@ -7,9 +7,10 @@ from typing import Optional
 
 from app.core.calendar_utils import event_indices_for_date
 from app.core.kitchen_queue import (
+    KITCHEN_FOCUS_CLOCK,
     KITCHEN_FOCUS_INVENTORY_ITEM,
-    KITCHEN_FOCUS_LEFT_PANEL,
     KITCHEN_FOCUS_REMINDERS_ITEM,
+    KITCHEN_FOCUS_WEATHER,
     kitchen_focus_count,
     kitchen_focus_target,
     kitchen_visible_task_indices,
@@ -118,7 +119,7 @@ def _find_reminder_index_by_rid(state: AppState, rid: str) -> int:
 
 
 def _focused_kitchen_task_index(state: AppState, theme: Optional[dict] = None) -> int:
-    if int(state.ui.focused_index or 0) <= 0:
+    if int(state.ui.focused_index or 0) <= 1:
         return -1
 
     hold_rid = str(getattr(state.ui, "kitchen_focus_rid_override", "") or "").strip()
@@ -128,7 +129,7 @@ def _focused_kitchen_task_index(state: AppState, theme: Optional[dict] = None) -
             return idx
 
     idxs = _kitchen_visible_task_indices(state, theme)
-    pos = int(state.ui.focused_index) - 1
+    pos = int(state.ui.focused_index) - 2
     if 0 <= pos < len(idxs):
         return int(idxs[pos])
     return -1
@@ -168,10 +169,10 @@ def _clamp_focus_home(state: AppState, items_per_page: int) -> None:
 def _clamp_focus_kitchen(state: AppState, theme: Optional[dict] = None) -> None:
     variant = _resolved_home_variant(theme or {}, rotation_deg=int(state.ui.rotation_deg or 0))
     if variant == "kitchen_portrait":
-        # Portrait queue: [LEFT_PANEL, VISIBLE_TASKS...]
-        n = 1 + len(_kitchen_visible_task_indices(state, theme))
+        # Portrait queue: [CLOCK, WEATHER, VISIBLE_TASKS...]
+        n = 2 + len(_kitchen_visible_task_indices(state, theme))
     else:
-        # Landscape queue: [LEFT_PANEL, INVENTORY_HEADER, INVENTORY_ITEMS..., REMINDERS_HEADER, REMINDERS_ITEMS...]
+        # Landscape queue: [CLOCK, WEATHER, INVENTORY_ITEMS..., REMINDERS_ITEMS...]
         n = kitchen_focus_count(state, theme)
     if n <= 0:
         state.ui.focused_index = 0
@@ -180,9 +181,48 @@ def _clamp_focus_kitchen(state: AppState, theme: Optional[dict] = None) -> None:
     # Clamp instead of wrapping to avoid top<->bottom jumps that trigger large refresh regions.
     cur = int(state.ui.focused_index or 0)
     state.ui.focused_index = max(0, min(cur, n - 1))
-    if int(state.ui.focused_index or 0) <= 0:
+    if int(state.ui.focused_index or 0) <= 1:
         state.ui.kitchen_focus_rid_override = ""
     state.ui.page = 1
+
+
+def _open_calendar_from_home(state: AppState) -> None:
+    state.ui.screen = Screen.CALENDAR
+    state.ui.calendar_offset_days = 0
+    state.ui.calendar_mode = "date"
+    state.ui.calendar_selected_index = 0
+
+
+def _open_timer_from_home(state: AppState, now: float, theme: dict) -> None:
+    state.ui.widget_mode = WidgetMode.TIMER
+    if int(state.ui.timer_seconds or 0) <= 0 and not bool(state.ui.timer_alert_active):
+        state.ui.timer_seconds = _timer_default_s(theme)
+    if int(state.ui.timer_target_seconds or 0) <= 0:
+        state.ui.timer_target_seconds = int(state.ui.timer_seconds or 0)
+    state.ui.timer_last_tick_at = now
+    state.ui.timer_focused_index = 2
+    state.ui.screen = Screen.TIMER
+
+
+def _activate_kitchen_left_target(state: AppState, target_kind: str, now: float, *, theme: dict) -> bool:
+    if target_kind == KITCHEN_FOCUS_CLOCK:
+        if state.ui.widget_mode == WidgetMode.TIMER:
+            left_click_action = _kitchen_left_click_action(theme)
+            if left_click_action == "timer_toggle":
+                state.ui.timer_running = not state.ui.timer_running
+                state.ui.timer_last_tick_at = now
+            else:
+                _open_timer_from_home(state, now, theme)
+        else:
+            _open_calendar_from_home(state)
+        return True
+
+    if target_kind == KITCHEN_FOCUS_WEATHER:
+        state.ui.screen = Screen.WEATHER
+        state.ui.weather_day_index = 0
+        return True
+
+    return False
 
 
 def _toggle_task_completed(state: AppState, items_per_page: int) -> None:
@@ -594,7 +634,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             # merge with voice dirty regions and force a large full refresh.
             if state.ui.voice_active or state.ui.menu_overlay_active or in_interaction_pause:
                 state.ui.memo_last_rotated_at = now
-            elif state.ui.focused_index != 0 and not state.ui.idle:
+            elif int(state.ui.focused_index or 0) >= 2 and not state.ui.idle:
                 if (now - float(state.ui.memo_last_rotated_at or now)) >= interval_s and state.model.memos:
                     state.ui.memo_index = (int(state.ui.memo_index or 0) + 1) % max(1, len(state.model.memos))
                     state.ui.memo_last_rotated_at = now
@@ -684,42 +724,25 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                 _activate_menu_pick(state, state.ui.menu_focused, now, theme=theme, items_per_page=items_per_page, variant=variant)
                 return state
             if _is_kitchen_variant(variant):
-                # Kitchen home only keeps actionable stops in the rotary queue:
-                # weather entry on the left plus visible list rows.
-                if variant == "kitchen":
-                    target_kind, target_idx = kitchen_focus_target(state, int(state.ui.focused_index or 0), theme)
-                    if target_kind == KITCHEN_FOCUS_LEFT_PANEL:
-                        left_click_action = _kitchen_left_click_action(theme)
-                        if left_click_action == "timer_toggle" and state.ui.widget_mode == WidgetMode.TIMER:
-                            state.ui.timer_running = not state.ui.timer_running
-                            state.ui.timer_last_tick_at = now
-                        else:
-                            state.ui.screen = Screen.WEATHER
-                            state.ui.weather_day_index = 0
-                    elif target_kind in (KITCHEN_FOCUS_INVENTORY_ITEM, KITCHEN_FOCUS_REMINDERS_ITEM):
-                        if target_idx is not None:
-                            _toggle_task_completed_by_index(state, target_idx)
-                            _clamp_focus_kitchen(state, theme)
-                    else:
-                        _clamp_focus_kitchen(state, theme)
-                    return state
-
-                # kitchen_portrait: no clickable headers, list rows map directly.
-                if state.ui.focused_index == 0:
+                target_kind, target_idx = kitchen_focus_target(state, int(state.ui.focused_index or 0), theme)
+                if _activate_kitchen_left_target(state, target_kind, now, theme=theme):
                     state.ui.kitchen_focus_rid_override = ""
-                    left_click_action = _kitchen_left_click_action(theme)
-                    if left_click_action == "timer_toggle" and state.ui.widget_mode == WidgetMode.TIMER:
-                        state.ui.timer_running = not state.ui.timer_running
-                        state.ui.timer_last_tick_at = now
-                    else:
-                        state.ui.screen = Screen.WEATHER
-                        state.ui.weather_day_index = 0
-                else:
-                    task_idx = _focused_kitchen_task_index(state, theme)
-                    if 0 <= task_idx < len(state.model.reminders):
-                        hold_rid = str(state.model.reminders[task_idx].rid or "")
+                elif target_kind in (KITCHEN_FOCUS_INVENTORY_ITEM, KITCHEN_FOCUS_REMINDERS_ITEM):
+                    task_idx = (
+                        _focused_kitchen_task_index(state, theme)
+                        if variant == "kitchen_portrait"
+                        else target_idx
+                    )
+                    if task_idx is not None and task_idx >= 0:
                         _toggle_task_completed_by_index(state, task_idx)
-                        state.ui.kitchen_focus_rid_override = hold_rid
+                        state.ui.kitchen_focus_rid_override = (
+                            str(state.model.reminders[task_idx].rid or "")
+                            if variant == "kitchen_portrait"
+                            else ""
+                        )
+                        _clamp_focus_kitchen(state, theme)
+                else:
+                    _clamp_focus_kitchen(state, theme)
                 return state
 
             # classic home
@@ -797,6 +820,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
 
     if isinstance(event, RotateButton):
         _toggle_rotation(state)
+        if state.ui.screen == Screen.HOME and _is_kitchen_variant(_resolved_home_variant(theme, rotation_deg=int(state.ui.rotation_deg or 0))):
+            _clamp_focus_kitchen(state, theme)
         return state
 
     if isinstance(event, Back):

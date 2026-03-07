@@ -727,6 +727,7 @@ def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
         return False
     allowed = {
         "home.focus_move_row",
+        "home.focus_move_left_target",
         "home.focus_to_left_panel",
         "home.focus_from_left_panel",
         "home.focus_left_panel_only",
