@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 import time
 import unittest
+from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
 from app.core.kitchen_queue import kitchen_visible_task_indices
-from app.core.reducer import Click, Rotate, RotateButton, reduce
+from app.core.reducer import Click, Rotate, RotateButton, Tick, reduce
 from app.core.state import AppState, DashboardModel, MemoItem, Reminder, Screen, WidgetMode
 from app.render.panel import build_panel_theme
 from app.shared.fonts import FontBook
@@ -75,9 +76,14 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state.ui.screen = Screen.HOME
         state.ui.focused_index = 2
 
-        reduce(state, Click(), theme={"home_variant": "kitchen"})
+        with patch("app.core.reducer.time.time", return_value=100.0):
+            reduce(state, Click(), theme={"home_variant": "kitchen"})
         self.assertTrue(state.model.reminders[0].completed)
         self.assertEqual(state.ui.screen, Screen.HOME)
+        self.assertEqual(state.ui.home_pending_hide_rids, ["r1"])
+        self.assertFalse(state.ui.pending_reorder)
+        idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen"})
+        self.assertEqual([state.model.reminders[i].rid for i in idxs], ["r1"])
 
     def test_kitchen_landscape_click_reminder_row_toggles_item(self) -> None:
         model = DashboardModel()
@@ -188,15 +194,25 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state.ui.screen = Screen.HOME
         state.ui.focused_index = 2
 
-        reduce(state, Click(), theme={"home_variant": "kitchen"})
+        with patch("app.core.reducer.time.time", return_value=100.0):
+            reduce(state, Click(), theme={"home_variant": "kitchen"})
         self.assertTrue(state.model.reminders[0].completed)
         self.assertEqual(state.ui.focused_index, 2)
 
-        reduce(state, Rotate(+1), theme={"home_variant": "kitchen"})
+        with patch("app.core.reducer.time.time", return_value=110.0):
+            reduce(state, Rotate(+1), theme={"home_variant": "kitchen"})
         self.assertEqual(state.ui.focused_index, 3)
+        self.assertEqual(state.ui.home_hidden_rids, [])
 
-        reduce(state, Click(), theme={"home_variant": "kitchen"})
+        with patch("app.core.reducer.time.time", return_value=111.0):
+            reduce(state, Rotate(-1), theme={"home_variant": "kitchen"})
+        self.assertEqual(state.ui.focused_index, 2)
+
+        with patch("app.core.reducer.time.time", return_value=112.0):
+            reduce(state, Click(), theme={"home_variant": "kitchen"})
         self.assertFalse(state.model.reminders[0].completed)
+        self.assertEqual(state.ui.home_pending_hide_rids, [])
+        self.assertEqual(state.ui.home_hidden_rids, [])
 
     def test_kitchen_portrait_click_holds_focus_until_rotate(self) -> None:
         model = DashboardModel()
@@ -221,7 +237,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
         pos = int(state.ui.focused_index) - 2
         self.assertTrue(0 <= pos < len(idxs))
-        self.assertEqual(state.model.reminders[idxs[pos]].rid, "s3")
+        self.assertEqual(state.model.reminders[idxs[pos]].rid, "s2")
 
     def test_kitchen_portrait_second_click_before_rotate_hits_held_item(self) -> None:
         model = DashboardModel()
@@ -265,7 +281,33 @@ class HomeKitchenFocusTests(unittest.TestCase):
         idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
         pos = int(state.ui.focused_index) - 2
         self.assertTrue(0 <= pos < len(idxs))
-        self.assertEqual(state.model.reminders[idxs[pos]].rid, "s3")
+        self.assertEqual(state.model.reminders[idxs[pos]].rid, "s2")
+
+    def test_kitchen_home_pending_hide_promotes_on_minute_tick(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge", completed=False),
+            Reminder(rid="f2", title="Eggs", category="fridge", completed=False),
+            Reminder(rid="s1", title="Buy Bread", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.focused_index = 2
+        state.ui.clock_minute_bucket = 1
+
+        theme = {"home_variant": "kitchen", "home_completed_hide_grace_s": 30}
+        with patch("app.core.reducer.time.time", return_value=100.0):
+            reduce(state, Click(), theme=theme)
+
+        self.assertEqual(state.ui.home_pending_hide_rids, ["f1"])
+        self.assertEqual(state.ui.home_hidden_rids, [])
+
+        reduce(state, Tick(now=181.0), theme=theme)
+
+        self.assertEqual(state.ui.home_pending_hide_rids, [])
+        self.assertEqual(state.ui.home_hidden_rids, ["f1"])
+        idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen"})
+        self.assertEqual([state.model.reminders[i].rid for i in idxs], ["f2", "s1"])
 
     def test_kitchen_portrait_rotate_clamps_to_actionable_rows(self) -> None:
         model = DashboardModel()

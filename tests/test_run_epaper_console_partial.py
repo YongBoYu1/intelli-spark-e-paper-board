@@ -155,6 +155,13 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         sig_b = rec._state_render_sig(state)
         self.assertNotEqual(sig_a, sig_b)
 
+    def test_state_render_sig_changes_when_home_hidden_rows_change(self) -> None:
+        state = AppState(model=DashboardModel(location="A"))
+        sig_a = rec._state_render_sig(state)
+        state.ui.home_hidden_rids = ["r1"]
+        sig_b = rec._state_render_sig(state)
+        self.assertNotEqual(sig_a, sig_b)
+
     def test_next_weather_refresh_at_12h_aligns_to_noon(self) -> None:
         now = datetime.datetime(2026, 1, 15, 11, 59, 30).timestamp()
         nxt = rec._next_weather_refresh_at(now, 12.0)

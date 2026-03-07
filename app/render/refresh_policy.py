@@ -196,6 +196,7 @@ class UiSnapshot:
     font_size: str
     focused_index: int
     kitchen_focus_rid_override: str
+    home_hidden_rids: tuple[str, ...]
     kitchen_visible_rids: tuple[str, ...]
     kitchen_visible_layout: str
     menu_focused: str
@@ -238,6 +239,7 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
         font_size=str(state.ui.font_size or "medium"),
         focused_index=int(state.ui.focused_index or 0),
         kitchen_focus_rid_override=str(state.ui.kitchen_focus_rid_override or ""),
+        home_hidden_rids=tuple(str(rid) for rid in getattr(state.ui, "home_hidden_rids", []) if str(rid or "").strip()),
         kitchen_visible_rids=tuple(str(rid) for rid in getattr(state.ui, "kitchen_visible_rids", []) if str(rid or "").strip()),
         kitchen_visible_layout=str(getattr(state.ui, "kitchen_visible_layout", "") or ""),
         menu_focused=str(state.ui.menu_focused.value if hasattr(state.ui.menu_focused, "value") else state.ui.menu_focused),
@@ -422,23 +424,43 @@ def _home_portrait_source_metrics(width: int, height: int) -> dict[str, int]:
 def _home_portrait_rendered_sections(
     reminders_digest: tuple,
     *,
+    hidden_rids: tuple[str, ...] = (),
     inv_max: int = 4,
     shop_max: int = 5,
 ) -> tuple[tuple[tuple, ...], tuple[tuple, ...]]:
-    fridge = [item for item in reminders_digest if str(item[4] or "") == "fridge"]
-    shop = [item for item in reminders_digest if str(item[4] or "") != "fridge"]
-    fridge = sorted(fridge, key=lambda item: bool(item[1]))
-    shop = sorted(shop, key=lambda item: bool(item[1]))
-    return tuple(fridge[:inv_max]), tuple(shop[:shop_max])
+    hidden = {str(rid) for rid in hidden_rids if str(rid or "").strip()}
+    fridge: list[tuple] = []
+    shop: list[tuple] = []
+    for item in reminders_digest or ():
+        try:
+            rid = str(item[0] or "")
+            category = str(item[4] or "")
+        except Exception:
+            continue
+        if rid and rid in hidden:
+            continue
+        if category == "fridge":
+            if len(fridge) < inv_max:
+                fridge.append(item)
+        else:
+            if len(shop) < shop_max:
+                shop.append(item)
+    return tuple(fridge), tuple(shop)
 
 
 def _home_portrait_focus_queue_rids(
     reminders_digest: tuple,
     *,
+    hidden_rids: tuple[str, ...] = (),
     inv_max: int = 4,
     shop_max: int = 5,
 ) -> list[str]:
-    fridge_rows, shop_rows = _home_portrait_rendered_sections(reminders_digest, inv_max=inv_max, shop_max=shop_max)
+    fridge_rows, shop_rows = _home_portrait_rendered_sections(
+        reminders_digest,
+        hidden_rids=hidden_rids,
+        inv_max=inv_max,
+        shop_max=shop_max,
+    )
     queue: list[str] = []
     for item in fridge_rows + shop_rows:
         queue.append(str(item[0]))
@@ -450,12 +472,18 @@ def _home_portrait_effective_focus_rid(snapshot: UiSnapshot) -> str:
         return ""
 
     hold_rid = str(snapshot.kitchen_focus_rid_override or "").strip()
-    fridge_rows, shop_rows = _home_portrait_rendered_sections(snapshot.reminders_digest)
+    fridge_rows, shop_rows = _home_portrait_rendered_sections(
+        snapshot.reminders_digest,
+        hidden_rids=snapshot.home_hidden_rids,
+    )
     rendered_rids = {str(item[0]) for item in fridge_rows + shop_rows}
     if hold_rid and hold_rid in rendered_rids:
         return hold_rid
 
-    queue = _home_portrait_focus_queue_rids(snapshot.reminders_digest)
+    queue = _home_portrait_focus_queue_rids(
+        snapshot.reminders_digest,
+        hidden_rids=snapshot.home_hidden_rids,
+    )
     pos = int(snapshot.focused_index or 0) - 2
     if 0 <= pos < len(queue):
         return queue[pos]
@@ -468,13 +496,14 @@ def _home_portrait_row_source_rect(
     *,
     reminders_digest: tuple,
     focus_rid: str,
+    hidden_rids: tuple[str, ...] = (),
 ) -> Rect | None:
     rid = str(focus_rid or "").strip()
     if not rid:
         return None
 
     metrics = _home_portrait_source_metrics(width, height)
-    fridge_rows, shop_rows = _home_portrait_rendered_sections(reminders_digest)
+    fridge_rows, shop_rows = _home_portrait_rendered_sections(reminders_digest, hidden_rids=hidden_rids)
     fx0 = metrics["lx0"] - metrics["focus_pad_x"]
     fx1 = metrics["lx1"] + metrics["focus_pad_x"]
 
@@ -514,9 +543,16 @@ def _home_portrait_focus_row_rect(
     rotation_deg: int,
     reminders_digest: tuple,
     focus_rid: str,
+    hidden_rids: tuple[str, ...] = (),
 ) -> Rect | None:
     metrics = _home_portrait_source_metrics(width, height)
-    source_rect = _home_portrait_row_source_rect(width, height, reminders_digest=reminders_digest, focus_rid=focus_rid)
+    source_rect = _home_portrait_row_source_rect(
+        width,
+        height,
+        reminders_digest=reminders_digest,
+        focus_rid=focus_rid,
+        hidden_rids=hidden_rids,
+    )
     if source_rect is None:
         return None
     return _transform_source_rect(source_rect, metrics["src_w"], metrics["src_h"], rotation_deg)
@@ -750,21 +786,35 @@ def _home_menu_overlay_region(width: int, height: int) -> Rect:
     return home_menu_overlay_rect(width, height)
 
 
-def _home_visible_section_counts(reminders_digest: tuple, *, inv_max: int = 3, rem_max: int = 5) -> tuple[int, int]:
-    inv_count = 0
-    rem_count = 0
-    for item in reminders_digest or ():
-        try:
-            category = str(item[4] or "")
-        except Exception:
-            continue
-        if category == "fridge":
-            if inv_count < inv_max:
-                inv_count += 1
-        else:
-            if rem_count < rem_max:
-                rem_count += 1
-    return inv_count, rem_count
+def _home_visible_section_counts(
+    reminders_digest: tuple,
+    *,
+    hidden_rids: tuple[str, ...] = (),
+    inv_max: int = 3,
+    rem_max: int = 5,
+) -> tuple[int, int]:
+    fridge_rows, rem_rows = _home_portrait_rendered_sections(
+        reminders_digest,
+        hidden_rids=hidden_rids,
+        inv_max=inv_max,
+        shop_max=rem_max,
+    )
+    return len(fridge_rows), len(rem_rows)
+
+
+def _home_visible_section_rows(
+    reminders_digest: tuple,
+    *,
+    hidden_rids: tuple[str, ...] = (),
+    inv_max: int = 3,
+    rem_max: int = 5,
+) -> tuple[tuple[tuple, ...], tuple[tuple, ...]]:
+    return _home_portrait_rendered_sections(
+        reminders_digest,
+        hidden_rids=hidden_rids,
+        inv_max=inv_max,
+        shop_max=rem_max,
+    )
 
 
 def _list_inventory_count(reminders_digest: tuple) -> int:
@@ -788,7 +838,14 @@ def _list_focus_section(list_focused_index: int, reminders_digest: tuple) -> str
     return "inventory" if idx < inv_count else "reminders"
 
 
-def _home_focus_row_rect(width: int, height: int, focus_index: int, reminders_digest: tuple) -> Rect | None:
+def _home_focus_row_rect(
+    width: int,
+    height: int,
+    focus_index: int,
+    reminders_digest: tuple,
+    *,
+    hidden_rids: tuple[str, ...] = (),
+) -> Rect | None:
     # Approximate row geometry from app/ui/home_kitchen.py theme defaults.
     if int(focus_index) <= 1:
         return None
@@ -807,7 +864,12 @@ def _home_focus_row_rect(width: int, height: int, focus_index: int, reminders_di
 
     inv_start_y = oy0 + max(8, right_pad - 6) + 34
     inv_row_h = 40
-    inv_count, rem_count = _home_visible_section_counts(reminders_digest, inv_max=3, rem_max=5)
+    inv_count, rem_count = _home_visible_section_counts(
+        reminders_digest,
+        hidden_rids=hidden_rids,
+        inv_max=3,
+        rem_max=5,
+    )
     shop_start_y = oy0 + int((oy1 - oy0) * 0.62)
     shop_row_h = 40
     row_h = 56
@@ -895,13 +957,52 @@ def _home_landscape_focus_rect(
     *,
     focus_index: int,
     reminders_digest: tuple,
+    hidden_rids: tuple[str, ...] = (),
 ) -> Rect | None:
     kind = _home_focus_kind(focus_index)
     if kind == "clock":
         return _home_landscape_header_focus_rect(width, height, kind="clock")
     if kind == "weather":
         return _home_landscape_header_focus_rect(width, height, kind="weather")
-    return _home_focus_row_rect(width, height, focus_index, reminders_digest)
+    return _home_focus_row_rect(width, height, focus_index, reminders_digest, hidden_rids=hidden_rids)
+
+
+def _home_landscape_section_rect(
+    width: int,
+    height: int,
+    *,
+    section: str,
+    inventory_rows: int,
+    shopping_rows: int,
+) -> Rect | None:
+    w = max(1, int(width))
+    h = max(1, int(height))
+    margin = 18
+    ox0, oy0, ox1, oy1 = margin, margin, max(margin + 1, w - margin), max(margin + 1, h - margin)
+    split_x = ox0 + int((ox1 - ox0) * 0.60)
+    right_pad = 22
+    inner_x0 = split_x + 1 + right_pad
+    inner_x1 = ox1 - right_pad
+    x0 = max(0, inner_x0 - 10)
+    x1 = min(w, inner_x1 + 6)
+    inv_y = oy0 + max(8, right_pad - 6)
+    inv_row_h = 40
+    mid_y = oy0 + int((oy1 - oy0) * 0.50)
+    shop_start_y = oy0 + int((oy1 - oy0) * 0.62)
+    shop_row_h = 40
+
+    if section == "inventory":
+        y0 = max(oy0, inv_y - 12)
+        y1 = min(oy1, max(mid_y, inv_y + 34 + max(0, inventory_rows) * inv_row_h + 10))
+    elif section == "shopping":
+        y0 = max(oy0, mid_y - 18)
+        y1 = min(oy1, max(y0 + 16, shop_start_y + max(0, shopping_rows) * shop_row_h + 18))
+    else:
+        return None
+
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return (x0, y0, x1, y1)
 
 
 def _home_portrait_focus_rect(
@@ -913,6 +1014,7 @@ def _home_portrait_focus_rect(
     focus_index: int,
     reminders_digest: tuple,
     focus_rid: str,
+    hidden_rids: tuple[str, ...] = (),
 ) -> Rect | None:
     kind = _home_focus_kind(focus_index)
     if kind == "clock":
@@ -925,6 +1027,7 @@ def _home_portrait_focus_rect(
         rotation_deg=rotation_deg,
         reminders_digest=reminders_digest,
         focus_rid=focus_rid,
+        hidden_rids=hidden_rids,
     )
 
 
@@ -1091,6 +1194,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
                 focus_index=prev.focused_index,
                 reminders_digest=prev.reminders_digest,
                 focus_rid=prev_focus_rid,
+                hidden_rids=prev.home_hidden_rids,
             )
             curr_focus_rect = _home_portrait_focus_rect(
                 home_regions,
@@ -1100,6 +1204,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
                 focus_index=curr.focused_index,
                 reminders_digest=curr.reminders_digest,
                 focus_rid=curr_focus_rid,
+                hidden_rids=curr.home_hidden_rids,
             )
             left_targets = {"clock", "weather"}
             if prev_kind == "row" and curr_kind == "row":
@@ -1132,6 +1237,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             height,
             focus_index=prev.focused_index,
             reminders_digest=prev.reminders_digest,
+            hidden_rids=prev.home_hidden_rids,
         )
         curr_focus_rect = _home_landscape_focus_rect(
             regions,
@@ -1139,6 +1245,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             height,
             focus_index=curr.focused_index,
             reminders_digest=curr.reminders_digest,
+            hidden_rids=curr.home_hidden_rids,
         )
         left_targets = {"clock", "weather"}
         if prev_kind == "row" and curr_kind == "row":
@@ -1159,18 +1266,154 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
                 reasons.append("home.focus_to_left_panel")
             else:
                 reasons.append("home.focus_from_left_panel")
-    if prev.reminders_digest != curr.reminders_digest:
+    if prev.reminders_digest != curr.reminders_digest or prev.home_hidden_rids != curr.home_hidden_rids:
         prev_rids = tuple(str(r[0]) for r in prev.reminders_digest)
         curr_rids = tuple(str(r[0]) for r in curr.reminders_digest)
-        if portrait_home:
-            prev_inventory_rows, prev_shopping_rows = _home_portrait_rendered_sections(prev.reminders_digest)
-            curr_inventory_rows, curr_shopping_rows = _home_portrait_rendered_sections(curr.reminders_digest)
+        hidden_changed = prev.home_hidden_rids != curr.home_hidden_rids
+        if hidden_changed:
+            if portrait_home:
+                prev_inventory_rows, prev_shopping_rows = _home_portrait_rendered_sections(
+                    prev.reminders_digest,
+                    hidden_rids=prev.home_hidden_rids,
+                )
+                curr_inventory_rows, curr_shopping_rows = _home_portrait_rendered_sections(
+                    curr.reminders_digest,
+                    hidden_rids=curr.home_hidden_rids,
+                )
+            else:
+                prev_inventory_rows, prev_shopping_rows = _home_visible_section_rows(
+                    prev.reminders_digest,
+                    hidden_rids=prev.home_hidden_rids,
+                    inv_max=3,
+                    rem_max=5,
+                )
+                curr_inventory_rows, curr_shopping_rows = _home_visible_section_rows(
+                    curr.reminders_digest,
+                    hidden_rids=curr.home_hidden_rids,
+                    inv_max=3,
+                    rem_max=5,
+                )
+
             changed = False
+            if prev_inventory_rows != curr_inventory_rows:
+                if portrait_home:
+                    rect = _home_portrait_section_rect(
+                        width,
+                        height,
+                        rotation_deg=curr.rotation_deg,
+                        section="inventory",
+                        inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                        shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                    )
+                else:
+                    rect = _home_landscape_section_rect(
+                        width,
+                        height,
+                        section="inventory",
+                        inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                        shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                    )
+                if rect is not None:
+                    rects.append(rect)
+                    changed = True
+            if prev_shopping_rows != curr_shopping_rows:
+                if portrait_home:
+                    rect = _home_portrait_section_rect(
+                        width,
+                        height,
+                        rotation_deg=curr.rotation_deg,
+                        section="shopping",
+                        inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                        shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                    )
+                else:
+                    rect = _home_landscape_section_rect(
+                        width,
+                        height,
+                        section="shopping",
+                        inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                        shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                    )
+                if rect is not None:
+                    rects.append(rect)
+                    changed = True
+            if not changed:
+                fallback = home_regions["list_all"] if portrait_home else regions["right_list"]
+                if fallback is not None:
+                    rects.append(fallback)
+            reasons.append("home.reminder_compact")
+        elif prev_rids == curr_rids:
+            # Same row order: likely a click-toggle style change; update focused row only.
+            if portrait_home:
+                prev_focus_rid = _home_portrait_effective_focus_rid(prev)
+                curr_focus_rid = _home_portrait_effective_focus_rid(curr)
+                prev_row = _home_portrait_focus_row_rect(
+                    width,
+                    height,
+                    rotation_deg=prev.rotation_deg,
+                    reminders_digest=prev.reminders_digest,
+                    focus_rid=prev_focus_rid,
+                    hidden_rids=prev.home_hidden_rids,
+                )
+                curr_row = _home_portrait_focus_row_rect(
+                    width,
+                    height,
+                    rotation_deg=curr.rotation_deg,
+                    reminders_digest=curr.reminders_digest,
+                    focus_rid=curr_focus_rid,
+                    hidden_rids=curr.home_hidden_rids,
+                )
+            else:
+                prev_row = _home_focus_row_rect(
+                    width,
+                    height,
+                    prev.focused_index,
+                    prev.reminders_digest,
+                    hidden_rids=prev.home_hidden_rids,
+                )
+                curr_row = _home_focus_row_rect(
+                    width,
+                    height,
+                    curr.focused_index,
+                    curr.reminders_digest,
+                    hidden_rids=curr.home_hidden_rids,
+                )
+            if prev_row is not None:
+                rects.append(prev_row)
+            if curr_row is not None and curr_row != prev_row:
+                rects.append(curr_row)
+            if prev_row is None and curr_row is None:
+                fallback = home_regions["list_all"] if portrait_home else regions["right_list"]
+                if fallback is not None:
+                    rects.append(fallback)
+                reasons.append("home.reminder_change_fallback")
+            else:
+                reasons.append("home.reminder_row_update")
+        else:
+            changed = False
+            prev_inventory_rows, prev_shopping_rows = _home_visible_section_rows(
+                prev.reminders_digest,
+                hidden_rids=prev.home_hidden_rids,
+                inv_max=4 if portrait_home else 3,
+                rem_max=5,
+            )
+            curr_inventory_rows, curr_shopping_rows = _home_visible_section_rows(
+                curr.reminders_digest,
+                hidden_rids=curr.home_hidden_rids,
+                inv_max=4 if portrait_home else 3,
+                rem_max=5,
+            )
             if prev_inventory_rows != curr_inventory_rows:
                 rect = _home_portrait_section_rect(
                     width,
                     height,
                     rotation_deg=curr.rotation_deg,
+                    section="inventory",
+                    inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                    shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                ) if portrait_home else _home_landscape_section_rect(
+                    width,
+                    height,
                     section="inventory",
                     inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
                     shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
@@ -1186,29 +1429,20 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
                     section="shopping",
                     inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
                     shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                ) if portrait_home else _home_landscape_section_rect(
+                    width,
+                    height,
+                    section="shopping",
+                    inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                    shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
                 )
                 if rect is not None:
                     rects.append(rect)
                     changed = True
-            if not changed and home_regions["list_all"] is not None:
-                rects.append(home_regions["list_all"])
-            reasons.append("home.reminder_reorder" if prev_rids != curr_rids else "home.reminder_row_update")
-        elif prev_rids == curr_rids:
-            # Same row order: likely a click-toggle style change; update focused row only.
-            prev_row = _home_focus_row_rect(width, height, prev.focused_index, prev.reminders_digest)
-            curr_row = _home_focus_row_rect(width, height, curr.focused_index, curr.reminders_digest)
-            if prev_row is not None:
-                rects.append(prev_row)
-            if curr_row is not None and curr_row != prev_row:
-                rects.append(curr_row)
-            if prev_row is None and curr_row is None:
-                rects.append(regions["right_list"])
-                reasons.append("home.reminder_change_fallback")
-            else:
-                reasons.append("home.reminder_row_update")
-        else:
-            # Delayed reorder moves multiple rows; refresh right panel region.
-            rects.append(regions["right_list"])
+            if not changed:
+                fallback = home_regions["list_all"] if portrait_home else regions["right_list"]
+                if fallback is not None:
+                    rects.append(fallback)
             reasons.append("home.reminder_reorder")
     if prev.memo_index != curr.memo_index:
         rect = home_regions["memo"] if portrait_home else regions["left_family_board"]

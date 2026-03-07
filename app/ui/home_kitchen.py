@@ -268,13 +268,26 @@ def _weather_word(icon_name: str) -> str:
     return mapping.get(parts[0], parts[0].upper())
 
 
-def _group_tasks(state: AppState):
-    fridge = [r for r in state.model.reminders if (r.category or "") == "fridge"]
-    shop = [r for r in state.model.reminders if (r.category or "") != "fridge"]
+def _home_hidden_rids(state: AppState) -> set[str]:
+    return {
+        str(rid)
+        for rid in getattr(state.ui, "home_hidden_rids", [])
+        if str(rid or "").strip()
+    }
 
-    # Keep incomplete first, then completed (stable within each group).
-    fridge = sorted(fridge, key=lambda r: (r.completed,))
-    shop = sorted(shop, key=lambda r: (r.completed,))
+
+def _group_tasks(state: AppState):
+    hidden_rids = _home_hidden_rids(state)
+    fridge = []
+    shop = []
+    for reminder in state.model.reminders:
+        rid = str(getattr(reminder, "rid", "") or "").strip()
+        if rid and rid in hidden_rids:
+            continue
+        if (reminder.category or "") == "fridge":
+            fridge.append(reminder)
+        else:
+            shop.append(reminder)
     return fridge, shop
 
 

@@ -225,6 +225,113 @@ def _activate_kitchen_left_target(state: AppState, target_kind: str, now: float,
     return False
 
 
+def _home_hide_grace_s(theme: dict) -> float:
+    try:
+        value = float(theme.get("home_completed_hide_grace_s", 45.0) or 45.0)
+    except Exception:
+        value = 45.0
+    return max(5.0, value)
+
+
+def _home_hide_settle_s(theme: dict) -> float:
+    try:
+        value = float(theme.get("home_completed_hide_settle_s", 0.6) or 0.6)
+    except Exception:
+        value = 0.6
+    return max(0.0, value)
+
+
+def _home_remove_visibility_tracking(state: AppState, rid: str, *, restore_visible: bool) -> bool:
+    key = str(rid or "").strip()
+    if not key:
+        return False
+
+    changed = False
+    pending = [str(x) for x in getattr(state.ui, "home_pending_hide_rids", []) if str(x).strip()]
+    hidden = [str(x) for x in getattr(state.ui, "home_hidden_rids", []) if str(x).strip()]
+    if key in pending:
+        pending = [x for x in pending if x != key]
+        state.ui.home_pending_hide_rids = pending
+        changed = True
+    if restore_visible and key in hidden:
+        hidden = [x for x in hidden if x != key]
+        state.ui.home_hidden_rids = hidden
+        state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
+        changed = True
+    if not pending:
+        state.ui.home_hide_due_at = 0.0
+    return changed
+
+
+def _home_mark_pending_hide(state: AppState, rid: str, now: float, *, theme: dict) -> None:
+    key = str(rid or "").strip()
+    if not key:
+        return
+    pending = [str(x) for x in getattr(state.ui, "home_pending_hide_rids", []) if str(x).strip()]
+    hidden = [str(x) for x in getattr(state.ui, "home_hidden_rids", []) if str(x).strip()]
+    if key in hidden:
+        hidden = [x for x in hidden if x != key]
+        state.ui.home_hidden_rids = hidden
+        state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
+    if key not in pending:
+        pending.append(key)
+        state.ui.home_pending_hide_rids = pending
+    state.ui.home_hide_due_at = float(now) + _home_hide_grace_s(theme)
+
+
+def _home_hide_ready(state: AppState, now: float, *, theme: dict) -> bool:
+    pending = [str(x) for x in getattr(state.ui, "home_pending_hide_rids", []) if str(x).strip()]
+    if not pending:
+        return False
+    due_at = float(getattr(state.ui, "home_hide_due_at", 0.0) or 0.0)
+    if due_at <= 0.0 or float(now) < due_at:
+        return False
+    settle_s = _home_hide_settle_s(theme)
+    return (float(now) - float(state.ui.last_interaction_at or 0.0)) >= settle_s
+
+
+def _promote_home_pending_hide(state: AppState) -> bool:
+    pending = [str(x) for x in getattr(state.ui, "home_pending_hide_rids", []) if str(x).strip()]
+    if not pending:
+        return False
+    hidden = [str(x) for x in getattr(state.ui, "home_hidden_rids", []) if str(x).strip()]
+    next_hidden = list(hidden)
+    for rid in pending:
+        if rid not in next_hidden:
+            next_hidden.append(rid)
+    if next_hidden == hidden:
+        state.ui.home_pending_hide_rids = []
+        state.ui.home_hide_due_at = 0.0
+        return False
+    state.ui.home_hidden_rids = next_hidden
+    state.ui.home_pending_hide_rids = []
+    state.ui.home_hide_due_at = 0.0
+    state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
+    state.ui.kitchen_focus_rid_override = ""
+    return True
+
+
+def _maybe_promote_home_pending_hide(state: AppState, now: float, *, theme: dict) -> bool:
+    if not _home_hide_ready(state, now, theme=theme):
+        return False
+    return _promote_home_pending_hide(state)
+
+
+def _toggle_home_kitchen_task_by_index(state: AppState, idx: int, now: float, *, theme: dict) -> None:
+    if idx < 0 or idx >= len(state.model.reminders):
+        return
+    current = state.model.reminders[idx]
+    next_completed = not bool(current.completed)
+    state.model.reminders[idx] = replace(current, completed=next_completed)
+    state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
+    if next_completed:
+        _home_mark_pending_hide(state, current.rid, now, theme=theme)
+    else:
+        _home_remove_visibility_tracking(state, current.rid, restore_visible=True)
+    state.ui.pending_reorder = False
+    state.ui.reorder_due_at = 0.0
+
+
 def _toggle_task_completed(state: AppState, items_per_page: int) -> None:
     if state.ui.focused_index < 2:
         return
@@ -245,8 +352,11 @@ def _toggle_task_completed_by_index(state: AppState, idx: int) -> None:
     if idx < 0 or idx >= len(state.model.reminders):
         return
     r = state.model.reminders[idx]
-    state.model.reminders[idx] = replace(r, completed=not r.completed)
+    next_completed = not bool(r.completed)
+    state.model.reminders[idx] = replace(r, completed=next_completed)
     state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
+    if not next_completed:
+        _home_remove_visibility_tracking(state, r.rid, restore_visible=True)
 
     # Keep the same UX as home: reorder later.
     state.ui.pending_reorder = True
@@ -576,7 +686,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
     if isinstance(event, Tick):
         now = event.now
         now_minute_bucket = int(float(now) // 60.0)
-        if int(state.ui.clock_minute_bucket or 0) != now_minute_bucket:
+        minute_changed = int(state.ui.clock_minute_bucket or 0) != now_minute_bucket
+        if minute_changed:
             state.ui.clock_minute_bucket = now_minute_bucket
 
         # Idle: hide focus ring after inactivity. Match TSX: timer running disables idle.
@@ -643,7 +754,15 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             state.ui.settings_notice = ""
             state.ui.settings_notice_due_at = 0.0
 
+        if state.ui.screen == Screen.HOME and _is_kitchen_variant(variant) and minute_changed:
+            if _maybe_promote_home_pending_hide(state, now, theme=theme):
+                _clamp_focus_kitchen(state, theme)
+
         return state
+
+    if state.ui.screen == Screen.HOME and _is_kitchen_variant(variant) and not isinstance(event, Click):
+        if _maybe_promote_home_pending_hide(state, now, theme=theme):
+            _clamp_focus_kitchen(state, theme)
 
     # Any non-tick event wakes the UI
     state.ui.idle = False
@@ -734,7 +853,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                         else target_idx
                     )
                     if task_idx is not None and task_idx >= 0:
-                        _toggle_task_completed_by_index(state, task_idx)
+                        _toggle_home_kitchen_task_by_index(state, task_idx, now, theme=theme)
                         state.ui.kitchen_focus_rid_override = (
                             str(state.model.reminders[task_idx].rid or "")
                             if variant == "kitchen_portrait"
@@ -812,6 +931,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         state.ui.screen = Screen.HOME
         state.ui.menu_overlay_active = False
         state.ui.kitchen_focus_rid_override = ""
+        _maybe_promote_home_pending_hide(state, now, theme=theme)
         if _is_kitchen_variant(variant):
             _clamp_focus_kitchen(state, theme)
         else:
@@ -859,6 +979,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             state.ui.screen = Screen.HOME
             state.ui.menu_overlay_active = False
             state.ui.kitchen_focus_rid_override = ""
+            _maybe_promote_home_pending_hide(state, now, theme=theme)
             if _is_kitchen_variant(variant):
                 _clamp_focus_kitchen(state, theme)
             else:

@@ -47,6 +47,14 @@ def kitchen_queue_theme_key(state: AppState | None = None, theme: dict | None = 
     return f"{inv_max_rows}:{shop_max_rows}"
 
 
+def _home_hidden_rids(state: AppState) -> set[str]:
+    return {
+        str(rid)
+        for rid in getattr(state.ui, "home_hidden_rids", [])
+        if str(rid or "").strip()
+    }
+
+
 def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> list[int]:
     """Visible focus/click queue for kitchen home: fridge first, then shopping."""
     # Prefer the exact render-time queue when available.
@@ -71,21 +79,25 @@ def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> 
 
     inv_max_rows = _max_rows(theme, "b_inventory_max_rows", _inventory_default_rows(state, theme))
     shop_max_rows = _max_rows(theme, "b_shopping_max_rows", 5)
+    hidden_rids = _home_hidden_rids(state)
 
-    fridge_open: list[int] = []
-    fridge_done: list[int] = []
-    shop_open: list[int] = []
-    shop_done: list[int] = []
+    fridge: list[int] = []
+    shop: list[int] = []
 
     for i, r in enumerate(state.model.reminders):
+        rid = str(getattr(r, "rid", "") or "").strip()
+        if rid and rid in hidden_rids:
+            continue
         if (r.category or "") == "fridge":
-            target = fridge_done if r.completed else fridge_open
+            target = fridge
         else:
-            target = shop_done if r.completed else shop_open
+            target = shop
+        if target is fridge and len(fridge) >= inv_max_rows:
+            continue
+        if target is shop and len(shop) >= shop_max_rows:
+            continue
         target.append(i)
 
-    fridge = (fridge_open + fridge_done)[:inv_max_rows]
-    shop = (shop_open + shop_done)[:shop_max_rows]
     return fridge + shop
 
 

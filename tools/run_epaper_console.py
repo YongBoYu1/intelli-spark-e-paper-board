@@ -503,6 +503,7 @@ def _state_render_sig(state: AppState):
         state.ui.screen,
         state.ui.focused_index,
         state.ui.kitchen_focus_rid_override,
+        tuple(str(rid) for rid in getattr(state.ui, "home_hidden_rids", []) if str(rid or "").strip()),
         state.ui.page,
         state.ui.idle,
         state.ui.widget_mode,

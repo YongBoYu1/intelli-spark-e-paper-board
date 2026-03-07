@@ -253,6 +253,58 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.20)
 
+    def test_home_hidden_compact_prefers_inventory_section_rect(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=True, category="fridge"),
+            Reminder(rid="f2", title="Eggs", right="", completed=False, category="fridge"),
+            Reminder(rid="s1", title="Bread", right="", completed=False, category="shopping"),
+        ]
+
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 2
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 2
+        curr.ui.home_hidden_rids = ["f1"]
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.reminder_compact", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.22)
+
+    def test_home_portrait_hidden_compact_prefers_section_rect(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=True, category="fridge"),
+            Reminder(rid="f2", title="Eggs", right="", completed=False, category="fridge"),
+            Reminder(rid="s1", title="Bread", right="", completed=False, category="shopping"),
+        ]
+
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.rotation_deg = 90
+        prev.ui.focused_index = 2
+        prev.ui.kitchen_visible_layout = "portrait"
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.rotation_deg = 90
+        curr.ui.focused_index = 2
+        curr.ui.kitchen_visible_layout = "portrait"
+        curr.ui.home_hidden_rids = ["f1"]
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 480, 800)
+        self.assertIn("home.reminder_compact", reasons)
+        merged = merge_rects(rects, 480, 800)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 480, 800)
+        self.assertLess(ratio, 0.28)
+
     def test_home_family_board_update_prefers_partial_sized_rect(self) -> None:
         model = DashboardModel()
         model.memos = []
