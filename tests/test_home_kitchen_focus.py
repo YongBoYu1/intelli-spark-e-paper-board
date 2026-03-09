@@ -5,11 +5,12 @@ import time
 import unittest
 from unittest.mock import patch
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 from app.core.kitchen_queue import kitchen_visible_task_indices
 from app.core.reducer import Click, Rotate, RotateButton, Tick, reduce
-from app.core.state import AppState, DashboardModel, MemoItem, Reminder, Screen, WidgetMode
+from app.core.state import AppState, DashboardModel, MemoItem, Reminder, Screen, WeatherDay, WidgetMode
+from app.render.refresh_policy import build_ui_snapshot, infer_dirty_rects_with_reasons, merge_rects, rect_contains
 from app.render.panel import build_panel_theme
 from app.shared.fonts import FontBook
 from app.ui.app import render_app
@@ -39,6 +40,10 @@ def _rects_intersect(a: tuple[int, int, int, int], b: tuple[int, int, int, int])
     ax0, ay0, ax1, ay1 = a
     bx0, by0, bx1, by1 = b
     return not (ax1 <= bx0 or bx1 <= ax0 or ay1 <= by0 or by1 <= ay0)
+
+
+def _diff_bbox(prev: Image.Image, curr: Image.Image) -> tuple[int, int, int, int] | None:
+    return ImageChops.difference(prev, curr).convert("L").getbbox()
 
 
 class HomeKitchenFocusTests(unittest.TestCase):
@@ -408,6 +413,78 @@ class HomeKitchenFocusTests(unittest.TestCase):
         assert posted_bbox is not None and voice_bbox is not None
         self.assertFalse(_rects_intersect(posted_bbox, voice_bbox))
         self.assertLess(posted_bbox[3], voice_bbox[1])
+
+    def test_landscape_weather_focus_dirty_rect_covers_actual_diff(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            reminders=[
+                Reminder(rid="f1", title="Fresh Milk", right="EXP 3D", completed=False, category="fridge"),
+                Reminder(rid="f2", title="Leftover Pizza", right="ADDED YDAY", completed=False, category="fridge"),
+                Reminder(rid="f3", title="Marinated Chicken", right="USE TNITE", completed=False, category="fridge"),
+                Reminder(rid="s1", title="Doctor Appointment", completed=False, category="shopping"),
+            ],
+            weather=[WeatherDay(dow="MON", icon="rain", hi=18, lo=11, humidity=97)],
+            memos=[MemoItem(mid="m1", text="Can someone pick up packages?", author="Alex", timestamp=1700000000.0)],
+        )
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 2
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 1
+
+        theme = build_panel_theme({"home_variant": "kitchen", "panel_mode": True})
+        fonts = _test_font_book()
+        prev_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        curr_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        render_app(prev_img, prev, fonts, theme)
+        render_app(curr_img, curr, fonts, theme)
+
+        diff_bbox = _diff_bbox(prev_img, curr_img)
+        self.assertIsNotNone(diff_bbox)
+        rects, _ = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert diff_bbox is not None and merged is not None
+        self.assertTrue(rect_contains(merged, diff_bbox, slack=2))
+
+    def test_landscape_shopping_focus_dirty_rect_covers_actual_diff(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            reminders=[
+                Reminder(rid="f1", title="Fresh Milk", right="EXP 3D", completed=False, category="fridge"),
+                Reminder(rid="f2", title="Leftover Pizza", right="ADDED YDAY", completed=False, category="fridge"),
+                Reminder(rid="f3", title="Marinated Chicken", right="USE TNITE", completed=False, category="fridge"),
+                Reminder(rid="s1", title="Doctor Appointment", completed=False, category="shopping"),
+                Reminder(rid="s2", title="Yoghurt Expires", completed=False, category="shopping"),
+                Reminder(rid="s3", title="Morning Yoga", completed=False, category="shopping"),
+            ],
+            weather=[WeatherDay(dow="MON", icon="rain", hi=18, lo=11, humidity=97)],
+            memos=[MemoItem(mid="m1", text="Can someone pick up packages?", author="Alex", timestamp=1700000000.0)],
+        )
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 5
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 6
+
+        theme = build_panel_theme({"home_variant": "kitchen", "panel_mode": True})
+        fonts = _test_font_book()
+        prev_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        curr_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        render_app(prev_img, prev, fonts, theme)
+        render_app(curr_img, curr, fonts, theme)
+
+        diff_bbox = _diff_bbox(prev_img, curr_img)
+        self.assertIsNotNone(diff_bbox)
+        rects, _ = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert diff_bbox is not None and merged is not None
+        self.assertTrue(rect_contains(merged, diff_bbox, slack=2))
 
 
 if __name__ == "__main__":

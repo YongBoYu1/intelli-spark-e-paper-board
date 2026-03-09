@@ -846,50 +846,47 @@ def _home_focus_row_rect(
     *,
     hidden_rids: tuple[str, ...] = (),
 ) -> Rect | None:
-    # Approximate row geometry from app/ui/home_kitchen.py theme defaults.
     if int(focus_index) <= 1:
         return None
 
-    w = max(1, int(width))
-    h = max(1, int(height))
-    margin = 18
-    ox0, oy0, ox1, oy1 = margin, margin, max(margin + 1, w - margin), max(margin + 1, h - margin)
-    split_x = ox0 + int((ox1 - ox0) * 0.60)
-    right_pad = 22
-    inner_x0 = split_x + 1 + right_pad
-    inner_x1 = ox1 - right_pad
-
-    if inner_x1 <= inner_x0:
+    metrics = _home_landscape_metrics(width, height)
+    oy0 = metrics["oy0"]
+    oy1 = metrics["oy1"]
+    x0 = metrics["row_x0"]
+    x1 = metrics["row_x1"]
+    if x1 <= x0:
         return None
 
-    inv_start_y = oy0 + max(8, right_pad - 6) + 34
-    inv_row_h = 40
     inv_count, rem_count = _home_visible_section_counts(
         reminders_digest,
         hidden_rids=hidden_rids,
         inv_max=3,
         rem_max=5,
     )
-    shop_start_y = oy0 + int((oy1 - oy0) * 0.62)
-    shop_row_h = 40
-    row_h = 56
+    inv_row_y = int(metrics["inv_row_y"])
+    inv_row_h = int(metrics["inv_row_h"])
+    shop_row_y = _home_landscape_shopping_row_y(metrics, inv_count)
+    shop_row_h = int(metrics["shop_row_h"])
+    focus_pad_y = int(metrics["focus_pad_y"])
 
     pos = int(focus_index) - 2
     if pos < 0:
         return None
 
     if pos < inv_count:
-        cy = inv_start_y + (pos * inv_row_h) + (inv_row_h // 2)
+        row_y = inv_row_y + (pos * inv_row_h)
+        y0 = row_y + focus_pad_y
+        y1 = row_y + inv_row_h - focus_pad_y
     else:
         pos -= inv_count
         if pos < 0 or pos >= rem_count:
             return None
-        cy = shop_start_y + (pos * shop_row_h) + (shop_row_h // 2)
+        row_y = shop_row_y + (pos * shop_row_h)
+        y0 = row_y + focus_pad_y
+        y1 = row_y + shop_row_h - focus_pad_y
 
-    y0 = max(oy0, cy - (row_h // 2))
-    y1 = min(oy1, y0 + row_h)
-    x0 = max(0, inner_x0 - 10)
-    x1 = min(w, inner_x1 + 6)
+    y0 = max(oy0, y0)
+    y1 = min(oy1, y1)
     if x1 <= x0 or y1 <= y0:
         return None
     return (x0, y0, x1, y1)
@@ -917,13 +914,18 @@ def _home_focus_transition_rect(
     return merge_rects(visible, width, height)
 
 
-def _home_landscape_header_focus_rect(width: int, height: int, *, kind: str) -> Rect | None:
+def _approx_font_height(size: int, *, scale: float = 0.82, minimum: int = 8) -> int:
+    return max(int(minimum), int(round(max(1, int(size)) * float(scale))))
+
+
+def _home_landscape_metrics(width: int, height: int) -> dict[str, int]:
     w = max(1, int(width))
     h = max(1, int(height))
     margin = 18
     ox0, oy0, ox1, oy1 = margin, margin, max(margin + 1, w - margin), max(margin + 1, h - margin)
     split_x = ox0 + int((ox1 - ox0) * 0.60)
     left_pad = 24
+    right_pad = 22
     top_y = oy0 + left_pad
     lx0 = ox0 + left_pad
     lx1 = split_x - left_pad
@@ -932,6 +934,92 @@ def _home_landscape_header_focus_rect(width: int, height: int, *, kind: str) -> 
     weather_left = weather_right - weather_col_w
     focus_pad_x = 6
     focus_pad_y = 4
+    focus_right_trim = 0
+
+    weather_top = top_y - 2
+    city_h = _approx_font_height(13, scale=0.84, minimum=10)
+    temp_h = _approx_font_height(66, scale=0.78, minimum=46)
+    desc_h = _approx_font_height(15, scale=0.86, minimum=12)
+    hum_h = _approx_font_height(15, scale=0.86, minimum=12)
+    icon_size = max(12, int(round(34 * 1.35)))
+    city_y = max(oy0 + 4, weather_top - city_h - 6)
+    desc_y = weather_top + temp_h + 16 + 5
+    icon_y = desc_y + desc_h + 10
+    humidity_bottom = icon_y + icon_size + 8 + hum_h
+
+    weekday_h = _approx_font_height(15, scale=0.86, minimum=12)
+    date_h = _approx_font_height(18, scale=0.86, minimum=14)
+    clock_bottom = top_y + _approx_font_height(70, scale=0.78, minimum=54) + 13 + weekday_h + 11 + date_h
+    weather_bottom = max(clock_bottom, city_y + city_h, desc_y + desc_h, humidity_bottom)
+
+    header_rule_y = weather_bottom + 28
+    micro_h = _approx_font_height(16, scale=0.78, minimum=12)
+    family_rule_y = header_rule_y + 8 + micro_h + 8
+
+    inv_y = oy0 + max(8, right_pad - 6)
+    inv_row_y = inv_y + 34
+    inv_row_h = 40
+    shop_title_h = _approx_font_height(13, scale=0.84, minimum=10)
+    shop_line_gap = 9
+    shop_rule_y_min_gap = 14
+    shop_header_gap = 24
+    shop_row_h = 40
+
+    inner_x0 = split_x + 1 + right_pad
+    inner_x1 = ox1 - right_pad
+    return {
+        "w": w,
+        "h": h,
+        "ox0": ox0,
+        "oy0": oy0,
+        "ox1": ox1,
+        "oy1": oy1,
+        "top_y": top_y,
+        "lx0": lx0,
+        "weather_left": weather_left,
+        "weather_right": weather_right,
+        "weather_top": weather_top,
+        "weather_bottom": weather_bottom,
+        "focus_pad_x": focus_pad_x,
+        "focus_pad_y": focus_pad_y,
+        "focus_right_trim": focus_right_trim,
+        "family_rule_y": family_rule_y,
+        "inv_y": inv_y,
+        "inv_row_y": inv_row_y,
+        "inv_row_h": inv_row_h,
+        "shop_title_h": shop_title_h,
+        "shop_line_gap": shop_line_gap,
+        "shop_rule_y_min_gap": shop_rule_y_min_gap,
+        "shop_header_gap": shop_header_gap,
+        "shop_row_h": shop_row_h,
+        "row_x0": max(0, inner_x0 - 10),
+        "row_x1": min(w, inner_x1 + focus_pad_x - focus_right_trim),
+    }
+
+
+def _home_landscape_shopping_row_y(metrics: dict[str, int], inventory_rows: int) -> int:
+    inv_bottom_y = int(metrics["inv_row_y"]) + max(0, int(inventory_rows)) * int(metrics["inv_row_h"])
+    shop_rule_y = max(int(metrics["family_rule_y"]), inv_bottom_y + int(metrics["shop_rule_y_min_gap"]))
+    shop_title_y = shop_rule_y - int(metrics["shop_title_h"]) - int(metrics["shop_line_gap"])
+    return max(shop_title_y + int(metrics["shop_header_gap"]), shop_rule_y + 10) + 5
+
+
+def _home_landscape_header_focus_rect(width: int, height: int, *, kind: str) -> Rect | None:
+    metrics = _home_landscape_metrics(width, height)
+    w = metrics["w"]
+    h = metrics["h"]
+    ox0 = metrics["ox0"]
+    oy0 = metrics["oy0"]
+    oy1 = metrics["oy1"]
+    top_y = metrics["top_y"]
+    lx0 = metrics["lx0"]
+    weather_left = metrics["weather_left"]
+    weather_right = metrics["weather_right"]
+    weather_top = metrics["weather_top"]
+    weather_bottom = metrics["weather_bottom"]
+    focus_pad_x = metrics["focus_pad_x"]
+    focus_pad_y = metrics["focus_pad_y"]
+    focus_right_trim = metrics["focus_right_trim"]
 
     if kind == "clock":
         x0 = lx0 - focus_pad_x
@@ -942,9 +1030,9 @@ def _home_landscape_header_focus_rect(width: int, height: int, *, kind: str) -> 
 
     if kind == "weather":
         x0 = weather_left - focus_pad_x
-        x1 = weather_right + focus_pad_x
-        y0 = max(oy0 + 2, top_y - 6)
-        y1 = min(oy1, top_y + 150)
+        x1 = weather_right + focus_pad_x - focus_right_trim
+        y0 = max(oy0 + 2, weather_top - focus_pad_y)
+        y1 = min(oy1, weather_bottom + focus_pad_y)
         return _clip_rect((x0, y0, x1, y1), w, h)
 
     return None
@@ -975,28 +1063,24 @@ def _home_landscape_section_rect(
     inventory_rows: int,
     shopping_rows: int,
 ) -> Rect | None:
-    w = max(1, int(width))
-    h = max(1, int(height))
-    margin = 18
-    ox0, oy0, ox1, oy1 = margin, margin, max(margin + 1, w - margin), max(margin + 1, h - margin)
-    split_x = ox0 + int((ox1 - ox0) * 0.60)
-    right_pad = 22
-    inner_x0 = split_x + 1 + right_pad
-    inner_x1 = ox1 - right_pad
-    x0 = max(0, inner_x0 - 10)
-    x1 = min(w, inner_x1 + 6)
-    inv_y = oy0 + max(8, right_pad - 6)
-    inv_row_h = 40
-    mid_y = oy0 + int((oy1 - oy0) * 0.50)
-    shop_start_y = oy0 + int((oy1 - oy0) * 0.62)
-    shop_row_h = 40
+    metrics = _home_landscape_metrics(width, height)
+    oy0 = metrics["oy0"]
+    oy1 = metrics["oy1"]
+    x0 = metrics["row_x0"]
+    x1 = metrics["row_x1"]
+    inv_y = metrics["inv_y"]
+    inv_row_y = metrics["inv_row_y"]
+    inv_row_h = metrics["inv_row_h"]
+    shop_row_y = _home_landscape_shopping_row_y(metrics, inventory_rows)
+    shop_row_h = metrics["shop_row_h"]
+    shop_rule_y = shop_row_y - int(metrics["shop_header_gap"])
 
     if section == "inventory":
         y0 = max(oy0, inv_y - 12)
-        y1 = min(oy1, max(mid_y, inv_y + 34 + max(0, inventory_rows) * inv_row_h + 10))
+        y1 = min(oy1, max(y0 + 16, inv_row_y + max(0, inventory_rows) * inv_row_h))
     elif section == "shopping":
-        y0 = max(oy0, mid_y - 18)
-        y1 = min(oy1, max(y0 + 16, shop_start_y + max(0, shopping_rows) * shop_row_h + 18))
+        y0 = max(oy0, shop_rule_y - 12)
+        y1 = min(oy1, max(y0 + 16, shop_row_y + max(0, shopping_rows) * shop_row_h))
     else:
         return None
 
