@@ -14,6 +14,12 @@ from app.render.refresh_policy import build_ui_snapshot, infer_dirty_rects_with_
 from app.render.panel import build_panel_theme
 from app.shared.fonts import FontBook
 from app.ui.app import render_app
+from app.ui.home_kitchen import render_home_kitchen
+from app.ui.home_kitchen_geometry import (
+    home_landscape_header_focus_box,
+    home_portrait_header_focus_source_box,
+)
+from app.ui.home_kitchen_portrait import render_home_kitchen_portrait
 
 
 def _test_font_book() -> FontBook:
@@ -449,6 +455,28 @@ class HomeKitchenFocusTests(unittest.TestCase):
         assert diff_bbox is not None and merged is not None
         self.assertTrue(rect_contains(merged, diff_bbox, slack=2))
 
+    def test_landscape_weather_focus_renders_bottom_edge(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            weather=[WeatherDay(dow="MON", icon="cloud", hi=19, lo=11, humidity=66)],
+        )
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.focused_index = 1
+
+        theme = build_panel_theme({"home_variant": "kitchen", "panel_mode": True})
+        fonts = _test_font_book()
+        image = Image.new("1", (800, 480), 255)
+        render_home_kitchen(image, state, fonts, theme)
+
+        box = home_landscape_header_focus_box(800, 480, kind="weather")
+        self.assertIsNotNone(box)
+        assert box is not None
+        x0, _y0, x1, y1 = box
+        pixels = image.load()
+        dark = sum(1 for x in range(x0 + 12, x1 - 12) if pixels[x, y1] == 0)
+        self.assertGreater(dark, 8)
+
     def test_landscape_shopping_focus_dirty_rect_covers_actual_diff(self) -> None:
         model = DashboardModel(
             location="Toronto",
@@ -485,6 +513,107 @@ class HomeKitchenFocusTests(unittest.TestCase):
         self.assertIsNotNone(merged)
         assert diff_bbox is not None and merged is not None
         self.assertTrue(rect_contains(merged, diff_bbox, slack=2))
+
+    def test_portrait_weather_to_inventory_focus_dirty_rect_covers_actual_diff(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            reminders=[
+                Reminder(rid="f1", title="Fresh Milk", right="EXP 3D", completed=False, category="fridge"),
+                Reminder(rid="f2", title="Leftover Pizza", right="ADDED YDAY", completed=False, category="fridge"),
+                Reminder(rid="f3", title="Marinated Chicken", right="USE TNITE", completed=False, category="fridge"),
+                Reminder(rid="s1", title="Doctor Appointment", completed=False, category="shopping"),
+            ],
+            weather=[WeatherDay(dow="MON", icon="cloud", hi=19, lo=11, humidity=66)],
+            memos=[MemoItem(mid="m1", text="Can someone pick up packages?", author="Alex", timestamp=1700000000.0)],
+        )
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.rotation_deg = 90
+        prev.ui.focused_index = 1
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.rotation_deg = 90
+        curr.ui.focused_index = 2
+
+        theme = build_panel_theme({"home_variant": "kitchen_portrait", "panel_mode": True})
+        fonts = _test_font_book()
+        prev_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        curr_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        render_app(prev_img, prev, fonts, theme)
+        render_app(curr_img, curr, fonts, theme)
+
+        diff_bbox = _diff_bbox(prev_img, curr_img)
+        self.assertIsNotNone(diff_bbox)
+        rects, _ = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert diff_bbox is not None and merged is not None
+        self.assertTrue(rect_contains(merged, diff_bbox, slack=2))
+
+    def test_portrait_clock_focus_dirty_rect_covers_actual_diff(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            reminders=[
+                Reminder(rid="f1", title="Fresh Milk", right="EXP 3D", completed=False, category="fridge"),
+                Reminder(rid="s1", title="Doctor Appointment", completed=False, category="shopping"),
+            ],
+            weather=[WeatherDay(dow="MON", icon="cloud", hi=19, lo=11, humidity=66)],
+            memos=[MemoItem(mid="m1", text="Can someone pick up packages?", author="Alex", timestamp=1700000000.0)],
+        )
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.rotation_deg = 90
+        prev.ui.focused_index = 2
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.rotation_deg = 90
+        curr.ui.focused_index = 0
+
+        theme = build_panel_theme({"home_variant": "kitchen_portrait", "panel_mode": True})
+        fonts = _test_font_book()
+        prev_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        curr_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        render_app(prev_img, prev, fonts, theme)
+        render_app(curr_img, curr, fonts, theme)
+
+        diff_bbox = _diff_bbox(prev_img, curr_img)
+        self.assertIsNotNone(diff_bbox)
+        rects, _ = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert diff_bbox is not None and merged is not None
+        self.assertTrue(rect_contains(merged, diff_bbox, slack=2))
+
+    def test_portrait_clock_focus_renders_left_edge(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            weather=[WeatherDay(dow="MON", icon="cloud", hi=19, lo=11, humidity=66)],
+        )
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        state.ui.focused_index = 0
+
+        theme = build_panel_theme({"home_variant": "kitchen_portrait", "panel_mode": True})
+        fonts = _test_font_book()
+        image = Image.new("1", (480, 800), 255)
+        render_home_kitchen_portrait(image, state, fonts, theme)
+
+        box = home_portrait_header_focus_source_box(
+            480,
+            800,
+            kind="clock",
+            has_weather_data=True,
+            has_humidity=True,
+        )
+        self.assertIsNotNone(box)
+        assert box is not None
+        x0, y0, _x1, y1 = box
+        pixels = image.load()
+        dark = sum(1 for y in range(y0 + 12, y1 - 12) if pixels[x0, y] == 0)
+        self.assertGreater(dark, 8)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from PIL import ImageDraw
 from app.core.kitchen_queue import kitchen_queue_theme_key, kitchen_visible_task_indices
 from app.core.state import AppState
 from app.shared.draw import draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
+from app.ui.home_kitchen_geometry import home_portrait_header_focus_source_box
 from app.ui.weather_detail import _draw_weather_icon_pack
 
 
@@ -428,15 +429,20 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     date_h = text_size(draw, "Ag", f_date)[1]
 
     if (not state.ui.idle) and focus_idx == 0:
-        focus_pad_x = int(t["bp_focus_pad_x"])
-        focus_pad_y = int(t["bp_focus_pad_y"])
         focus_radius = int(t["bp_focus_radius"])
         focus_w = max(1, int(t["bp_focus_w"]))
-        fx0 = left_x0 - focus_pad_x
-        fx1 = left_x1 + focus_pad_x
-        fy0 = max(header_y0 + pad, time_y - focus_pad_y)
-        fy1 = min(header_y1 - pad, date_y + date_h + focus_pad_y)
-        if fy1 > fy0 and fx1 > fx0:
+        box = home_portrait_header_focus_source_box(
+            w,
+            h,
+            kind="clock",
+            has_weather_data=bool(state.model.weather),
+            has_humidity=bool(
+                state.model.weather
+                and getattr(state.model.weather[0], "humidity", None) is not None
+            ),
+        )
+        if box is not None:
+            fx0, fy0, fx1, fy1 = box
             rounded_rect(
                 draw,
                 (fx0, fy0, fx1, fy1),
@@ -524,15 +530,20 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         )
 
     if (not state.ui.idle) and focus_idx == 1:
-        focus_pad_x = int(t["bp_focus_pad_x"])
-        focus_pad_y = int(t["bp_focus_pad_y"])
         focus_radius = int(t["bp_focus_radius"])
         focus_w = max(1, int(t["bp_focus_w"]))
-        fx0 = weather_x0 - focus_pad_x
-        fx1 = weather_right + focus_pad_x
-        fy0 = max(header_y0 + pad, weather_top - focus_pad_y)
-        fy1 = min(header_y1 - pad, weather_bottom + focus_pad_y)
-        if fy1 > fy0 and fx1 > fx0:
+        box = home_portrait_header_focus_source_box(
+            w,
+            h,
+            kind="weather",
+            has_weather_data=bool(state.model.weather),
+            has_humidity=bool(
+                state.model.weather
+                and getattr(state.model.weather[0], "humidity", None) is not None
+            ),
+        )
+        if box is not None:
+            fx0, fy0, fx1, fy1 = box
             rounded_rect(
                 draw,
                 (fx0, fy0, fx1, fy1),

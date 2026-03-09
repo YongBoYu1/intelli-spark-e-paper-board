@@ -13,6 +13,7 @@ from app.core.kitchen_queue import (
 )
 from app.core.state import AppState
 from app.shared.draw import draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
+from app.ui.home_kitchen_geometry import home_landscape_header_focus_box
 from app.ui.weather_detail import _draw_weather_icon_pack
 
 
@@ -636,15 +637,11 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         weather_bottom = max(weather_bottom, desc_y + dh2, humidity_bottom)
 
     if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 0:
-        focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
-        focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
         focus_radius = int(t.get("b_right_focus_radius", 5))
         focus_w = max(1, int(t.get("b_right_focus_w", 1)))
-        fx0 = lx0 - focus_pad_x
-        fx1 = max(fx0 + 16, weather_left - max(6, int(t["b_time_weather_gap"]) // 2))
-        fy0 = max(oy0 + 2, clock_y - focus_pad_y)
-        fy1 = clock_bottom + focus_pad_y
-        if fy1 > fy0 and fx1 > fx0:
+        box = home_landscape_header_focus_box(w, h, kind="clock")
+        if box is not None:
+            fx0, fy0, fx1, fy1 = box
             rounded_rect(
                 draw,
                 (fx0, fy0, fx1, fy1),
@@ -655,16 +652,11 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             )
 
     if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 1:
-        focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
-        focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
-        focus_right_trim = int(t.get("b_right_focus_right_trim", 2))
         focus_radius = int(t.get("b_right_focus_radius", 5))
         focus_w = max(1, int(t.get("b_right_focus_w", 1)))
-        fy0 = max(oy0 + 2, top_y + int(t.get("b_weather_top", 0)) - focus_pad_y)
-        fy1 = weather_bottom + focus_pad_y
-        fx0 = weather_left - focus_pad_x
-        fx1 = weather_right + focus_pad_x - focus_right_trim
-        if fy1 > fy0 and fx1 > fx0:
+        box = home_landscape_header_focus_box(w, h, kind="weather")
+        if box is not None:
+            fx0, fy0, fx1, fy1 = box
             rounded_rect(
                 draw,
                 (fx0, fy0, fx1, fy1),

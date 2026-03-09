@@ -5,6 +5,11 @@ from typing import Iterable
 
 from app.core.settings_schema import SETTINGS_GROUPS, SETTINGS_ORDER
 from app.core.state import AppState, Screen
+from app.ui.home_kitchen_geometry import (
+    closed_box_to_rect,
+    home_landscape_header_focus_box,
+    home_portrait_header_focus_source_box,
+)
 from app.ui.menu import home_menu_overlay_rect
 
 Rect = tuple[int, int, int, int]
@@ -546,13 +551,38 @@ def _home_portrait_focus_row_rect(
     hidden_rids: tuple[str, ...] = (),
 ) -> Rect | None:
     metrics = _home_portrait_source_metrics(width, height)
-    source_rect = _home_portrait_row_source_rect(
+    source_box = _home_portrait_row_source_rect(
         width,
         height,
         reminders_digest=reminders_digest,
         focus_rid=focus_rid,
         hidden_rids=hidden_rids,
     )
+    if source_box is None:
+        return None
+    source_rect = closed_box_to_rect(source_box, outline_width=1, extra_pad=7)
+    if source_rect is None:
+        return None
+    return _transform_source_rect(source_rect, metrics["src_w"], metrics["src_h"], rotation_deg)
+
+
+def _home_portrait_header_focus_rect(
+    width: int,
+    height: int,
+    *,
+    rotation_deg: int,
+    kind: str,
+    weather_digest: tuple,
+) -> Rect | None:
+    metrics = _home_portrait_source_metrics(width, height)
+    source_box = home_portrait_header_focus_source_box(
+        width,
+        height,
+        kind=kind,
+        has_weather_data=bool(weather_digest),
+        has_humidity=bool(weather_digest and weather_digest[0][4] is not None),
+    )
+    source_rect = closed_box_to_rect(source_box, outline_width=1)
     if source_rect is None:
         return None
     return _transform_source_rect(source_rect, metrics["src_w"], metrics["src_h"], rotation_deg)
@@ -875,21 +905,23 @@ def _home_focus_row_rect(
 
     if pos < inv_count:
         row_y = inv_row_y + (pos * inv_row_h)
-        y0 = row_y + focus_pad_y
-        y1 = row_y + inv_row_h - focus_pad_y
+        box = (x0, row_y + focus_pad_y, x1, row_y + inv_row_h - focus_pad_y)
     else:
         pos -= inv_count
         if pos < 0 or pos >= rem_count:
             return None
         row_y = shop_row_y + (pos * shop_row_h)
-        y0 = row_y + focus_pad_y
-        y1 = row_y + shop_row_h - focus_pad_y
+        box = (x0, row_y + focus_pad_y, x1, row_y + shop_row_h - focus_pad_y)
 
-    y0 = max(oy0, y0)
-    y1 = min(oy1, y1)
-    if x1 <= x0 or y1 <= y0:
+    rect = closed_box_to_rect(box, outline_width=1, extra_pad=7)
+    if rect is None:
         return None
-    return (x0, y0, x1, y1)
+    rx0, ry0, rx1, ry1 = rect
+    ry0 = max(oy0, ry0)
+    ry1 = min(oy1, ry1)
+    if rx1 <= rx0 or ry1 <= ry0:
+        return None
+    return (rx0, ry0, rx1, ry1)
 
 
 def _home_focus_kind(focus_index: int) -> str:
@@ -1005,37 +1037,8 @@ def _home_landscape_shopping_row_y(metrics: dict[str, int], inventory_rows: int)
 
 
 def _home_landscape_header_focus_rect(width: int, height: int, *, kind: str) -> Rect | None:
-    metrics = _home_landscape_metrics(width, height)
-    w = metrics["w"]
-    h = metrics["h"]
-    ox0 = metrics["ox0"]
-    oy0 = metrics["oy0"]
-    oy1 = metrics["oy1"]
-    top_y = metrics["top_y"]
-    lx0 = metrics["lx0"]
-    weather_left = metrics["weather_left"]
-    weather_right = metrics["weather_right"]
-    weather_top = metrics["weather_top"]
-    weather_bottom = metrics["weather_bottom"]
-    focus_pad_x = metrics["focus_pad_x"]
-    focus_pad_y = metrics["focus_pad_y"]
-    focus_right_trim = metrics["focus_right_trim"]
-
-    if kind == "clock":
-        x0 = lx0 - focus_pad_x
-        x1 = max(x0 + 16, weather_left - 7)
-        y0 = max(oy0 + 2, top_y - 28)
-        y1 = min(oy1, top_y + 142)
-        return _clip_rect((x0, y0, x1, y1), w, h)
-
-    if kind == "weather":
-        x0 = weather_left - focus_pad_x
-        x1 = weather_right + focus_pad_x - focus_right_trim
-        y0 = max(oy0 + 2, weather_top - focus_pad_y)
-        y1 = min(oy1, weather_bottom + focus_pad_y)
-        return _clip_rect((x0, y0, x1, y1), w, h)
-
-    return None
+    rect = closed_box_to_rect(home_landscape_header_focus_box(width, height, kind=kind), outline_width=1)
+    return _clip_rect(rect, max(1, int(width)), max(1, int(height))) if rect is not None else None
 
 
 def _home_landscape_focus_rect(
@@ -1096,15 +1099,28 @@ def _home_portrait_focus_rect(
     *,
     rotation_deg: int,
     focus_index: int,
+    weather_digest: tuple,
     reminders_digest: tuple,
     focus_rid: str,
     hidden_rids: tuple[str, ...] = (),
 ) -> Rect | None:
     kind = _home_focus_kind(focus_index)
     if kind == "clock":
-        return home_regions["header_clock"]
+        return _home_portrait_header_focus_rect(
+            width,
+            height,
+            rotation_deg=rotation_deg,
+            kind="clock",
+            weather_digest=weather_digest,
+        )
     if kind == "weather":
-        return home_regions["header_weather"]
+        return _home_portrait_header_focus_rect(
+            width,
+            height,
+            rotation_deg=rotation_deg,
+            kind="weather",
+            weather_digest=weather_digest,
+        )
     return _home_portrait_focus_row_rect(
         width,
         height,
@@ -1276,6 +1292,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
                 height,
                 rotation_deg=prev.rotation_deg,
                 focus_index=prev.focused_index,
+                weather_digest=prev.weather_digest,
                 reminders_digest=prev.reminders_digest,
                 focus_rid=prev_focus_rid,
                 hidden_rids=prev.home_hidden_rids,
@@ -1286,6 +1303,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
                 height,
                 rotation_deg=curr.rotation_deg,
                 focus_index=curr.focused_index,
+                weather_digest=curr.weather_digest,
                 reminders_digest=curr.reminders_digest,
                 focus_rid=curr_focus_rid,
                 hidden_rids=curr.home_hidden_rids,
