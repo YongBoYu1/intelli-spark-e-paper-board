@@ -8,7 +8,7 @@ from app.core.state import AppState, Screen
 from app.ui.home_kitchen_geometry import (
     closed_box_to_rect,
     home_landscape_header_focus_box,
-    home_portrait_header_focus_source_box,
+    home_portrait_header_focus_source_box_for_panel,
 )
 from app.ui.menu import home_menu_overlay_rect
 
@@ -575,7 +575,7 @@ def _home_portrait_header_focus_rect(
     weather_digest: tuple,
 ) -> Rect | None:
     metrics = _home_portrait_source_metrics(width, height)
-    source_box = home_portrait_header_focus_source_box(
+    source_box = home_portrait_header_focus_source_box_for_panel(
         width,
         height,
         kind=kind,

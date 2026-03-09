@@ -776,11 +776,11 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             state.ui.menu_focused = order[idx]
         elif state.ui.screen == Screen.HOME:
             if _is_kitchen_variant(variant):
-                # First rotate after click releases pinned-focus hold.
+                # After a portrait click, keep second-click undo available until the next rotate.
+                # The first rotate should still advance focus by one step.
                 if str(state.ui.kitchen_focus_rid_override or "").strip():
                     state.ui.kitchen_focus_rid_override = ""
-                else:
-                    state.ui.focused_index += event.delta
+                state.ui.focused_index += event.delta
                 _clamp_focus_kitchen(state, theme)
             else:
                 state.ui.focused_index += event.delta

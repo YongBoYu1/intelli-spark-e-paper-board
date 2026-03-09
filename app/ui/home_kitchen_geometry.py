@@ -72,10 +72,7 @@ def home_landscape_header_focus_box(width: int, height: int, *, kind: str) -> Cl
     return None
 
 
-def _home_portrait_source_metrics(width: int, height: int) -> dict[str, int]:
-    src_w = max(1, int(height))
-    src_h = max(1, int(width))
-
+def _home_portrait_header_metrics(src_w: int, src_h: int) -> dict[str, int]:
     margin = 8
     pad = 8
     sec_gap = 4
@@ -118,14 +115,14 @@ def _home_portrait_source_metrics(width: int, height: int) -> dict[str, int]:
 
 
 def home_portrait_header_focus_source_box(
-    width: int,
-    height: int,
+    src_width: int,
+    src_height: int,
     *,
     kind: str,
     has_weather_data: bool,
     has_humidity: bool,
 ) -> ClosedBox | None:
-    metrics = _home_portrait_source_metrics(width, height)
+    metrics = _home_portrait_header_metrics(max(1, int(src_width)), max(1, int(src_height)))
     pad = metrics["pad"]
     header_y0 = metrics["header_y0"]
     header_y1 = metrics["header_y1"]
@@ -177,3 +174,20 @@ def home_portrait_header_focus_source_box(
     y0 = max(header_y0 + pad, weather_top - focus_pad_y)
     y1 = min(header_y1 - pad, weather_bottom + focus_pad_y)
     return (x0, y0, x1, y1)
+
+
+def home_portrait_header_focus_source_box_for_panel(
+    width: int,
+    height: int,
+    *,
+    kind: str,
+    has_weather_data: bool,
+    has_humidity: bool,
+) -> ClosedBox | None:
+    return home_portrait_header_focus_source_box(
+        max(1, int(height)),
+        max(1, int(width)),
+        kind=kind,
+        has_weather_data=has_weather_data,
+        has_humidity=has_humidity,
+    )
