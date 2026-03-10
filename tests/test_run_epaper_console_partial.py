@@ -33,8 +33,8 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         self.assertFalse(rec._partial_budget_enabled_with_theme({}))
 
     def test_onboarding_is_in_default_partial_whitelist(self) -> None:
-        self.assertTrue(rec._screen_partial_enabled_with_theme(rec.Screen.ONBOARDING, {}))
-        self.assertTrue(rec._screen_partial_enabled_with_theme(rec.Screen.LANDING, {}))
+        self.assertFalse(rec._screen_partial_enabled_with_theme(rec.Screen.ONBOARDING, {}))
+        self.assertFalse(rec._screen_partial_enabled_with_theme(rec.Screen.LANDING, {}))
 
     def test_partial_gate_uses_total_area_not_single_rect_peak(self) -> None:
         rects = [

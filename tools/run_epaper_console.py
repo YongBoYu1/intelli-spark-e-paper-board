@@ -689,7 +689,10 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     if bool(theme.get("refresh_partial_enable_all", False)):
         return True
 
-    default_screens = "settings,timer,home,menu,landing,onboarding"
+    # Keep onboarding/landing on full refresh by default:
+    # those first-boot pages are text-heavy and repeated partial updates can
+    # wash out perceived contrast on some 7.5" V2 panels.
+    default_screens = "settings,timer,home,menu"
     default_names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
     raw = theme.get("refresh_partial_screens", default_screens)
     if isinstance(raw, str):
