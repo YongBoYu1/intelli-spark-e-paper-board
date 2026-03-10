@@ -135,24 +135,24 @@ def home_portrait_header_focus_source_box(
     focus_pad_x = 6
     focus_pad_y = 4
     time_y = max(-4, hy0 - 22)
-    time_h = _approx_font_height(112, scale=0.78, minimum=68)
+    time_h = _approx_font_height(112, scale=1.0, minimum=84)
     week_y = time_y + time_h + 4
     week_h = _approx_font_height(15, scale=0.86, minimum=12)
     date_y = week_y + week_h + 8
-    date_h = _approx_font_height(19, scale=0.86, minimum=15)
+    date_h = _approx_font_height(19, scale=0.96, minimum=18)
 
     if kind == "clock":
         x0 = left_x0 - focus_pad_x
         x1 = left_x1 + focus_pad_x
         y0 = max(header_y0 + pad, time_y - focus_pad_y)
-        y1 = min(header_y1 - pad, date_y + date_h + focus_pad_y)
+        y1 = min(header_y1 - pad, date_y + date_h + focus_pad_y + 4)
         return (x0, y0, x1, y1)
 
     if kind != "weather":
         return None
 
     weather_top = max(4, time_y - 4)
-    weather_right = weather_x1 - 14
+    weather_right = weather_x1 - 18
     temp_h = _approx_font_height(58, scale=0.78, minimum=42)
     icon_size = 34
     desc_h = _approx_font_height(14, scale=0.86, minimum=12)
