@@ -544,11 +544,6 @@ def _render_frame(
             gamma = min(gamma, 0.92)
         gamma = max(0.6, min(1.2, gamma))
     out = quantize_for_panel(rgb, threshold=threshold, gamma=gamma, dither=panel_dither)
-    if screen in (Screen.LANDING, Screen.ONBOARDING):
-        # E-ink on first-boot pages is sensitive to thin anti-aliased strokes.
-        # Expand dark pixels by 1px to keep borders/text from looking washed out.
-        thick = out.convert("L").filter(ImageFilter.MinFilter(size=3))
-        out = thick.point(lambda p: 255 if p >= 128 else 0, mode="1")
     return out
 
 
