@@ -120,6 +120,33 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
             self.assertEqual(kwargs.get("threshold"), 140)
             self.assertAlmostEqual(float(kwargs.get("gamma")), 0.88, places=3)
 
+    def test_render_frame_onboarding_applies_dark_stroke_expand(self) -> None:
+        epd = _FakeEpd()
+        epd.width = 800
+        epd.height = 480
+        state = AppState(model=DashboardModel())
+        state.ui.screen = rec.Screen.ONBOARDING
+
+        class _Fonts:
+            def get(self, _k, _s):
+                from PIL import ImageFont
+                return ImageFont.load_default()
+
+        base = Image.new("1", (800, 480), 255)
+        with patch("tools.run_epaper_console.render_app"), patch("tools.run_epaper_console.quantize_for_panel", return_value=base):
+            out = rec._render_frame(
+                epd,
+                state,
+                _Fonts(),
+                {},
+                panel_threshold=168,
+                panel_muted=150,
+                panel_gamma=1.0,
+                panel_dither=False,
+            )
+        self.assertEqual(out.mode, "1")
+        self.assertEqual(out.size, (800, 480))
+
     @patch("tools.run_epaper_console.resolve_weather_data")
     @patch("tools.run_epaper_console.resolve_dashboard_location")
     def test_refresh_live_weather_updates_state(self, mock_resolve_location, mock_resolve_weather) -> None:

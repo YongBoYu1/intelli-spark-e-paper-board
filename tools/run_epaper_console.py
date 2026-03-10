@@ -25,7 +25,7 @@ import tempfile
 import time
 import tty
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageFilter
 
 # Ensure repo root is importable when running this script directly.
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -543,7 +543,13 @@ def _render_frame(
         except Exception:
             gamma = min(gamma, 0.92)
         gamma = max(0.6, min(1.2, gamma))
-    return quantize_for_panel(rgb, threshold=threshold, gamma=gamma, dither=panel_dither)
+    out = quantize_for_panel(rgb, threshold=threshold, gamma=gamma, dither=panel_dither)
+    if screen in (Screen.LANDING, Screen.ONBOARDING):
+        # E-ink on first-boot pages is sensitive to thin anti-aliased strokes.
+        # Expand dark pixels by 1px to keep borders/text from looking washed out.
+        thick = out.convert("L").filter(ImageFilter.MinFilter(size=3))
+        out = thick.point(lambda p: 255 if p >= 128 else 0, mode="1")
+    return out
 
 
 def _state_render_sig(state: AppState):
