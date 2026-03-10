@@ -46,8 +46,8 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         self.assertFalse(rec._partial_budget_enabled_with_theme({}))
 
     def test_onboarding_is_in_default_partial_whitelist(self) -> None:
-        self.assertFalse(rec._screen_partial_enabled_with_theme(rec.Screen.ONBOARDING, {}))
-        self.assertFalse(rec._screen_partial_enabled_with_theme(rec.Screen.LANDING, {}))
+        self.assertTrue(rec._screen_partial_enabled_with_theme(rec.Screen.ONBOARDING, {}))
+        self.assertTrue(rec._screen_partial_enabled_with_theme(rec.Screen.LANDING, {}))
 
     def test_onboarding_force_full_clean_default(self) -> None:
         self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.ONBOARDING, {}))

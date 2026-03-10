@@ -705,8 +705,8 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     if bool(theme.get("refresh_partial_enable_all", False)):
         return True
 
-    # Keep onboarding/landing out of partial whitelist by default.
-    default_screens = "settings,timer,home,menu"
+    # Keep first-boot flows on partial-first path (same as other interactive screens).
+    default_screens = "settings,timer,home,menu,landing,onboarding"
     default_names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
     raw = theme.get("refresh_partial_screens", default_screens)
     if isinstance(raw, str):
