@@ -616,6 +616,13 @@ def _blit_full(epd, image: Image.Image, current_mode: str, *, fast: bool) -> str
     return current_mode
 
 
+def _blit_full_clean(epd, image: Image.Image) -> str:
+    # Force a clean full refresh cycle regardless of current driver mode.
+    epd.init()
+    epd.display(epd.getbuffer(image))
+    return "full"
+
+
 def _timer_partial_full_every(theme: dict) -> int:
     # Avoid forcing full refresh too frequently during active countdown ticks.
     try:
@@ -707,6 +714,19 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     if not bool(theme.get("refresh_partial_screens_strict", False)):
         names = sorted(set(default_names) | set(names))
 
+    screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
+    return screen_name in set(names)
+
+
+def _screen_force_full_clean_with_theme(screen: Screen, theme: dict) -> bool:
+    default_screens = "landing,onboarding"
+    raw = theme.get("refresh_force_full_clean_screens", default_screens)
+    if isinstance(raw, str):
+        names = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, (list, tuple)):
+        names = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
     screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
     return screen_name in set(names)
 
@@ -1784,6 +1804,7 @@ def main() -> int:
                 force_full_clean = bool(full_clean_reason)
                 screen_changed = pending_snapshot.screen != committed_snapshot.screen
                 rotation_changed = pending_snapshot.rotation_deg != committed_snapshot.rotation_deg
+                screen_force_clean = _screen_force_full_clean_with_theme(pending_snapshot.screen, theme)
                 screen_change_partial = (
                     screen_changed
                     and _screen_change_partial_enabled_with_theme(
@@ -1793,7 +1814,7 @@ def main() -> int:
                     )
                 )
                 font_size_changed = pending_snapshot.font_size != committed_snapshot.font_size
-                force_flush = force_full_clean or screen_changed or rotation_changed
+                force_flush = force_full_clean or screen_changed or rotation_changed or screen_force_clean
 
                 if not refresh_runtime.should_throttle(now, min_gap_ms) or force_flush:
                     fast_full = _fast_full_enabled(theme)
@@ -1806,6 +1827,15 @@ def main() -> int:
                                     f"[refresh] R3_FULL_CLEAN screen={pending_snapshot.screen.value} "
                                     f"reason={full_clean_reason} partial_count={refresh_runtime.partial_count} "
                                     f"full_every={full_every_text} mode={policy_mode} "
+                                    f"dirty={','.join(pending_reasons) or '-'}"
+                                )
+                        elif screen_force_clean:
+                            driver_mode = _blit_full_clean(epd, pending_frame)
+                            refresh_runtime.mark_full_clean(now)
+                            if refresh_debug:
+                                print(
+                                    f"[refresh] R3_FULL_CLEAN screen={pending_snapshot.screen.value} "
+                                    f"reason=screen_policy_full_clean mode={policy_mode} "
                                     f"dirty={','.join(pending_reasons) or '-'}"
                                 )
                         elif rotation_changed:

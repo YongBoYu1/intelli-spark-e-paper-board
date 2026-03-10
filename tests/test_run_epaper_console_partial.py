@@ -14,6 +14,8 @@ class _FakeEpd:
     def __init__(self):
         self.mode = "full"
         self.partial_call = None
+        self.init_count = 0
+        self.full_display_count = 0
 
     def init_part(self):
         self.mode = "part"
@@ -23,9 +25,16 @@ class _FakeEpd:
 
     def init(self):
         self.mode = "full"
+        self.init_count += 1
 
     def display_Partial(self, image, x0, y0, x1, y1):
         self.partial_call = (image, x0, y0, x1, y1)
+
+    def getbuffer(self, image):
+        return image
+
+    def display(self, image):
+        self.full_display_count += 1
 
 
 class RunEpaperConsolePartialTests(unittest.TestCase):
@@ -35,6 +44,11 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
     def test_onboarding_is_in_default_partial_whitelist(self) -> None:
         self.assertFalse(rec._screen_partial_enabled_with_theme(rec.Screen.ONBOARDING, {}))
         self.assertFalse(rec._screen_partial_enabled_with_theme(rec.Screen.LANDING, {}))
+
+    def test_onboarding_force_full_clean_default(self) -> None:
+        self.assertTrue(rec._screen_force_full_clean_with_theme(rec.Screen.ONBOARDING, {}))
+        self.assertTrue(rec._screen_force_full_clean_with_theme(rec.Screen.LANDING, {}))
+        self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.HOME, {}))
 
     def test_partial_gate_uses_total_area_not_single_rect_peak(self) -> None:
         rects = [
@@ -61,6 +75,16 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
 
         expected_len = ((x1 - x0) // 8) * (y1 - y0)
         self.assertEqual(len(payload), expected_len)
+
+    def test_blit_full_clean_reinits_driver(self) -> None:
+        epd = _FakeEpd()
+        frame = Image.new("1", (800, 480), 255)
+
+        mode = rec._blit_full_clean(epd, frame)
+
+        self.assertEqual(mode, "full")
+        self.assertEqual(epd.init_count, 1)
+        self.assertEqual(epd.full_display_count, 1)
 
     @patch("tools.run_epaper_console.resolve_weather_data")
     @patch("tools.run_epaper_console.resolve_dashboard_location")
