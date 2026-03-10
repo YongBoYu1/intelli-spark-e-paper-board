@@ -16,6 +16,7 @@ class _FakeEpd:
         self.partial_call = None
         self.init_count = 0
         self.full_display_count = 0
+        self.clear_count = 0
 
     def init_part(self):
         self.mode = "part"
@@ -35,6 +36,9 @@ class _FakeEpd:
 
     def display(self, image):
         self.full_display_count += 1
+
+    def Clear(self):
+        self.clear_count += 1
 
 
 class RunEpaperConsolePartialTests(unittest.TestCase):
@@ -84,6 +88,7 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
 
         self.assertEqual(mode, "full")
         self.assertEqual(epd.init_count, 1)
+        self.assertEqual(epd.clear_count, 1)
         self.assertEqual(epd.full_display_count, 1)
 
     @patch("tools.run_epaper_console.resolve_weather_data")

@@ -619,6 +619,9 @@ def _blit_full(epd, image: Image.Image, current_mode: str, *, fast: bool) -> str
 def _blit_full_clean(epd, image: Image.Image) -> str:
     # Force a clean full refresh cycle regardless of current driver mode.
     epd.init()
+    clear_fn = getattr(epd, "Clear", None)
+    if callable(clear_fn):
+        clear_fn()
     epd.display(epd.getbuffer(image))
     return "full"
 
