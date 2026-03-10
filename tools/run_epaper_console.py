@@ -847,7 +847,7 @@ def _is_onboarding_compact_step(snapshot) -> bool:
     if snapshot.screen != Screen.ONBOARDING:
         return False
     step = str(snapshot.onboarding_step or "").strip().lower()
-    return step in ("prefs", "voice_guide")
+    return step == "voice_guide"
 
 
 def _prioritize_home_focus_dirty(

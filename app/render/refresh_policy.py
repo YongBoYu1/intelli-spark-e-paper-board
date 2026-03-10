@@ -426,7 +426,7 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             "prefs_meta": (38, 118, w - 38, 150),
             "prefs_rows": (38, 146, w - 38, max(146, h - 92)),
             "prefs_next": (36, max(0, h - 88), w - 36, h - 18),
-            "prefs_panel": (34, 112, w - 34, h - 16),
+            "prefs_panel": (36, 142, w - 36, h - 18),
             "voice_top": (32, 36, w - 32, 224),
             "voice_result": (32, 220, w - 32, 346),
             "voice_status": (32, 342, w - 32, max(342, h - 80)),

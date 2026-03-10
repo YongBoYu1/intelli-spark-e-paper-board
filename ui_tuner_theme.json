@@ -77,7 +77,7 @@
   "refresh_partial_screen_change_screens": "memo,calendar,inventory,reminders,landing,onboarding",
   "refresh_mode_menu": "fast",
   "refresh_mode_landing": "fast",
-  "refresh_mode_onboarding": "fast",
+  "refresh_mode_onboarding": "slow",
   "refresh_partial_budget_enabled": false,
   "refresh_force_full_clean_screens": "",
   "refresh_area_limit_home": 0.24,
