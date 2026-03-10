@@ -237,7 +237,7 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.20)
 
-    def test_onboarding_voice_focus_uses_compact_action_region(self) -> None:
+    def test_onboarding_voice_focus_uses_stable_panel_region(self) -> None:
         prev = AppState(model=DashboardModel())
         prev.ui.screen = Screen.ONBOARDING
         prev.ui.onboarding_step = "voice_guide"
@@ -253,7 +253,8 @@ class RefreshPolicyTests(unittest.TestCase):
         merged = merge_rects(rects, 800, 480)
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
-        self.assertLess(ratio, 0.15)
+        self.assertGreater(ratio, 0.75)
+        self.assertLess(ratio, 0.90)
 
     def test_onboarding_start_focus_rotated_90_stays_compact(self) -> None:
         prev = AppState(model=DashboardModel())

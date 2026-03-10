@@ -424,10 +424,12 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             "prefs_meta": (38, 118, w - 38, 150),
             "prefs_rows": (38, 146, w - 38, max(146, h - 92)),
             "prefs_next": (36, max(0, h - 88), w - 36, h - 18),
+            "prefs_panel": (34, 112, w - 34, h - 16),
             "voice_top": (32, 36, w - 32, 224),
             "voice_result": (32, 220, w - 32, 346),
             "voice_status": (32, 342, w - 32, max(342, h - 80)),
             "voice_action": (max(0, (w - 360) // 2) - 12, max(0, h - 74), min(w, (w + 360) // 2) + 12, h - 18),
+            "voice_panel": (30, 32, w - 30, h - 14),
             "done_summary": (36, 50, w - 36, max(50, h - 112)),
             "done_button": (max(0, (w - 320) // 2) - 12, max(0, h - 112), min(w, (w + 320) // 2) + 12, h - 34),
         }
@@ -531,17 +533,6 @@ def _home_menu_overlay_region(width: int, height: int) -> Rect:
     y0 = max(80, cy - 46)
     y1 = min(h - 80, y0 + 102)
     return (x0, y0, x1, y1)
-
-
-def _split_vertical_region(rect: Rect, index: int, parts: int, *, pad: int = 2) -> Rect:
-    x0, y0, x1, y1 = rect
-    p = max(1, int(parts))
-    idx = max(0, min(p - 1, int(index)))
-    total_h = max(1, y1 - y0)
-    part_h = max(1, int(total_h / p))
-    sy0 = y0 + (idx * part_h)
-    sy1 = y1 if idx == p - 1 else y0 + ((idx + 1) * part_h)
-    return (x0 - pad, sy0 - pad, x1 + pad, sy1 + pad)
 
 
 def _home_visible_section_counts(reminders_digest: tuple, *, inv_max: int = 3, rem_max: int = 5) -> tuple[int, int]:
@@ -722,11 +713,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             return rects, reasons
         if curr.onboarding_step == "prefs":
             if prev.onboarding_prefs_focus_index != curr.onboarding_prefs_focus_index:
-                if 3 in (prev.onboarding_prefs_focus_index, curr.onboarding_prefs_focus_index):
-                    rects.append(regions["prefs_next"])
-                for idx in {int(prev.onboarding_prefs_focus_index), int(curr.onboarding_prefs_focus_index)}:
-                    if 0 <= idx <= 2:
-                        rects.append(_split_vertical_region(regions["prefs_rows"], idx, 3, pad=4))
+                rects.append(regions["prefs_panel"])
                 reasons.append("onboarding.prefs_focus")
             if (
                 prev.device_language != curr.device_language
@@ -735,23 +722,12 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
                 or prev.auto_sync_enabled != curr.auto_sync_enabled
                 or prev.onboarding_wifi_ssid != curr.onboarding_wifi_ssid
             ):
-                value_rects: list[Rect] = []
-                if prev.onboarding_wifi_ssid != curr.onboarding_wifi_ssid:
-                    value_rects.append(regions["prefs_meta"])
-                if prev.device_language != curr.device_language or prev.voice_locale != curr.voice_locale:
-                    value_rects.append(_split_vertical_region(regions["prefs_rows"], 0, 3, pad=4))
-                if prev.device_timezone != curr.device_timezone:
-                    value_rects.append(_split_vertical_region(regions["prefs_rows"], 1, 3, pad=4))
-                if prev.auto_sync_enabled != curr.auto_sync_enabled:
-                    value_rects.append(_split_vertical_region(regions["prefs_rows"], 2, 3, pad=4))
-                if not value_rects:
-                    value_rects.append(regions["prefs_rows"])
-                rects.extend(value_rects)
+                rects.append(regions["prefs_panel"])
                 reasons.append("onboarding.prefs_value")
             return rects, reasons
         if curr.onboarding_step == "voice_guide":
             if prev.onboarding_voice_guide_focus_index != curr.onboarding_voice_guide_focus_index:
-                rects.append(regions["voice_action"])
+                rects.append(regions["voice_panel"])
                 reasons.append("onboarding.voice_focus")
             if (
                 prev.onboarding_status != curr.onboarding_status
@@ -763,35 +739,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
                 or prev.onboarding_voice_sample_text != curr.onboarding_voice_sample_text
                 or prev.onboarding_voice_expected_action != curr.onboarding_voice_expected_action
             ):
-                demo_rects: list[Rect] = []
-                if (
-                    prev.onboarding_voice_sample_text != curr.onboarding_voice_sample_text
-                    or prev.onboarding_voice_expected_action != curr.onboarding_voice_expected_action
-                ):
-                    demo_rects.append(regions["voice_top"])
-                if (
-                    prev.onboarding_voice_demo_heard != curr.onboarding_voice_demo_heard
-                    or prev.onboarding_voice_demo_attempted != curr.onboarding_voice_demo_attempted
-                ):
-                    demo_rects.append(regions["voice_result"])
-                if prev.onboarding_status != curr.onboarding_status:
-                    demo_rects.append(regions["voice_status"])
-                if (
-                    prev.onboarding_voice_demo_case_index != curr.onboarding_voice_demo_case_index
-                    or prev.onboarding_voice_demo_pass_mask != curr.onboarding_voice_demo_pass_mask
-                    or prev.onboarding_voice_demo_action != curr.onboarding_voice_demo_action
-                ):
-                    demo_rects.extend([regions["voice_action"], regions["voice_status"]])
-                if not demo_rects:
-                    demo_rects.extend(
-                        [
-                            regions["voice_top"],
-                            regions["voice_result"],
-                            regions["voice_status"],
-                            regions["voice_action"],
-                        ]
-                    )
-                rects.extend(demo_rects)
+                rects.append(regions["voice_panel"])
                 reasons.append("onboarding.voice_demo")
             return rects, reasons
         if (

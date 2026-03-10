@@ -1927,6 +1927,10 @@ def main() -> int:
                                 max_rects=partial_max_rects,
                                 merge_overflow=not compact_onboarding,
                             )
+                            if compact_onboarding and len(aligned_rects) > 1:
+                                merged_compact = merge_rects(aligned_rects, epd.width, epd.height)
+                                if merged_compact is not None:
+                                    aligned_rects = [merged_compact]
                             partial_enabled = _screen_partial_enabled_with_theme(pending_snapshot.screen, theme)
                             mode_limit = _screen_area_limit_with_theme(
                                 pending_snapshot.screen,
