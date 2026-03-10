@@ -682,14 +682,14 @@ def _fast_full_enabled(theme: dict) -> bool:
 
 
 def _partial_budget_enabled_with_theme(theme: dict) -> bool:
-    return bool(theme.get("refresh_partial_budget_enabled", True))
+    return bool(theme.get("refresh_partial_budget_enabled", False))
 
 
 def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     if bool(theme.get("refresh_partial_enable_all", False)):
         return True
 
-    default_screens = "settings,timer,memo,calendar,inventory,reminders"
+    default_screens = "settings,timer,home,menu,landing,onboarding"
     default_names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
     raw = theme.get("refresh_partial_screens", default_screens)
     if isinstance(raw, str):
@@ -706,6 +706,17 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
 
     screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
     return screen_name in set(names)
+
+
+def _partial_gate_area_ratio(
+    rects: list[tuple[int, int, int, int]],
+    *,
+    width: int,
+    height: int,
+) -> float:
+    if not rects:
+        return 1.0
+    return min(1.0, sum(rect_area_ratio(r, width, height) for r in rects))
 
 
 def _screen_change_partial_enabled_with_theme(prev_screen: Screen, curr_screen: Screen, theme: dict) -> bool:
@@ -1865,11 +1876,16 @@ def main() -> int:
                                 if aligned_rects
                                 else 1.0
                             )
+                            gate_area_ratio = _partial_gate_area_ratio(
+                                aligned_rects,
+                                width=epd.width,
+                                height=epd.height,
+                            )
                             if (
                                 supports_partial
                                 and partial_enabled
                                 and aligned_rects
-                                and max_area_ratio <= mode_limit
+                                and gate_area_ratio <= mode_limit
                             ):
                                 for rect in aligned_rects:
                                     driver_mode = _blit_partial(epd, pending_frame, rect, driver_mode)
@@ -1880,6 +1896,7 @@ def main() -> int:
                                         f"[refresh] R1_PARTIAL_RECTS screen={pending_snapshot.screen.value} "
                                         f"count={len(aligned_rects)} rects={rect_text} "
                                         f"max_ratio={max_area_ratio:.3f} total_ratio={total_area_ratio:.3f} "
+                                        f"gate_ratio={gate_area_ratio:.3f} "
                                         f"limit={mode_limit:.3f} partial_count={refresh_runtime.partial_count}/{full_every_text} "
                                         f"mode={policy_mode} dirty={','.join(pending_reasons) or '-'}"
                                     )
@@ -1892,11 +1909,12 @@ def main() -> int:
                                         why = "partial_disabled_for_screen"
                                     elif not aligned_rects:
                                         why = "no_aligned_rect"
-                                    elif max_area_ratio > mode_limit:
+                                    elif gate_area_ratio > mode_limit:
                                         why = "area_over_limit"
                                     print(
                                         f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} reason={why} "
                                         f"max_ratio={max_area_ratio:.3f} total_ratio={total_area_ratio:.3f} "
+                                        f"gate_ratio={gate_area_ratio:.3f} "
                                         f"limit={mode_limit:.3f} "
                                         f"mode={policy_mode} fast={'on' if fast_full else 'off'} "
                                         f"dirty={','.join(pending_reasons) or '-'}"

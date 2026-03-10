@@ -29,6 +29,24 @@ class _FakeEpd:
 
 
 class RunEpaperConsolePartialTests(unittest.TestCase):
+    def test_partial_budget_default_matches_playbook(self) -> None:
+        self.assertFalse(rec._partial_budget_enabled_with_theme({}))
+
+    def test_onboarding_is_in_default_partial_whitelist(self) -> None:
+        self.assertTrue(rec._screen_partial_enabled_with_theme(rec.Screen.ONBOARDING, {}))
+        self.assertTrue(rec._screen_partial_enabled_with_theme(rec.Screen.LANDING, {}))
+
+    def test_partial_gate_uses_total_area_not_single_rect_peak(self) -> None:
+        rects = [
+            (0, 120, 800, 360),
+            (0, 350, 800, 480),
+        ]
+        max_ratio = max(rec.rect_area_ratio(r, 800, 480) for r in rects)
+        gate_ratio = rec._partial_gate_area_ratio(rects, width=800, height=480)
+
+        self.assertLess(max_ratio, 0.70)
+        self.assertGreater(gate_ratio, 0.70)
+
     def test_blit_partial_uses_end_coords_and_partial_buffer(self) -> None:
         epd = _FakeEpd()
         frame = Image.new("1", (800, 480), 255)
