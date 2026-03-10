@@ -527,7 +527,23 @@ def _render_frame(
     t = build_panel_theme(theme, muted_gray=panel_muted)
     rgb = Image.new("RGB", (epd.width, epd.height), t.get("bg", (255, 255, 255)))
     render_app(rgb, state, fonts, t)
-    return quantize_for_panel(rgb, threshold=panel_threshold, gamma=panel_gamma, dither=panel_dither)
+    threshold = int(panel_threshold)
+    gamma = float(panel_gamma)
+    screen = state.ui.screen
+    if screen in (Screen.LANDING, Screen.ONBOARDING):
+        # Onboarding has thinner text + larger white space than home. Keep a
+        # slightly heavier tone map to avoid washed-out look on 7.5" V2.
+        try:
+            threshold = int(theme.get("panel_threshold_onboarding", threshold - 20))
+        except Exception:
+            threshold = threshold - 20
+        threshold = max(80, min(220, threshold))
+        try:
+            gamma = float(theme.get("panel_gamma_onboarding", min(gamma, 0.92)))
+        except Exception:
+            gamma = min(gamma, 0.92)
+        gamma = max(0.6, min(1.2, gamma))
+    return quantize_for_panel(rgb, threshold=threshold, gamma=gamma, dither=panel_dither)
 
 
 def _state_render_sig(state: AppState):

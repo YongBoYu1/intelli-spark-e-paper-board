@@ -83,6 +83,8 @@
   "refresh_enable_fast_full": false,
   "memo_rotate_s": 8,
   "memo_rotate_pause_after_interaction_s": 2.5,
+  "panel_threshold_onboarding": 148,
+  "panel_gamma_onboarding": 0.92,
   "home_variant": "kitchen_portrait",
   "rotation_deg": 90
 }

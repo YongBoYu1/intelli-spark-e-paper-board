@@ -82,5 +82,7 @@
   "refresh_area_limit_home_menu_overlay": 0.60,
   "refresh_enable_fast_full": false,
   "memo_rotate_s": 8,
-  "memo_rotate_pause_after_interaction_s": 2.5
+  "memo_rotate_pause_after_interaction_s": 2.5,
+  "panel_threshold_onboarding": 148,
+  "panel_gamma_onboarding": 0.92
 }
