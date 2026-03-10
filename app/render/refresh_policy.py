@@ -24,6 +24,41 @@ def mode_params(mode: str) -> ModeParams:
     return ModeParams(min_refresh_gap_ms=120, partial_area_limit=0.65, default_full_refresh_every=10)
 
 
+def _normalized_right_angle(deg: int | float | str | None) -> int:
+    try:
+        value = int(deg or 0)
+    except Exception:
+        value = 0
+    return ((value + 45) // 90 * 90) % 360
+
+
+def _rotate_rect(rect: Rect, src_width: int, src_height: int, rotation_deg: int) -> Rect:
+    rot = _normalized_right_angle(rotation_deg)
+    if rot == 0:
+        return rect
+
+    x0, y0, x1, y1 = rect
+    points = [
+        (x0, y0),
+        (x1, y0),
+        (x1, y1),
+        (x0, y1),
+    ]
+
+    rotated: list[tuple[int, int]] = []
+    for x, y in points:
+        if rot == 90:
+            rotated.append((y, src_width - x))
+        elif rot == 180:
+            rotated.append((src_width - x, src_height - y))
+        else:  # 270
+            rotated.append((src_height - y, x))
+
+    xs = [p[0] for p in rotated]
+    ys = [p[1] for p in rotated]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
 def screen_partial_area_limit(screen: Screen, mode: str) -> float:
     base = mode_params(mode).partial_area_limit
     if screen in (Screen.LANDING, Screen.ONBOARDING):
@@ -350,8 +385,13 @@ def _voice_overlay_region(width: int, height: int, *, rotation_deg: int = 0) -> 
 
 
 def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: int = 0) -> dict[str, Rect]:
-    w = max(1, int(width))
-    h = max(1, int(height))
+    rot = _normalized_right_angle(rotation_deg)
+    if screen in (Screen.LANDING, Screen.ONBOARDING) and rot in (90, 270):
+        w = max(1, int(height))
+        h = max(1, int(width))
+    else:
+        w = max(1, int(width))
+        h = max(1, int(height))
     # Match home_kitchen.py defaults closely to reduce diff-fallback expansions.
     margin = 18
     ox0, oy0, ox1, oy1 = margin, margin, max(margin + 1, w - margin), max(margin + 1, h - margin)
@@ -361,14 +401,20 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
         content_x0 = 34
         content_x1 = w - 34
         mid_y = h // 2
-        return {
+        regions = {
             "full": (0, 0, w, h),
             "tips": (content_x0, 96, content_x1, min(h, 260)),
             "language": (content_x0, max(0, mid_y + 12), content_x1, min(h, mid_y + 118)),
             "status_button": (content_x0, max(0, h - 122), content_x1, h - 18),
         }
+        if rot in (90, 270):
+            return {
+                key: _rotate_rect(value, w, h, rot)
+                for key, value in regions.items()
+            }
+        return regions
     if screen == Screen.ONBOARDING:
-        return {
+        regions = {
             "full": (0, 0, w, h),
             "start_choices": (max(0, (w - 430) // 2) - 8, 210, min(w, (w + 430) // 2) + 8, 386),
             "start_footer": (32, max(0, h - 76), w - 32, h),
@@ -384,6 +430,12 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             "done_summary": (36, 50, w - 36, max(50, h - 112)),
             "done_button": (max(0, (w - 320) // 2) - 12, max(0, h - 112), min(w, (w + 320) // 2) + 12, h - 34),
         }
+        if rot in (90, 270):
+            return {
+                key: _rotate_rect(value, w, h, rot)
+                for key, value in regions.items()
+            }
+        return regions
     if screen == Screen.SETTINGS:
         footer_h = 40
         return {
@@ -641,7 +693,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             reasons.append("onboarding.step_change")
             return rects, reasons
         if curr.onboarding_step == "start" and prev.onboarding_focus_index != curr.onboarding_focus_index:
-            rects.extend([regions["start_choices"], regions["start_footer"]])
+            rects.append(regions["start_choices"])
             reasons.append("onboarding.start_focus")
             return rects, reasons
         if curr.onboarding_step == "pair_qr":

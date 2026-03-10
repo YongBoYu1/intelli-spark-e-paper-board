@@ -255,6 +255,31 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.15)
 
+    def test_onboarding_start_focus_rotated_90_stays_compact(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.ONBOARDING
+        prev.ui.rotation_deg = 90
+        prev.ui.onboarding_step = "start"
+        prev.ui.onboarding_focus_index = 0
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.ONBOARDING
+        curr.ui.rotation_deg = 90
+        curr.ui.onboarding_step = "start"
+        curr.ui.onboarding_focus_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("onboarding.start_focus", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        x0, y0, x1, y1 = merged or (0, 0, 0, 0)
+        self.assertGreaterEqual(x0, 0)
+        self.assertGreaterEqual(y0, 0)
+        self.assertLessEqual(x1, 800)
+        self.assertLessEqual(y1, 480)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.40)
+
     def test_home_click_toggle_prefers_row_dirty_rect(self) -> None:
         model_prev = DashboardModel()
         model_prev.reminders = []
