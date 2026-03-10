@@ -1,0 +1,10 @@
+{
+  "setup_completed": false,
+  "language": "en-US",
+  "voice_locale": "en-US",
+  "timezone": "America/Toronto",
+  "auto_sync_enabled": true,
+  "wifi_enabled": false,
+  "bluetooth_enabled": false,
+  "wifi_ssid": ""
+}

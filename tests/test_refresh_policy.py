@@ -99,6 +99,34 @@ class RefreshPolicyTests(unittest.TestCase):
         _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("menu.focus_move", reasons)
 
+    def test_onboarding_step_change_generates_full_dirty_reason(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.ONBOARDING
+        prev.ui.onboarding_step = "start"
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.ONBOARDING
+        curr.ui.onboarding_step = "pair_qr"
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("onboarding.step_change", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertEqual(merged, (0, 0, 800, 480))
+
+    def test_landing_demo_change_updates_partial_regions(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.LANDING
+        prev.ui.landing_voice_demo_index = 0
+        prev.ui.landing_status = "Rotate"
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.LANDING
+        curr.ui.landing_voice_demo_index = 1
+        curr.ui.landing_status = "Confirm"
+
+        _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("landing.demo_or_status", reasons)
+
     def test_memo_rotate_change_generates_memo_focus_reason(self) -> None:
         model = DashboardModel()
         model.memos = [

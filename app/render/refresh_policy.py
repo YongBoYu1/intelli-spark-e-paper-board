@@ -26,6 +26,8 @@ def mode_params(mode: str) -> ModeParams:
 
 def screen_partial_area_limit(screen: Screen, mode: str) -> float:
     base = mode_params(mode).partial_area_limit
+    if screen in (Screen.LANDING, Screen.ONBOARDING):
+        return max(0.70, min(base + 0.20, 0.92))
     if screen == Screen.TIMER:
         return min(0.95, base + 0.20)
     if screen == Screen.MEMO:
@@ -191,6 +193,31 @@ class RefreshPolicyRuntime:
 class UiSnapshot:
     screen: Screen
     rotation_deg: int
+    setup_completed: bool
+    landing_rotate_seen: bool
+    landing_confirm_seen: bool
+    landing_voice_demo_index: int
+    landing_voice_demo_cycles: int
+    landing_status: str
+    onboarding_step: str
+    onboarding_focus_index: int
+    onboarding_qr_focus_index: int
+    onboarding_prefs_focus_index: int
+    onboarding_voice_guide_focus_index: int
+    onboarding_pair_token: str
+    onboarding_pair_expires_at: int
+    onboarding_status: str
+    onboarding_voice_demo_heard: str
+    onboarding_voice_demo_attempted: bool
+    onboarding_voice_demo_case_index: int
+    onboarding_voice_demo_pass_mask: int
+    onboarding_voice_demo_action: str
+    onboarding_voice_sample_text: str
+    onboarding_voice_expected_action: str
+    onboarding_wifi_ssid: str
+    device_language: str
+    device_timezone: str
+    voice_locale: str
     font_size: str
     focused_index: int
     menu_focused: str
@@ -230,6 +257,31 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
     return UiSnapshot(
         screen=state.ui.screen,
         rotation_deg=int(state.ui.rotation_deg or 0),
+        setup_completed=bool(state.ui.setup_completed),
+        landing_rotate_seen=bool(state.ui.landing_rotate_seen),
+        landing_confirm_seen=bool(state.ui.landing_confirm_seen),
+        landing_voice_demo_index=int(state.ui.landing_voice_demo_index or 0),
+        landing_voice_demo_cycles=int(state.ui.landing_voice_demo_cycles or 0),
+        landing_status=str(state.ui.landing_status or ""),
+        onboarding_step=str(state.ui.onboarding_step or "start"),
+        onboarding_focus_index=int(state.ui.onboarding_focus_index or 0),
+        onboarding_qr_focus_index=int(state.ui.onboarding_qr_focus_index or 0),
+        onboarding_prefs_focus_index=int(state.ui.onboarding_prefs_focus_index or 0),
+        onboarding_voice_guide_focus_index=int(state.ui.onboarding_voice_guide_focus_index or 0),
+        onboarding_pair_token=str(state.ui.onboarding_pair_token or ""),
+        onboarding_pair_expires_at=int(float(state.ui.onboarding_pair_expires_at or 0.0)),
+        onboarding_status=str(state.ui.onboarding_status or ""),
+        onboarding_voice_demo_heard=str(state.ui.onboarding_voice_demo_heard or ""),
+        onboarding_voice_demo_attempted=bool(state.ui.onboarding_voice_demo_attempted),
+        onboarding_voice_demo_case_index=int(state.ui.onboarding_voice_demo_case_index or 0),
+        onboarding_voice_demo_pass_mask=int(state.ui.onboarding_voice_demo_pass_mask or 0),
+        onboarding_voice_demo_action=str(state.ui.onboarding_voice_demo_action or ""),
+        onboarding_voice_sample_text=str(state.ui.onboarding_voice_sample_text or ""),
+        onboarding_voice_expected_action=str(state.ui.onboarding_voice_expected_action or ""),
+        onboarding_wifi_ssid=str(state.ui.onboarding_wifi_ssid or ""),
+        device_language=str(state.ui.device_language or "en-US"),
+        device_timezone=str(state.ui.device_timezone or "UTC"),
+        voice_locale=str(state.ui.voice_locale or "en-US"),
         font_size=str(state.ui.font_size or "medium"),
         focused_index=int(state.ui.focused_index or 0),
         menu_focused=str(state.ui.menu_focused.value if hasattr(state.ui.menu_focused, "value") else state.ui.menu_focused),
@@ -305,6 +357,20 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
     ox0, oy0, ox1, oy1 = margin, margin, max(margin + 1, w - margin), max(margin + 1, h - margin)
     split_x = ox0 + int((ox1 - ox0) * 0.60)
     left_split = split_x
+    if screen == Screen.LANDING:
+        return {
+            "full": (0, 0, w, h),
+            "mid": (max(0, 32), max(0, h // 3), min(w, w - 32), min(h, h - 92)),
+            "footer": (max(0, 30), max(0, h - 92), min(w, w - 30), h),
+        }
+    if screen == Screen.ONBOARDING:
+        return {
+            "full": (0, 0, w, h),
+            "left": (0, 0, max(1, w // 2), h),
+            "right": (max(0, w // 2), 0, w, h),
+            "bottom": (0, max(0, h - 130), w, h),
+            "middle": (0, max(0, h // 4), w, min(h, (h * 3) // 4)),
+        }
     if screen == Screen.SETTINGS:
         footer_h = 40
         return {
@@ -507,6 +573,8 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
     if prev.screen != curr.screen:
         w = max(1, int(width))
         h = max(1, int(height))
+        if curr.screen in (Screen.LANDING, Screen.ONBOARDING):
+            return [(0, 0, w, h)], [f"screen.change_to_{curr.screen.value}"]
         if curr.screen == Screen.MEMO:
             mid = w // 2
             return [(0, 0, mid, h), (mid, 0, w, h)], ["screen.change_to_memo"]
@@ -523,6 +591,92 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
     regions = _screen_regions(curr.screen, width, height, rotation_deg=curr.rotation_deg)
     rects: list[Rect] = []
     reasons: list[str] = []
+
+    if curr.screen == Screen.LANDING:
+        if (
+            prev.setup_completed != curr.setup_completed
+            or prev.landing_rotate_seen != curr.landing_rotate_seen
+            or prev.landing_confirm_seen != curr.landing_confirm_seen
+            or prev.landing_voice_demo_cycles != curr.landing_voice_demo_cycles
+            or prev.screen != curr.screen
+        ):
+            rects.append(regions["full"])
+            reasons.append("landing.state_change")
+            return rects, reasons
+        if (
+            prev.landing_voice_demo_index != curr.landing_voice_demo_index
+            or prev.landing_status != curr.landing_status
+        ):
+            rects.extend([regions["mid"], regions["footer"]])
+            reasons.append("landing.demo_or_status")
+            return rects, reasons
+        if prev.onboarding_pair_expires_at != curr.onboarding_pair_expires_at:
+            rects.append(regions["footer"])
+            reasons.append("landing.footer_countdown")
+        return rects, reasons
+
+    if curr.screen == Screen.ONBOARDING:
+        if prev.onboarding_step != curr.onboarding_step:
+            rects.append(regions["full"])
+            reasons.append("onboarding.step_change")
+            return rects, reasons
+        if curr.onboarding_step == "start" and prev.onboarding_focus_index != curr.onboarding_focus_index:
+            rects.append(regions["left"])
+            reasons.append("onboarding.start_focus")
+            return rects, reasons
+        if curr.onboarding_step == "pair_qr":
+            if prev.onboarding_qr_focus_index != curr.onboarding_qr_focus_index:
+                rects.append(regions["bottom"])
+                reasons.append("onboarding.qr_focus")
+            if (
+                prev.onboarding_pair_token != curr.onboarding_pair_token
+                or prev.onboarding_pair_expires_at != curr.onboarding_pair_expires_at
+                or prev.onboarding_status != curr.onboarding_status
+            ):
+                rects.extend([regions["left"], regions["right"], regions["bottom"]])
+                reasons.append("onboarding.qr_payload")
+            return rects, reasons
+        if curr.onboarding_step == "prefs":
+            if prev.onboarding_prefs_focus_index != curr.onboarding_prefs_focus_index:
+                rects.append(regions["middle"])
+                reasons.append("onboarding.prefs_focus")
+            if (
+                prev.device_language != curr.device_language
+                or prev.voice_locale != curr.voice_locale
+                or prev.device_timezone != curr.device_timezone
+                or prev.auto_sync_enabled != curr.auto_sync_enabled
+                or prev.onboarding_wifi_ssid != curr.onboarding_wifi_ssid
+            ):
+                rects.append(regions["middle"])
+                reasons.append("onboarding.prefs_value")
+            return rects, reasons
+        if curr.onboarding_step == "voice_guide":
+            if prev.onboarding_voice_guide_focus_index != curr.onboarding_voice_guide_focus_index:
+                rects.append(regions["bottom"])
+                reasons.append("onboarding.voice_focus")
+            if (
+                prev.onboarding_status != curr.onboarding_status
+                or prev.onboarding_voice_demo_heard != curr.onboarding_voice_demo_heard
+                or prev.onboarding_voice_demo_attempted != curr.onboarding_voice_demo_attempted
+                or prev.onboarding_voice_demo_case_index != curr.onboarding_voice_demo_case_index
+                or prev.onboarding_voice_demo_pass_mask != curr.onboarding_voice_demo_pass_mask
+                or prev.onboarding_voice_demo_action != curr.onboarding_voice_demo_action
+                or prev.onboarding_voice_sample_text != curr.onboarding_voice_sample_text
+                or prev.onboarding_voice_expected_action != curr.onboarding_voice_expected_action
+            ):
+                rects.extend([regions["middle"], regions["bottom"]])
+                reasons.append("onboarding.voice_demo")
+            return rects, reasons
+        if (
+            prev.device_language != curr.device_language
+            or prev.voice_locale != curr.voice_locale
+            or prev.device_timezone != curr.device_timezone
+            or prev.auto_sync_enabled != curr.auto_sync_enabled
+            or prev.onboarding_wifi_ssid != curr.onboarding_wifi_ssid
+        ):
+            rects.append(regions["full"])
+            reasons.append("onboarding.done_summary")
+        return rects, reasons
 
     if curr.screen == Screen.SETTINGS:
         if prev.settings_focused_index != curr.settings_focused_index:

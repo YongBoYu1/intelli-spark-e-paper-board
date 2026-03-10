@@ -32,9 +32,26 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from app.core.reducer import reduce, Rotate, Click, LongPress, RotateButton, Back, Tick
+from app.core.reducer import (
+    reduce,
+    Rotate,
+    Click,
+    LongPress,
+    RotateButton,
+    Back,
+    Tick,
+    apply_onboarding_voice_demo_result,
+    apply_onboarding_voice_demo_error,
+    open_onboarding_voice_guide,
+)
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
 from app.data.location import resolve_dashboard_location
+from app.data.device_config import (
+    detect_local_timezone,
+    load_device_config,
+    sanitize_device_config,
+    save_device_config,
+)
 from app.data.weather_api import resolve_weather_data
 from app.render.epd import init_epd
 from app.render.panel import build_panel_theme, quantize_for_panel
@@ -467,6 +484,33 @@ def _warn_missing_fonts(fonts: FontBook) -> None:
         print(f"  - {key}: {path}")
 
 
+def _device_config_from_state(state: AppState) -> dict:
+    return sanitize_device_config(
+        {
+            "setup_completed": bool(state.ui.setup_completed),
+            "language": str(state.ui.device_language or "en-US"),
+            "voice_locale": str(state.ui.voice_locale or "en-US"),
+            "timezone": str(state.ui.device_timezone or "UTC"),
+            "auto_sync_enabled": bool(state.ui.auto_sync_enabled),
+            "wifi_enabled": bool(state.ui.wifi_enabled),
+            "bluetooth_enabled": bool(state.ui.bluetooth_enabled),
+            "wifi_ssid": str(state.ui.onboarding_wifi_ssid or ""),
+        }
+    )
+
+
+def _apply_device_config_to_state(state: AppState, config: dict) -> None:
+    cfg = sanitize_device_config(config)
+    state.ui.setup_completed = bool(cfg.get("setup_completed", False))
+    state.ui.device_language = str(cfg.get("language") or "en-US")
+    state.ui.voice_locale = str(cfg.get("voice_locale") or "en-US")
+    state.ui.device_timezone = str(cfg.get("timezone") or detect_local_timezone())
+    state.ui.auto_sync_enabled = bool(cfg.get("auto_sync_enabled", True))
+    state.ui.wifi_enabled = bool(cfg.get("wifi_enabled", False))
+    state.ui.bluetooth_enabled = bool(cfg.get("bluetooth_enabled", False))
+    state.ui.onboarding_wifi_ssid = str(cfg.get("wifi_ssid") or "")
+
+
 def _render_frame(
     epd,
     state: AppState,
@@ -490,6 +534,26 @@ def _state_render_sig(state: AppState):
     return (
         state.model.location,
         state.ui.screen,
+        state.ui.setup_completed,
+        state.ui.landing_rotate_seen,
+        state.ui.landing_confirm_seen,
+        state.ui.landing_voice_demo_index,
+        state.ui.landing_voice_demo_cycles,
+        state.ui.landing_status,
+        state.ui.onboarding_step,
+        state.ui.onboarding_focus_index,
+        state.ui.onboarding_qr_focus_index,
+        state.ui.onboarding_prefs_focus_index,
+        state.ui.onboarding_voice_guide_focus_index,
+        state.ui.onboarding_pair_token,
+        int(state.ui.onboarding_pair_expires_at or 0),
+        state.ui.onboarding_status,
+        state.ui.onboarding_voice_demo_heard,
+        state.ui.onboarding_voice_demo_attempted,
+        state.ui.onboarding_wifi_ssid,
+        state.ui.device_language,
+        state.ui.device_timezone,
+        state.ui.voice_locale,
         state.ui.focused_index,
         state.ui.page,
         state.ui.idle,
@@ -949,6 +1013,7 @@ def _run_voice_flow(
     current_mode: str,
     supports_partial: bool,
     refresh_debug: bool,
+    demo_only: bool = False,
 ) -> tuple[str, bool]:
     state.ui.idle = False
     state.ui.last_interaction_at = time.time()
@@ -1027,22 +1092,26 @@ def _run_voice_flow(
         transcript = ""
         if isinstance(payload, dict):
             transcript = str(payload.get("transcript") or "").strip()
-        plan = parse_voice_plan(payload)
-        plan_result = apply_voice_plan(state, plan, transcript=transcript)
-        action_desc = ", ".join([describe_voice_action(a) for a in list(plan.actions or [])[:4]])
-        if not action_desc:
-            action_desc = describe_voice_action(parse_voice_action(payload))
-        heard = transcript if transcript else "-"
-        shown = (
-            f"Heard: {heard}\n"
-            f"Action: {action_desc}\n"
-            f"Result: {plan_result.message}"
-        )
-        hold_s = 2.2
-        if str(plan_result.status or "") == "confirm":
-            remaining_confirm_s = max(0.0, float(state.ui.voice_confirm_due_at or 0.0) - time.time())
-            hold_s = max(hold_s, remaining_confirm_s + 0.2)
-        _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
+        if demo_only:
+            apply_onboarding_voice_demo_result(state, transcript)
+            _set_voice_overlay(state, "idle")
+        else:
+            plan = parse_voice_plan(payload)
+            plan_result = apply_voice_plan(state, plan, transcript=transcript)
+            action_desc = ", ".join([describe_voice_action(a) for a in list(plan.actions or [])[:4]])
+            if not action_desc:
+                action_desc = describe_voice_action(parse_voice_action(payload))
+            heard = transcript if transcript else "-"
+            shown = (
+                f"Heard: {heard}\n"
+                f"Action: {action_desc}\n"
+                f"Result: {plan_result.message}"
+            )
+            hold_s = 2.2
+            if str(plan_result.status or "") == "confirm":
+                remaining_confirm_s = max(0.0, float(state.ui.voice_confirm_due_at or 0.0) - time.time())
+                hold_s = max(hold_s, remaining_confirm_s + 0.2)
+            _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
         driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
@@ -1058,7 +1127,11 @@ def _run_voice_flow(
         )
         did_render_step = True
     except VoiceClientError as e:
-        _set_voice_overlay(state, "error", str(e), hold_s=2.5)
+        if demo_only:
+            apply_onboarding_voice_demo_error(state, str(e))
+            _set_voice_overlay(state, "idle")
+        else:
+            _set_voice_overlay(state, "error", str(e), hold_s=2.5)
         driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
@@ -1074,7 +1147,11 @@ def _run_voice_flow(
         )
         did_render_step = True
     except Exception as e:
-        _set_voice_overlay(state, "error", f"Voice failed: {e}", hold_s=2.5)
+        if demo_only:
+            apply_onboarding_voice_demo_error(state, str(e))
+            _set_voice_overlay(state, "idle")
+        else:
+            _set_voice_overlay(state, "error", f"Voice failed: {e}", hold_s=2.5)
         driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
@@ -1189,7 +1266,7 @@ def main() -> int:
         help="Live weather refresh interval in hours (default: 12; at 12h it aligns to local 00:00/12:00; <=0 disables periodic refresh)",
     )
     parser.add_argument("--voice-api-url", default=os.environ.get("VOICE_API_URL", ""), help="Backend URL for POST /voice/interpret")
-    parser.add_argument("--voice-locale", default=os.environ.get("VOICE_LOCALE", "zh-CN"), help="Locale sent to backend")
+    parser.add_argument("--voice-locale", default=os.environ.get("VOICE_LOCALE", "en-US"), help="Locale sent to backend")
     parser.add_argument("--voice-timezone", default=os.environ.get("VOICE_TIMEZONE", "UTC"), help="Timezone sent to backend")
     parser.add_argument("--voice-timeout", type=float, default=float(os.environ.get("VOICE_TIMEOUT_S", "20")), help="Backend timeout seconds")
     parser.add_argument("--voice-max-sec", type=int, default=int(os.environ.get("VOICE_MAX_SEC", "6")), help="Recording duration in seconds")
@@ -1235,6 +1312,40 @@ def main() -> int:
     fonts = _build_fonts(repo_root)
     _warn_missing_fonts(fonts)
     state = AppState(model=_load_model(repo_root))
+    device_config = load_device_config(repo_root)
+    _apply_device_config_to_state(state, device_config)
+    state.ui.boot_started_at = time.time()
+    state.ui.boot_min_show_s = 0.0
+    state.ui.landing_rotate_seen = False
+    state.ui.landing_confirm_seen = False
+    state.ui.landing_voice_demo_index = (
+        1 if str(state.ui.voice_locale or "en-US") == "es-ES"
+        else (2 if str(state.ui.voice_locale or "en-US") == "fr-FR" else 0)
+    )
+    state.ui.landing_voice_demo_cycles = 0
+    state.ui.landing_last_demo_at = time.time()
+    state.ui.landing_status = ""
+    state.ui.onboarding_focus_index = 0
+    state.ui.onboarding_qr_focus_index = 0
+    state.ui.onboarding_prefs_focus_index = 0
+    state.ui.onboarding_voice_guide_focus_index = 0
+    state.ui.onboarding_voice_demo_heard = ""
+    state.ui.onboarding_voice_demo_attempted = False
+    state.ui.onboarding_voice_demo_case_index = 0
+    state.ui.onboarding_voice_demo_pass_mask = 0
+    state.ui.onboarding_voice_demo_action = ""
+    state.ui.onboarding_voice_sample_text = "Add milk to inventory"
+    state.ui.onboarding_voice_expected_action = "Add inventory"
+    if bool(state.ui.setup_completed):
+        state.ui.screen = Screen.HOME
+    elif bool(theme.get("boot_landing_enabled", True)):
+        # Landing is first-boot only.
+        state.ui.screen = Screen.LANDING
+    else:
+        state.ui.screen = Screen.ONBOARDING
+        state.ui.onboarding_step = "start"
+    persisted_device_config = _device_config_from_state(state)
+    save_device_config(repo_root, persisted_device_config)
     if not str(args.voice_api_url or "").strip():
         print("[warn] VOICE_API_URL not set. Voice flow will show network error until configured.")
 
@@ -1338,7 +1449,7 @@ def main() -> int:
             rotate_btn_ready = False
 
     try:
-        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice, R rotate screen (+90°), S settings, W weather, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice (or voice-demo in guide), R rotate screen (+90°), S settings, G voice guide, W weather, B/Esc back, Q quit")
         next_tick = time.time()
         next_weather_refresh_at = _next_weather_refresh_at(next_tick, weather_refresh_hours)
         if weather_refresh_s > 0:
@@ -1456,7 +1567,20 @@ def main() -> int:
                 else:
                     ev = Click()
             elif key == " ":
-                if (
+                in_voice_guide_demo = (
+                    state.ui.screen == Screen.ONBOARDING
+                    and str(state.ui.onboarding_step or "").strip().lower() == "voice_guide"
+                )
+                if ((not bool(state.ui.setup_completed)) or state.ui.screen in (Screen.LANDING, Screen.ONBOARDING)) and (not in_voice_guide_demo):
+                    msg = "Voice is available after first setup."
+                    if state.ui.screen == Screen.LANDING:
+                        state.ui.landing_status = msg
+                    elif state.ui.screen == Screen.ONBOARDING:
+                        state.ui.onboarding_status = msg
+                    if refresh_debug:
+                        print("[voice] ignore space trigger reason=onboarding_locked")
+                    ev = None
+                elif (
                     state.ui.voice_active
                     or (now - float(space_last_trigger_at)) < voice_space_cooldown_s
                 ):
@@ -1465,33 +1589,35 @@ def main() -> int:
                         why = "voice_active" if state.ui.voice_active else "space_cooldown"
                         print(f"[voice] ignore space trigger reason={why}")
                     continue
-                # Voice record + send flow on keyboard space.
-                driver_mode, voice_flow_ran = _run_voice_flow(
-                    state=state,
-                    epd=epd,
-                    fonts=fonts,
-                    theme=theme,
-                    panel_threshold=panel_threshold,
-                    panel_muted=panel_muted,
-                    panel_gamma=panel_gamma,
-                    panel_dither=panel_dither,
-                    voice_api_url=str(args.voice_api_url or ""),
-                    voice_locale=str(args.voice_locale or "zh-CN"),
-                    voice_timezone=str(args.voice_timezone or "UTC"),
-                    voice_timeout_s=float(args.voice_timeout),
-                    voice_max_sec=max(1, int(args.voice_max_sec)),
-                    voice_audio_device=str(args.voice_audio_device or "default"),
-                    voice_audio_rate=max(8000, int(args.voice_audio_rate)),
-                    voice_audio_channels=max(1, int(args.voice_audio_channels)),
-                    current_mode=driver_mode,
-                    supports_partial=bool(supports_partial),
-                    refresh_debug=bool(refresh_debug),
-                )
-                space_last_trigger_at = time.time()
-                buffered = _drain_stdin_nonblocking(max_chars=512)
-                if "\x03" in buffered or "q" in buffered.lower():
-                    return 0
-                ev = None
+                else:
+                    # Voice record + send flow on keyboard space.
+                    driver_mode, voice_flow_ran = _run_voice_flow(
+                        state=state,
+                        epd=epd,
+                        fonts=fonts,
+                        theme=theme,
+                        panel_threshold=panel_threshold,
+                        panel_muted=panel_muted,
+                        panel_gamma=panel_gamma,
+                        panel_dither=panel_dither,
+                        voice_api_url=str(args.voice_api_url or ""),
+                        voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
+                        voice_timezone=str(args.voice_timezone or "UTC"),
+                        voice_timeout_s=float(args.voice_timeout),
+                        voice_max_sec=max(1, int(args.voice_max_sec)),
+                        voice_audio_device=str(args.voice_audio_device or "default"),
+                        voice_audio_rate=max(8000, int(args.voice_audio_rate)),
+                        voice_audio_channels=max(1, int(args.voice_audio_channels)),
+                        current_mode=driver_mode,
+                        supports_partial=bool(supports_partial),
+                        refresh_debug=bool(refresh_debug),
+                        demo_only=bool(in_voice_guide_demo),
+                    )
+                    space_last_trigger_at = time.time()
+                    buffered = _drain_stdin_nonblocking(max_chars=512)
+                    if "\x03" in buffered or "q" in buffered.lower():
+                        return 0
+                    ev = None
             elif key in ("p", "P"):
                 # Keep a manual way to trigger legacy long-press behavior in console.
                 ev = LongPress()
@@ -1501,6 +1627,8 @@ def main() -> int:
                 ev = Back()
             elif key in ("s", "S"):
                 state.ui.screen = Screen.SETTINGS
+            elif key in ("g", "G"):
+                open_onboarding_voice_guide(state)
             elif key in ("w", "W"):
                 if state.ui.screen == Screen.HOME:
                     state.ui.screen = Screen.WEATHER
@@ -1514,6 +1642,16 @@ def main() -> int:
             if now >= next_tick:
                 reduce(state, Tick(now=now), theme=theme)
                 next_tick = now + float(args.tick)
+
+            current_device_config = _device_config_from_state(state)
+            if current_device_config != persisted_device_config:
+                try:
+                    save_device_config(repo_root, current_device_config)
+                    persisted_device_config = dict(current_device_config)
+                    if refresh_debug:
+                        print("[onboarding] device_config persisted")
+                except Exception as e:
+                    print(f"[warn] failed to persist device config: {e}")
 
             # Voice flow renders directly to EPD; resync committed snapshot/frame.
             if voice_flow_ran:
