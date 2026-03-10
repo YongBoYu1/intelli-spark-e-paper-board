@@ -31,24 +31,6 @@ def _draw_focus(draw, box: tuple[int, int, int, int], ink, *, width: int = 3, ra
     draw.rounded_rectangle(box, radius=radius, outline=ink, width=width)
 
 
-def _draw_crisp_card(
-    draw,
-    box: tuple[int, int, int, int],
-    *,
-    fill,
-    outline,
-    width: int = 3,
-) -> None:
-    x0, y0, x1, y1 = box
-    draw.rectangle((x0, y0, x1, y1), fill=fill)
-    for i in range(max(1, int(width))):
-        ix0, iy0 = x0 + i, y0 + i
-        ix1, iy1 = x1 - i, y1 - i
-        if ix1 <= ix0 or iy1 <= iy0:
-            break
-        draw.rectangle((ix0, iy0, ix1, iy1), outline=outline, width=1)
-
-
 def _clamp_i(v: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, int(v)))
 
@@ -219,7 +201,7 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
 
     draw.rectangle((0, 0, w, h), fill=bg)
     margin = _clamp_i(int(min(w, h) * 0.05), 14, 24)
-    _draw_crisp_card(draw, (margin, margin, w - margin, h - margin), fill=card, outline=border, width=3)
+    draw.rectangle((margin, margin, w - margin, h - margin), fill=card)
 
     content_x0 = margin + 16
     content_x1 = w - margin - 16
@@ -370,7 +352,7 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
 
     draw.rectangle((0, 0, w, h), fill=bg)
     outer = (18, 18, w - 18, h - 18)
-    _draw_crisp_card(draw, outer, fill=card, outline=border, width=3)
+    draw.rectangle(outer, fill=card)
 
     step = str(state.ui.onboarding_step or "start").strip().lower()
     if step != "voice_guide":
