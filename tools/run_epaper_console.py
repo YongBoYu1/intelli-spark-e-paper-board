@@ -779,6 +779,7 @@ def _prepare_partial_rects(
     height: int,
     pad: int,
     max_rects: int,
+    merge_overflow: bool = True,
 ) -> list[tuple[int, int, int, int]]:
     aligned: list[tuple[int, int, int, int]] = []
     for rect in rects:
@@ -801,6 +802,9 @@ def _prepare_partial_rects(
     if len(aligned) <= max_n:
         return aligned
 
+    if not bool(merge_overflow):
+        return aligned[:max_n]
+
     merged = merge_rects(aligned, width, height)
     return [merged] if merged is not None else []
 
@@ -818,7 +822,13 @@ def _diff_bbox_and_ratio(prev_frame: Image.Image, curr_frame: Image.Image) -> tu
 
 
 def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
-    if screen != Screen.HOME or not reasons:
+    if not reasons:
+        return False
+    if screen == Screen.ONBOARDING:
+        # For compact onboarding interactions, always keep latest target state and
+        # drop queued intermediates to avoid accumulated large dirty unions.
+        return any(r.startswith("onboarding.prefs_") or r.startswith("onboarding.voice_") for r in reasons)
+    if screen != Screen.HOME:
         return False
     allowed = {
         "home.focus_move_row",
@@ -1915,6 +1925,7 @@ def main() -> int:
                                 height=epd.height,
                                 pad=partial_pad,
                                 max_rects=partial_max_rects,
+                                merge_overflow=not compact_onboarding,
                             )
                             partial_enabled = _screen_partial_enabled_with_theme(pending_snapshot.screen, theme)
                             mode_limit = _screen_area_limit_with_theme(
