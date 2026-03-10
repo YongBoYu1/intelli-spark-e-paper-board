@@ -685,15 +685,15 @@ def _handle_onboarding_rotate(state: AppState, delta: int) -> None:
     d = 1 if delta >= 0 else -1
     if step == "start":
         idx = int(state.ui.onboarding_focus_index or 0)
-        state.ui.onboarding_focus_index = (idx + d) % 2
+        state.ui.onboarding_focus_index = max(0, min(1, idx + d))
         return
     if step == "pair_qr":
         idx = int(state.ui.onboarding_qr_focus_index or 0)
-        state.ui.onboarding_qr_focus_index = (idx + d) % 3
+        state.ui.onboarding_qr_focus_index = max(0, min(2, idx + d))
         return
     if step == "prefs":
         idx = int(state.ui.onboarding_prefs_focus_index or 0)
-        state.ui.onboarding_prefs_focus_index = (idx + d) % 4
+        state.ui.onboarding_prefs_focus_index = max(0, min(3, idx + d))
         return
     if step == "voice_guide":
         return
