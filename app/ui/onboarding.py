@@ -11,6 +11,22 @@ from app.shared.mic_icon import draw_mic_icon, normalize_mic_style
 from app.shared.panel_font_templates import apply_panel_font_template
 
 
+def _fill_and_text(fill_color, ink, bg):
+    return (fill_color, bg if fill_color == ink else ink)
+
+
+def _dark_muted(muted, ink):
+    try:
+        if isinstance(muted, tuple) and len(muted) >= 3:
+            base = int(sum(int(v) for v in muted[:3]) / 3)
+            v = max(70, min(120, base))
+            return (v, v, v)
+        base = int(muted)
+        return max(70, min(120, base))
+    except Exception:
+        return ink
+
+
 def _draw_focus(draw, box: tuple[int, int, int, int], ink, *, width: int = 3, radius: int = 12) -> None:
     draw.rounded_rectangle(box, radius=radius, outline=ink, width=width)
 
@@ -180,12 +196,12 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
     bg = theme.get("bg", 255)
     card = theme.get("card", 255)
     ink = theme.get("ink", 0)
-    muted = theme.get("muted", ink)
+    muted = _dark_muted(theme.get("muted", ink), ink)
     border = theme.get("border", ink)
 
     draw.rectangle((0, 0, w, h), fill=bg)
     margin = _clamp_i(int(min(w, h) * 0.05), 14, 24)
-    draw.rounded_rectangle((margin, margin, w - margin, h - margin), radius=18, outline=border, width=2, fill=card)
+    draw.rounded_rectangle((margin, margin, w - margin, h - margin), radius=18, outline=border, width=3, fill=card)
 
     content_x0 = margin + 16
     content_x1 = w - margin - 16
@@ -220,10 +236,12 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
         x1 = x0 + tip_w
         y0 = y + row * (tip_h + tip_gap_y)
         y1 = y0 + tip_h
-        draw.rounded_rectangle((x0, y0, x1, y1), radius=10, outline=border, width=2, fill=bg)
+        fill_color = ink if i < 2 else bg
+        draw.rounded_rectangle((x0, y0, x1, y1), radius=10, outline=border, width=2, fill=fill_color)
         top = truncate_text(draw, top, f["button"], max(60, tip_w - 20))
         top_w = draw.textlength(top, font=f["button"])
-        draw.text((x0 + (tip_w - top_w) / 2, y0 + 8), top, fill=ink, font=f["button"])
+        _, top_text = _fill_and_text(fill_color, ink, bg)
+        draw.text((x0 + (tip_w - top_w) / 2, y0 + 8), top, fill=top_text, font=f["button"])
         bottom = _meta_text(bottom, compact=f["meta_compact"])
         bottom = truncate_text(draw, bottom, f["meta"], max(60, tip_w - 20))
         bot_w = text_width_spaced(draw, bottom, f["meta"], spacing=f["meta_spacing"])
@@ -234,7 +252,7 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
             y0 + 34,
             f["meta"],
             spacing=f["meta_spacing"],
-            fill=muted,
+            fill=bg if fill_color == ink else muted,
         )
     tip_rows = (len(tips) + tip_cols - 1) // tip_cols
     y += tip_rows * tip_h + max(0, tip_rows - 1) * tip_gap_y + 12
@@ -300,7 +318,7 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
     status_y = max(y + 18, button[1] - 66)
     draw_text_spaced(draw, status, content_x0, status_y, f["meta"], spacing=f["meta_spacing"], fill=ink)
 
-    draw.rounded_rectangle(button, radius=12, outline=border, width=2, fill=bg)
+    draw.rounded_rectangle(button, radius=12, outline=border, width=2, fill=ink)
     _draw_focus(draw, (button[0] - 2, button[1] - 2, button[2] + 2, button[3] + 2), ink)
     if bool(state.ui.setup_completed):
         button_label = "Enter Home"
@@ -312,7 +330,7 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
         button_label = "Click to start first setup"
     button_label = truncate_text(draw, button_label, f["button"], max(80, button_w - 24))
     bw_text = draw.textlength(button_label, font=f["button"])
-    draw.text((button[0] + (button_w - bw_text) / 2, button[1] + 14), button_label, fill=ink, font=f["button"])
+    draw.text((button[0] + (button_w - bw_text) / 2, button[1] + 14), button_label, fill=bg, font=f["button"])
 
 
 def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
@@ -329,12 +347,12 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
     bg = theme.get("bg", 255)
     card = theme.get("card", 255)
     ink = theme.get("ink", 0)
-    muted = theme.get("muted", ink)
+    muted = _dark_muted(theme.get("muted", ink), ink)
     border = theme.get("border", ink)
 
     draw.rectangle((0, 0, w, h), fill=bg)
     outer = (18, 18, w - 18, h - 18)
-    draw.rounded_rectangle(outer, radius=16, outline=border, width=2, fill=card)
+    draw.rounded_rectangle(outer, radius=16, outline=border, width=3, fill=card)
 
     step = str(state.ui.onboarding_step or "start").strip().lower()
     if step != "voice_guide":
@@ -352,11 +370,13 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
         y0 = 220
         for i, label in enumerate(options):
             box = (option_x0, y0 + i * 82, option_x1, y0 + i * 82 + 58)
-            draw.rounded_rectangle(box, radius=12, outline=border, width=2, fill=bg)
+            fill_color = ink if i == focused else bg
+            text_color = bg if i == focused else ink
+            draw.rounded_rectangle(box, radius=12, outline=border, width=2, fill=fill_color)
             if i == focused:
                 _draw_focus(draw, (box[0] - 2, box[1] - 2, box[2] + 2, box[3] + 2), ink)
             tw = draw.textlength(label, font=f["button"])
-            draw.text((box[0] + (box[2] - box[0] - tw) / 2, box[1] + 18), label, fill=ink, font=f["button"])
+            draw.text((box[0] + (box[2] - box[0] - tw) / 2, box[1] + 18), label, fill=text_color, font=f["button"])
         hint = _meta_text("Rotate to choose  -  Press to continue", compact=f["meta_compact"])
         draw_text_spaced(draw, hint, 42, h - 56, f["meta"], spacing=f["meta_spacing"], fill=muted)
         return
@@ -420,12 +440,14 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
                 x1 = x0 + bw
                 y0 = by + i * (bh + gap)
                 y1 = y0 + bh
-                draw.rounded_rectangle((x0, y0, x1, y1), radius=10, outline=border, width=2, fill=bg)
+                fill_color = ink if i == focused else bg
+                text_color = bg if i == focused else ink
+                draw.rounded_rectangle((x0, y0, x1, y1), radius=10, outline=border, width=2, fill=fill_color)
                 if i == focused:
                     _draw_focus(draw, (x0 - 2, y0 - 2, x1 + 2, y1 + 2), ink)
                 label = _meta_text(label, compact=f["meta_compact"])
                 tw = text_width_spaced(draw, label, f["meta"], spacing=f["meta_spacing"])
-                draw_text_spaced(draw, label, x0 + (bw - tw) / 2, y0 + 13, f["meta"], spacing=f["meta_spacing"], fill=ink)
+                draw_text_spaced(draw, label, x0 + (bw - tw) / 2, y0 + 13, f["meta"], spacing=f["meta_spacing"], fill=text_color)
         else:
             bx = 372
             by = max(338, h - 112)
@@ -438,12 +460,14 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
                 x1 = x0 + bw
                 y0 = by
                 y1 = y0 + bh
-                draw.rounded_rectangle((x0, y0, x1, y1), radius=10, outline=border, width=2, fill=bg)
+                fill_color = ink if i == focused else bg
+                text_color = bg if i == focused else ink
+                draw.rounded_rectangle((x0, y0, x1, y1), radius=10, outline=border, width=2, fill=fill_color)
                 if i == focused:
                     _draw_focus(draw, (x0 - 2, y0 - 2, x1 + 2, y1 + 2), ink)
                 label = _meta_text(label, compact=f["meta_compact"])
                 tw = text_width_spaced(draw, label, f["meta"], spacing=f["meta_spacing"])
-                draw_text_spaced(draw, label, x0 + (bw - tw) / 2, y0 + 18, f["meta"], spacing=f["meta_spacing"], fill=ink)
+                draw_text_spaced(draw, label, x0 + (bw - tw) / 2, y0 + 18, f["meta"], spacing=f["meta_spacing"], fill=text_color)
         return
 
     if step == "prefs":
@@ -479,7 +503,10 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
         y = rows_top
         for idx, (k, v) in enumerate(pref_rows):
             box = (42, y, w - 42, y + row_h)
-            draw.rounded_rectangle(box, radius=12, outline=border, width=2, fill=bg)
+            fill_color = ink if idx == focused else bg
+            label_color = bg if idx == focused else ink
+            value_color = bg if idx == focused else muted
+            draw.rounded_rectangle(box, radius=12, outline=border, width=2, fill=fill_color)
             if idx == focused:
                 _draw_focus(draw, (box[0] - 2, box[1] - 2, box[2] + 2, box[3] + 2), ink)
             key_text = truncate_text(draw, k, f["button"], max(80, int((box[2] - box[0]) * 0.55)))
@@ -487,8 +514,8 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
             v_text = truncate_text(draw, str(v), f["body"], value_max_w)
             vw = draw.textlength(v_text, font=f["body"])
             txt_y = y + max(10, int((row_h - 24) / 2))
-            draw.text((64, txt_y), key_text, fill=ink, font=f["button"])
-            draw.text((box[2] - 22 - vw, txt_y + 1), v_text, fill=muted, font=f["body"])
+            draw.text((64, txt_y), key_text, fill=label_color, font=f["button"])
+            draw.text((box[2] - 22 - vw, txt_y + 1), v_text, fill=value_color, font=f["body"])
             y += row_h + row_gap
 
         # Dedicated next-step lane: text arrow + explicit Voice Guide button.
@@ -497,7 +524,7 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
         lane_mid_y = int((lane_y0 + lane_y1) / 2)
         guide_w = min(248, max(190, int((w - 84) * 0.38)))
         guide_box = (w - 42 - guide_w, lane_y0 + 4, w - 42, lane_y1 - 4)
-        draw.rounded_rectangle(guide_box, radius=12, outline=border, width=2, fill=bg)
+        draw.rounded_rectangle(guide_box, radius=12, outline=border, width=2, fill=ink if focused == 3 else bg)
         if focused == 3:
             _draw_focus(draw, (guide_box[0] - 2, guide_box[1] - 2, guide_box[2] + 2, guide_box[3] + 2), ink)
 
@@ -509,7 +536,7 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
 
         guide_label = truncate_text(draw, "Voice Guide >", f["body_focus"], max(90, guide_w - 24))
         gw = draw.textlength(guide_label, font=f["body_focus"])
-        draw.text((guide_box[0] + (guide_w - gw) / 2, guide_box[1] + 13), guide_label, fill=ink, font=f["body_focus"])
+        draw.text((guide_box[0] + (guide_w - gw) / 2, guide_box[1] + 13), guide_label, fill=bg if focused == 3 else ink, font=f["body_focus"])
         return
 
     if step == "voice_guide":
@@ -555,7 +582,7 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
         heard = str(state.ui.onboarding_voice_demo_heard or "").strip() or "No result yet."
         result_h = 102
         result_box = (inner_x0, y, inner_x1, y + result_h)
-        draw.rounded_rectangle(result_box, radius=12, outline=border, width=2, fill=bg)
+        draw.rounded_rectangle(result_box, radius=12, outline=border, width=2, fill=card)
         result_title = _meta_text("Result", compact=f["meta_compact"])
         draw_text_spaced(draw, result_title, result_box[0] + 18, result_box[1] + 12, f["meta"], spacing=f["meta_spacing"], fill=muted)
         heard_line = truncate_text(draw, heard, f["body_focus"], max(100, inner_w - 36))
@@ -575,11 +602,11 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
         x1 = x0 + action_w
         y0 = actions_y0
         y1 = y0 + action_h
-        draw.rounded_rectangle((x0, y0, x1, y1), radius=10, outline=border, width=2, fill=bg)
+        draw.rounded_rectangle((x0, y0, x1, y1), radius=10, outline=border, width=2, fill=ink)
         _draw_focus(draw, (x0 - 2, y0 - 2, x1 + 2, y1 + 2), ink)
         txt = _meta_text(action_label, compact=f["meta_compact"])
         tw = text_width_spaced(draw, txt, f["meta"], spacing=f["meta_spacing"])
-        draw_text_spaced(draw, txt, x0 + (action_w - tw) / 2, y0 + 13, f["meta"], spacing=f["meta_spacing"], fill=ink)
+        draw_text_spaced(draw, txt, x0 + (action_w - tw) / 2, y0 + 13, f["meta"], spacing=f["meta_spacing"], fill=bg)
         return
 
     draw.text((42, 60), "Setup Complete", fill=ink, font=f["title"])
@@ -600,8 +627,8 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
 
     enter_w = min(320, max(180, w - 84))
     enter = ((w - enter_w) // 2, h - 102, (w - enter_w) // 2 + enter_w, h - 44)
-    draw.rounded_rectangle(enter, radius=12, outline=border, width=2, fill=bg)
+    draw.rounded_rectangle(enter, radius=12, outline=border, width=2, fill=ink)
     _draw_focus(draw, (enter[0] - 2, enter[1] - 2, enter[2] + 2, enter[3] + 2), ink)
     text = "Enter Home"
     tw = draw.textlength(text, font=f["button"])
-    draw.text((enter[0] + (enter[2] - enter[0] - tw) / 2, enter[1] + 18), text, fill=ink, font=f["button"])
+    draw.text((enter[0] + (enter[2] - enter[0] - tw) / 2, enter[1] + 18), text, fill=bg, font=f["button"])
