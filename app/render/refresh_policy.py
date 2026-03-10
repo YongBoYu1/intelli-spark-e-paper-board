@@ -403,6 +403,7 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
         mid_y = h // 2
         regions = {
             "full": (0, 0, w, h),
+            "panel": (18, 18, w - 18, h - 18),
             "tips": (content_x0, 96, content_x1, min(h, 260)),
             "language": (content_x0, max(0, mid_y + 12), content_x1, min(h, mid_y + 118)),
             "status_button": (content_x0, max(0, h - 122), content_x1, h - 18),
@@ -416,6 +417,7 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
     if screen == Screen.ONBOARDING:
         regions = {
             "full": (0, 0, w, h),
+            "panel": (18, 18, w - 18, h - 18),
             "start_choices": (max(0, (w - 430) // 2) - 8, 210, min(w, (w + 430) // 2) + 8, 386),
             "start_footer": (32, max(0, h - 76), w - 32, h),
             "qr_code": (46, 126, min(w, 342), min(h, 420)),
@@ -639,10 +641,13 @@ def infer_dirty_rects(prev: UiSnapshot, curr: UiSnapshot, width: int, height: in
 
 def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: int, height: int) -> tuple[list[Rect], list[str]]:
     if prev.screen != curr.screen:
+        if curr.screen in (Screen.LANDING, Screen.ONBOARDING):
+            regions = _screen_regions(curr.screen, width, height, rotation_deg=curr.rotation_deg)
+            return [regions.get("panel", regions.get("full", (0, 0, max(1, int(width)), max(1, int(height)))))], [
+                f"screen.change_to_{curr.screen.value}"
+            ]
         w = max(1, int(width))
         h = max(1, int(height))
-        if curr.screen in (Screen.LANDING, Screen.ONBOARDING):
-            return [(0, 0, w, h)], [f"screen.change_to_{curr.screen.value}"]
         if curr.screen == Screen.MEMO:
             mid = w // 2
             return [(0, 0, mid, h), (mid, 0, w, h)], ["screen.change_to_memo"]
@@ -692,7 +697,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
 
     if curr.screen == Screen.ONBOARDING:
         if prev.onboarding_step != curr.onboarding_step:
-            rects.append(regions["full"])
+            rects.append(regions.get("panel", regions["full"]))
             reasons.append("onboarding.step_change")
             return rects, reasons
         if curr.onboarding_step == "start" and prev.onboarding_focus_index != curr.onboarding_focus_index:

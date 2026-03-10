@@ -99,7 +99,7 @@ class RefreshPolicyTests(unittest.TestCase):
         _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("menu.focus_move", reasons)
 
-    def test_onboarding_step_change_generates_full_dirty_reason(self) -> None:
+    def test_onboarding_step_change_generates_panel_dirty_reason(self) -> None:
         prev = AppState(model=DashboardModel())
         prev.ui.screen = Screen.ONBOARDING
         prev.ui.onboarding_step = "start"
@@ -111,7 +111,7 @@ class RefreshPolicyTests(unittest.TestCase):
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("onboarding.step_change", reasons)
         merged = merge_rects(rects, 800, 480)
-        self.assertEqual(merged, (0, 0, 800, 480))
+        self.assertEqual(merged, (18, 18, 782, 462))
 
     def test_landing_demo_change_updates_partial_regions(self) -> None:
         prev = AppState(model=DashboardModel())

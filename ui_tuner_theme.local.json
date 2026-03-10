@@ -74,6 +74,7 @@
   "weather_icon_alpha_threshold": 185,
   "refresh_debug": true,
   "refresh_partial_screens": "settings,timer,home,menu,landing,onboarding",
+  "refresh_partial_screen_change_screens": "memo,calendar,inventory,reminders,landing,onboarding",
   "refresh_mode_menu": "fast",
   "refresh_mode_landing": "fast",
   "refresh_mode_onboarding": "fast",

@@ -755,7 +755,7 @@ def _screen_change_partial_enabled_with_theme(prev_screen: Screen, curr_screen: 
     if bool(theme.get("refresh_force_full_on_screen_change", False)):
         return False
 
-    default_screens = "memo,calendar,inventory,reminders"
+    default_screens = "memo,calendar,inventory,reminders,landing,onboarding"
     raw = theme.get("refresh_partial_screen_change_screens", default_screens)
     if isinstance(raw, str):
         names = [x.strip().lower() for x in raw.split(",") if x.strip()]
