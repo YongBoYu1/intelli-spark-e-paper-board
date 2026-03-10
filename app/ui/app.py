@@ -737,6 +737,8 @@ def _render_no_rotation(image, state: AppState, fonts, theme: dict) -> None:
     variant = _resolved_home_variant(theme, rotation_deg=int(state.ui.rotation_deg or 0))
     if variant == "kitchen_portrait":
         render_home_kitchen_portrait(image, state, fonts, theme)
+        if state.ui.menu_overlay_active:
+            render_menu_overlay_home(image, state, fonts, theme)
         _draw_voice_overlay(image, state, fonts, theme)
         return
     if variant == "kitchen":

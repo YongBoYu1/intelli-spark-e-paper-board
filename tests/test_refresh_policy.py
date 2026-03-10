@@ -74,6 +74,28 @@ class RefreshPolicyTests(unittest.TestCase):
 
         rects = infer_dirty_rects(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertGreaterEqual(len(rects), 1)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.20)
+
+    def test_settings_value_change_prefers_focused_row_rect(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.SETTINGS
+        prev.ui.settings_focused_index = 1
+        prev.ui.partial_refresh_mode = "balanced"
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.SETTINGS
+        curr.ui.settings_focused_index = 1
+        curr.ui.partial_refresh_mode = "fast"
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("settings.value_change", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.12)
 
     def test_menu_focus_change_generates_dirty_rect(self) -> None:
         prev = AppState(model=DashboardModel())
@@ -176,13 +198,19 @@ class RefreshPolicyTests(unittest.TestCase):
         self.assertIn("list.data_change", reasons)
 
     def test_home_focus_move_prefers_row_dirty_rect(self) -> None:
-        prev = AppState(model=DashboardModel())
-        prev.ui.screen = Screen.HOME
-        prev.ui.focused_index = 1
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="r0", title="Task 0", right="", completed=False, category="fridge"),
+            Reminder(rid="r1", title="Task 1", right="", completed=False, category="fridge"),
+        ]
 
-        curr = AppState(model=DashboardModel())
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 2
+
+        curr = AppState(model=model)
         curr.ui.screen = Screen.HOME
-        curr.ui.focused_index = 2
+        curr.ui.focused_index = 3
 
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("home.focus_move_row", reasons)
@@ -225,6 +253,58 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.20)
 
+    def test_home_hidden_compact_prefers_inventory_section_rect(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=True, category="fridge"),
+            Reminder(rid="f2", title="Eggs", right="", completed=False, category="fridge"),
+            Reminder(rid="s1", title="Bread", right="", completed=False, category="shopping"),
+        ]
+
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 2
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 2
+        curr.ui.home_hidden_rids = ["f1"]
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.reminder_compact", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.22)
+
+    def test_home_portrait_hidden_compact_prefers_section_rect(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=True, category="fridge"),
+            Reminder(rid="f2", title="Eggs", right="", completed=False, category="fridge"),
+            Reminder(rid="s1", title="Bread", right="", completed=False, category="shopping"),
+        ]
+
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.rotation_deg = 90
+        prev.ui.focused_index = 2
+        prev.ui.kitchen_visible_layout = "portrait"
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.rotation_deg = 90
+        curr.ui.focused_index = 2
+        curr.ui.kitchen_visible_layout = "portrait"
+        curr.ui.home_hidden_rids = ["f1"]
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 480, 800)
+        self.assertIn("home.reminder_compact", reasons)
+        merged = merge_rects(rects, 480, 800)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 480, 800)
+        self.assertLess(ratio, 0.28)
+
     def test_home_family_board_update_prefers_partial_sized_rect(self) -> None:
         model = DashboardModel()
         model.memos = []
@@ -253,21 +333,103 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.24)
 
-    def test_home_focus_to_left_panel_uses_small_regions(self) -> None:
-        prev = AppState(model=DashboardModel())
+    def test_home_portrait_focus_move_uses_rotated_row_rect(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="s1", title="A", right="", completed=False, category="shopping"),
+            Reminder(rid="s2", title="B", right="", completed=False, category="shopping"),
+            Reminder(rid="s3", title="C", right="", completed=False, category="shopping"),
+        ]
+        prev = AppState(model=model)
         prev.ui.screen = Screen.HOME
-        prev.ui.focused_index = 1
+        prev.ui.rotation_deg = 90
+        prev.ui.focused_index = 2
+        prev.ui.kitchen_visible_layout = "portrait"
 
-        curr = AppState(model=DashboardModel())
+        curr = AppState(model=model)
         curr.ui.screen = Screen.HOME
-        curr.ui.focused_index = 0
+        curr.ui.rotation_deg = 90
+        curr.ui.focused_index = 3
+        curr.ui.kitchen_visible_layout = "portrait"
 
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
-        self.assertIn("home.focus_to_left_panel", reasons)
+        self.assertIn("home.focus_move_row", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert merged is not None
+        self.assertGreater(merged[3] - merged[1], merged[2] - merged[0])
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.10)
+
+    def test_home_portrait_hold_release_is_visible_focus_change(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="s1", title="A", right="", completed=False, category="shopping"),
+            Reminder(rid="s2", title="B", right="", completed=True, category="shopping"),
+            Reminder(rid="s3", title="C", right="", completed=False, category="shopping"),
+        ]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.rotation_deg = 90
+        prev.ui.focused_index = 3
+        prev.ui.kitchen_focus_rid_override = "s2"
+        prev.ui.kitchen_visible_layout = "portrait"
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.rotation_deg = 90
+        curr.ui.focused_index = 3
+        curr.ui.kitchen_visible_layout = "portrait"
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.focus_move_row", reasons)
         merged = merge_rects(rects, 800, 480)
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
-        self.assertLess(ratio, 0.24)
+        self.assertLess(ratio, 0.13)
+
+    def test_home_portrait_focus_to_left_panel_uses_weather_header_region(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="s1", title="A", right="", completed=False, category="shopping"),
+            Reminder(rid="s2", title="B", right="", completed=False, category="shopping"),
+        ]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.rotation_deg = 90
+        prev.ui.focused_index = 2
+        prev.ui.kitchen_visible_layout = "portrait"
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.rotation_deg = 90
+        curr.ui.focused_index = 1
+        curr.ui.kitchen_visible_layout = "portrait"
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.focus_to_left_panel", reasons)
+        max_ratio = max(rect_area_ratio(r, 800, 480) for r in rects)
+        self.assertLess(max_ratio, 0.10)
+
+    def test_home_focus_to_left_panel_uses_small_regions(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="r0", title="Task 0", right="", completed=False, category="fridge"),
+            Reminder(rid="r1", title="Task 1", right="", completed=False, category="shopping"),
+        ]
+
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 2
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.focus_to_left_panel", reasons)
+        max_ratio = max(rect_area_ratio(r, 800, 480) for r in rects)
+        self.assertLess(max_ratio, 0.24)
 
     def test_home_voice_overlay_change_uses_voice_zone_rect(self) -> None:
         prev = AppState(model=DashboardModel())
@@ -306,6 +468,27 @@ class RefreshPolicyTests(unittest.TestCase):
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.20)
+
+    def test_home_portrait_menu_overlay_toggle_uses_rotated_compact_rect(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.HOME
+        prev.ui.rotation_deg = 90
+        prev.ui.kitchen_visible_layout = "portrait"
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.HOME
+        curr.ui.rotation_deg = 90
+        curr.ui.kitchen_visible_layout = "portrait"
+        curr.ui.menu_overlay_active = True
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.menu_overlay_toggle", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert merged is not None
+        self.assertGreater(merged[3] - merged[1], merged[2] - merged[0])
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.12)
 
     def test_home_clock_minute_change_marks_left_clock_region(self) -> None:
         prev = AppState(model=DashboardModel())
@@ -348,28 +531,48 @@ class RefreshPolicyTests(unittest.TestCase):
         self.assertLess(ratio, 0.50)
 
     def test_home_focus_row_mapping_uses_real_inventory_count(self) -> None:
-        model = DashboardModel()
-        model.reminders = [
+        prev_model = DashboardModel()
+        prev_model.reminders = [
             Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
             Reminder(rid="s1", title="Eggs", right="", completed=False, category="shopping"),
         ]
-
-        prev = AppState(model=model)
+        prev = AppState(model=prev_model)
         prev.ui.screen = Screen.HOME
-        prev.ui.focused_index = 3  # reminders header when fridge count is 1
+        prev.ui.focused_index = 3
 
-        curr = AppState(model=model)
+        curr_model = DashboardModel()
+        curr_model.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="s1", title="Eggs", right="", completed=True, category="shopping"),
+        ]
+        curr = AppState(model=curr_model)
         curr.ui.screen = Screen.HOME
-        curr.ui.focused_index = 4  # first reminders item
+        curr.ui.focused_index = 3
 
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
-        self.assertIn("home.focus_move_row", reasons)
+        self.assertIn("home.reminder_row_update", reasons)
         merged = merge_rects(rects, 800, 480)
         self.assertIsNotNone(merged)
         _, y0, _, _ = merged or (0, 0, 0, 0)
-        # Reminders section is in the lower half; if this maps near top rows,
-        # focus-row geometry is still using a fixed inventory span.
+        # Reminder rows should stay mapped to the lower half even when inventory
+        # only has one visible item.
         self.assertGreater(y0, 220)
+
+    def test_home_left_target_transition_uses_compact_left_rect(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 0
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.focus_move_left_target", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.24)
 
     def test_calendar_data_change_generates_calendar_reason(self) -> None:
         prev_model = DashboardModel()

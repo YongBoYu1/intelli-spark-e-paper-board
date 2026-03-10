@@ -7,6 +7,7 @@ from PIL import Image, ImageFont
 
 from app.core.state import AppState, DashboardModel
 from app.ui.app import render_app
+from app.ui.menu import home_menu_overlay_layout
 
 
 class _DummyFonts:
@@ -49,6 +50,32 @@ class AppHomeVariantRotationTests(unittest.TestCase):
 
         self.assertFalse(render_kitchen.called)
         self.assertTrue(render_portrait.called)
+
+    def test_kitchen_portrait_renders_navigation_overlay_on_home(self) -> None:
+        image = Image.new("RGB", (800, 480), (255, 255, 255))
+        state = self._base_state(90)
+        state.ui.menu_overlay_active = True
+        theme = {"home_variant": "kitchen_portrait"}
+
+        with (
+            patch("app.ui.app.render_home_kitchen_portrait") as render_portrait,
+            patch("app.ui.app.render_menu_overlay_home") as render_overlay,
+            patch("app.ui.app._draw_voice_overlay"),
+        ):
+            render_app(image, state, _DummyFonts(), theme)
+
+        self.assertTrue(render_portrait.called)
+        self.assertTrue(render_overlay.called)
+
+    def test_home_navigation_overlay_compacts_for_narrow_width(self) -> None:
+        layout = home_menu_overlay_layout(480, 800)
+        content_w = int(layout["pill_w"]) * 5 + int(layout["gap"]) * 4
+
+        self.assertTrue(bool(layout["compact"]))
+        self.assertLess(int(layout["pill_w"]), 116)
+        self.assertLessEqual(int(layout["x1"]), 480)
+        self.assertGreaterEqual(int(layout["x0"]), 0)
+        self.assertLessEqual(content_w, int(layout["x1"]) - int(layout["x0"]))
 
 
 if __name__ == "__main__":

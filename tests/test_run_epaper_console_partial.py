@@ -29,6 +29,66 @@ class _FakeEpd:
 
 
 class RunEpaperConsolePartialTests(unittest.TestCase):
+    def test_read_key_nonblocking_waits_for_split_left_arrow_sequence(self) -> None:
+        stdin_mock = type("FakeStdin", (), {})()
+        reads = iter(["\x1b", "[", "D"])
+
+        def fake_read(_n: int) -> str:
+            return next(reads)
+
+        select_results = iter([
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+        ])
+
+        with (
+            patch.object(rec.sys, "stdin", stdin_mock),
+            patch.object(stdin_mock, "read", side_effect=fake_read, create=True),
+            patch.object(rec.select, "select", side_effect=lambda *_args, **_kwargs: next(select_results)),
+        ):
+            key = rec._read_key_nonblocking()
+
+        self.assertEqual(key, "\x1b[D")
+
+    def test_read_key_nonblocking_keeps_bare_escape_as_back(self) -> None:
+        stdin_mock = type("FakeStdin", (), {})()
+
+        with (
+            patch.object(rec.sys, "stdin", stdin_mock),
+            patch.object(stdin_mock, "read", return_value="\x1b", create=True),
+            patch.object(rec.select, "select", side_effect=[([stdin_mock], [], []), ([], [], [])]),
+        ):
+            key = rec._read_key_nonblocking()
+
+        self.assertEqual(key, "\x1b")
+
+    def test_read_key_nonblocking_accepts_longer_csi_arrow_sequence(self) -> None:
+        stdin_mock = type("FakeStdin", (), {})()
+        reads = iter(["\x1b", "[", "1", ";", "5", "D"])
+
+        def fake_read(_n: int) -> str:
+            return next(reads)
+
+        select_results = iter([
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+            ([stdin_mock], [], []),
+            ([], [], []),
+        ])
+
+        with (
+            patch.object(rec.sys, "stdin", stdin_mock),
+            patch.object(stdin_mock, "read", side_effect=fake_read, create=True),
+            patch.object(rec.select, "select", side_effect=lambda *_args, **_kwargs: next(select_results)),
+        ):
+            key = rec._read_key_nonblocking()
+
+        self.assertEqual(key, "\x1b[D")
+
     def test_blit_partial_uses_end_coords_and_partial_buffer(self) -> None:
         epd = _FakeEpd()
         frame = Image.new("1", (800, 480), 255)
@@ -92,6 +152,13 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         state = AppState(model=DashboardModel(location="A", weather=[WeatherDay(dow="MON", icon="sun", hi=1, lo=0)]))
         sig_a = rec._state_render_sig(state)
         state.model.location = "B"
+        sig_b = rec._state_render_sig(state)
+        self.assertNotEqual(sig_a, sig_b)
+
+    def test_state_render_sig_changes_when_home_hidden_rows_change(self) -> None:
+        state = AppState(model=DashboardModel(location="A"))
+        sig_a = rec._state_render_sig(state)
+        state.ui.home_hidden_rids = ["r1"]
         sig_b = rec._state_render_sig(state)
         self.assertNotEqual(sig_a, sig_b)
 
