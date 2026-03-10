@@ -38,6 +38,7 @@ def _clamp_i(v: int, lo: int, hi: int) -> int:
 def _theme_fonts(theme: dict, fonts):
     body_key = str(theme.get("panel_font_body_key") or "inter_medium")
     body_focus_key = str(theme.get("panel_font_body_focus_key") or "inter_bold")
+    title_key = str(theme.get("panel_font_title_key") or "inter_black")
     meta_key = str(theme.get("panel_font_meta_key") or "jet_bold")
     # Follow panel font template defaults and keep only a small safety clamp.
     body_base = _clamp_i(int(theme.get("panel_font_body_size", 18) or 18), 12, 18)
@@ -45,7 +46,7 @@ def _theme_fonts(theme: dict, fonts):
     title_size = _clamp_i(int(round(body_base * 1.6)), 21, 30)
     button_size = _clamp_i(int(round(body_base * 0.95)), 12, 18)
     return {
-        "title": fonts.get(body_focus_key, title_size),
+        "title": fonts.get(title_key, title_size),
         "body": fonts.get(body_key, body_base),
         "body_focus": fonts.get(body_focus_key, body_base),
         "button": fonts.get(body_focus_key, button_size),
@@ -53,6 +54,11 @@ def _theme_fonts(theme: dict, fonts):
         "meta_spacing": int(theme.get("panel_font_meta_spacing", 0) or 0),
         "meta_compact": bool(theme.get("panel_font_meta_compact", True)),
     }
+
+
+def _draw_title_reinforced(draw, text: str, x: float, y: float, font, ink) -> None:
+    draw.text((x, y), text, fill=ink, font=font)
+    draw.text((x + 1, y), text, fill=ink, font=font)
 
 
 def _voice_locale_label(locale: str) -> str:
@@ -471,7 +477,7 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
         return
 
     if step == "prefs":
-        draw.text((42, 42), "Quick Preferences", fill=ink, font=f["title"])
+        _draw_title_reinforced(draw, "Quick Preferences", 42, 42, f["title"], ink)
         draw.text((42, 90), "You can change these later in Settings.", fill=muted, font=f["body"])
         ssid = str(state.ui.onboarding_wifi_ssid or "").strip()
         wifi_text = f"Wi-Fi: {ssid}" if ssid else ("Wi-Fi: enabled" if bool(state.ui.wifi_enabled) else "Wi-Fi: skipped")
@@ -546,7 +552,7 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
 
         y = 40
         title = truncate_text(draw, "Voice Setup", f["title"], max(100, inner_w - 160))
-        draw.text((inner_x0, y), title, fill=ink, font=f["title"])
+        _draw_title_reinforced(draw, title, inner_x0, y, f["title"], ink)
         y += 40
 
         mic_w = min(210, max(150, int(inner_w * 0.28)))
