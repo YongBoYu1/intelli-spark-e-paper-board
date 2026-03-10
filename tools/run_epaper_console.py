@@ -1765,8 +1765,18 @@ def main() -> int:
                             else:
                                 # BBox can be overly large when a few distant pixels change.
                                 # Only trust bbox fallback when changed-pixel ratio is meaningful.
+                                skip_onboarding_diff_fallback = (
+                                    curr_snapshot.screen == Screen.ONBOARDING
+                                    and str(curr_snapshot.onboarding_step or "").strip().lower() in ("prefs", "voice_guide")
+                                )
                                 fallback_ratio_min = float(theme.get("refresh_diff_fallback_min_ratio", 0.10) or 0.10)
-                                if diff_ratio >= fallback_ratio_min:
+                                if skip_onboarding_diff_fallback:
+                                    if refresh_debug:
+                                        print(
+                                            f"[refresh] DIFF_FALLBACK_SKIP screen={curr_snapshot.screen.value} "
+                                            f"step={curr_snapshot.onboarding_step} reason=onboarding_compact_policy"
+                                        )
+                                elif diff_ratio >= fallback_ratio_min:
                                     dirty_rects.append(diff_box)
                                     dirty_reasons.append("diff_fallback")
                                 elif refresh_debug:
