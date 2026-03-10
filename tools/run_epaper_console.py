@@ -25,7 +25,7 @@ import tempfile
 import time
 import tty
 
-from PIL import Image, ImageChops, ImageFilter
+from PIL import Image, ImageChops
 
 # Ensure repo root is importable when running this script directly.
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -527,23 +527,12 @@ def _render_frame(
     t = build_panel_theme(theme, muted_gray=panel_muted)
     rgb = Image.new("RGB", (epd.width, epd.height), t.get("bg", (255, 255, 255)))
     render_app(rgb, state, fonts, t)
-    threshold = int(panel_threshold)
-    gamma = float(panel_gamma)
-    screen = state.ui.screen
-    if screen in (Screen.LANDING, Screen.ONBOARDING):
-        # Onboarding has thinner text + larger white space than home. Keep a
-        # slightly heavier tone map to avoid washed-out look on 7.5" V2.
-        try:
-            threshold = int(theme.get("panel_threshold_onboarding", threshold - 20))
-        except Exception:
-            threshold = threshold - 20
-        threshold = max(80, min(220, threshold))
-        try:
-            gamma = float(theme.get("panel_gamma_onboarding", min(gamma, 0.92)))
-        except Exception:
-            gamma = min(gamma, 0.92)
-        gamma = max(0.6, min(1.2, gamma))
-    out = quantize_for_panel(rgb, threshold=threshold, gamma=gamma, dither=panel_dither)
+    out = quantize_for_panel(
+        rgb,
+        threshold=int(panel_threshold),
+        gamma=float(panel_gamma),
+        dither=panel_dither,
+    )
     return out
 
 
@@ -716,9 +705,7 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     if bool(theme.get("refresh_partial_enable_all", False)):
         return True
 
-    # Keep onboarding/landing on full refresh by default:
-    # those first-boot pages are text-heavy and repeated partial updates can
-    # wash out perceived contrast on some 7.5" V2 panels.
+    # Keep onboarding/landing out of partial whitelist by default.
     default_screens = "settings,timer,home,menu"
     default_names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
     raw = theme.get("refresh_partial_screens", default_screens)
@@ -739,7 +726,9 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
 
 
 def _screen_force_full_clean_with_theme(screen: Screen, theme: dict) -> bool:
-    default_screens = "landing,onboarding"
+    # Full-clean should be opt-in only. For onboarding/landing we prefer normal
+    # full refresh path unless explicitly configured, to avoid repeated Clear().
+    default_screens = ""
     raw = theme.get("refresh_force_full_clean_screens", default_screens)
     if isinstance(raw, str):
         names = [x.strip().lower() for x in raw.split(",") if x.strip()]

@@ -50,8 +50,8 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         self.assertFalse(rec._screen_partial_enabled_with_theme(rec.Screen.LANDING, {}))
 
     def test_onboarding_force_full_clean_default(self) -> None:
-        self.assertTrue(rec._screen_force_full_clean_with_theme(rec.Screen.ONBOARDING, {}))
-        self.assertTrue(rec._screen_force_full_clean_with_theme(rec.Screen.LANDING, {}))
+        self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.ONBOARDING, {}))
+        self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.LANDING, {}))
         self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.HOME, {}))
 
     def test_partial_gate_uses_total_area_not_single_rect_peak(self) -> None:
@@ -91,7 +91,7 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         self.assertEqual(epd.clear_count, 1)
         self.assertEqual(epd.full_display_count, 1)
 
-    def test_render_frame_uses_onboarding_tone_overrides(self) -> None:
+    def test_render_frame_uses_global_tone_params(self) -> None:
         epd = _FakeEpd()
         epd.width = 800
         epd.height = 480
@@ -117,10 +117,10 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
             )
 
             kwargs = qp.call_args.kwargs
-            self.assertEqual(kwargs.get("threshold"), 140)
-            self.assertAlmostEqual(float(kwargs.get("gamma")), 0.88, places=3)
+            self.assertEqual(kwargs.get("threshold"), 168)
+            self.assertAlmostEqual(float(kwargs.get("gamma")), 1.0, places=3)
 
-    def test_render_frame_onboarding_applies_dark_stroke_expand(self) -> None:
+    def test_render_frame_onboarding_stays_binary_panel_frame(self) -> None:
         epd = _FakeEpd()
         epd.width = 800
         epd.height = 480
