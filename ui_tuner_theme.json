@@ -85,6 +85,8 @@
   "refresh_area_limit_landing": 0.92,
   "refresh_area_limit_onboarding": 0.92,
   "refresh_enable_fast_full": false,
+  "refresh_onboarding_compact_force_partial": true,
+  "refresh_partial_max_rects_onboarding": 16,
   "memo_rotate_s": 8,
   "memo_rotate_pause_after_interaction_s": 2.5,
   "panel_threshold_onboarding": 168,

@@ -833,6 +833,13 @@ def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
     return has_focus_reason and all(r in allowed for r in reasons)
 
 
+def _is_onboarding_compact_step(snapshot) -> bool:
+    if snapshot.screen != Screen.ONBOARDING:
+        return False
+    step = str(snapshot.onboarding_step or "").strip().lower()
+    return step in ("prefs", "voice_guide")
+
+
 def _prioritize_home_focus_dirty(
     screen: Screen,
     rects: list[tuple[int, int, int, int]],
@@ -1891,11 +1898,17 @@ def main() -> int:
                                 and pending_reasons
                                 and all(r in ("home.family_board_update", "diff_fallback") for r in pending_reasons)
                             )
-                            partial_pad = 1 if family_only else 2
+                            compact_onboarding = _is_onboarding_compact_step(pending_snapshot)
+                            partial_pad = 1 if (family_only or compact_onboarding) else 2
                             partial_max_rects = max(
                                 1,
                                 int(theme.get("refresh_partial_max_rects", 6) or 6),
                             )
+                            if compact_onboarding:
+                                partial_max_rects = max(
+                                    partial_max_rects,
+                                    int(theme.get("refresh_partial_max_rects_onboarding", 16) or 16),
+                                )
                             aligned_rects = _prepare_partial_rects(
                                 pending_rects,
                                 width=epd.width,
@@ -1933,11 +1946,15 @@ def main() -> int:
                                 width=epd.width,
                                 height=epd.height,
                             )
+                            allow_over_limit_partial = (
+                                compact_onboarding
+                                and bool(theme.get("refresh_onboarding_compact_force_partial", True))
+                            )
                             if (
                                 supports_partial
                                 and partial_enabled
                                 and aligned_rects
-                                and gate_area_ratio <= mode_limit
+                                and (gate_area_ratio <= mode_limit or allow_over_limit_partial)
                             ):
                                 for rect in aligned_rects:
                                     driver_mode = _blit_partial(epd, pending_frame, rect, driver_mode)
@@ -1950,7 +1967,8 @@ def main() -> int:
                                         f"max_ratio={max_area_ratio:.3f} total_ratio={total_area_ratio:.3f} "
                                         f"gate_ratio={gate_area_ratio:.3f} "
                                         f"limit={mode_limit:.3f} partial_count={refresh_runtime.partial_count}/{full_every_text} "
-                                        f"mode={policy_mode} dirty={','.join(pending_reasons) or '-'}"
+                                        f"mode={policy_mode} force_compact_partial={allow_over_limit_partial} "
+                                        f"dirty={','.join(pending_reasons) or '-'}"
                                     )
                             else:
                                 driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
