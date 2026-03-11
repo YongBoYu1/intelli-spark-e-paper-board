@@ -826,7 +826,9 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
         src_w, src_h = _screen_source_size(width, height, rotation_deg)
         source_regions = {
             "header": (24, 10, max(25, src_w - 24), 74),
-            "time_status": (64, 90, max(65, src_w - 64), max(90, src_h - 120)),
+            # Keep generous margins so RUNNING/PAUSED baseline and timer glyph antialiasing
+            # are fully covered during partial updates (including rotated layouts).
+            "time_status": (56, 82, max(57, src_w - 56), max(83, src_h - 84)),
             "controls": (24, max(0, src_h - 100), max(25, src_w - 24), src_h),
         }
         if rot in (90, 180, 270):

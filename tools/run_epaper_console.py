@@ -1577,31 +1577,45 @@ def main() -> int:
             ev = None
             voice_flow_ran = False
             voice_flow_demo_only = False
+            key_phys_down = bool(key_is_down)
+            if encoder_key_pin is not None:
+                try:
+                    curr_key_sample = GPIO.input(int(encoder_key_pin))
+                    active_low = str(args.encoder_key_active).lower() == "low"
+                    key_phys_down = bool((curr_key_sample == GPIO.LOW) if active_low else (curr_key_sample == GPIO.HIGH))
+                except Exception:
+                    key_phys_down = bool(key_is_down)
+
             if encoder_ready:
                 try:
                     curr_ab = (GPIO.input(int(encoder_pin_s1)) << 1) | GPIO.input(int(encoder_pin_s2))
                     if curr_ab != prev_ab:
-                        edge = (prev_ab, curr_ab)
-                        if edge in CW_SEQ:
-                            encoder_accum += 1
-                        elif edge in CCW_SEQ:
-                            encoder_accum -= 1
+                        # Ignore quadrature jitter while KEY is held down. Pressing the knob can
+                        # produce tiny AB edges that otherwise swallow/shift the click target.
+                        if key_phys_down:
+                            encoder_accum = 0
+                        else:
+                            edge = (prev_ab, curr_ab)
+                            if edge in CW_SEQ:
+                                encoder_accum += 1
+                            elif edge in CCW_SEQ:
+                                encoder_accum -= 1
 
-                        step_n = max(1, int(args.encoder_steps_per_detent))
-                        flip = bool(args.encoder_flip_direction)
-                        if encoder_accum >= step_n:
-                            logical_cw = not flip
-                            ev = Rotate(+1 if logical_cw else -1)
-                            encoder_accum = 0
-                        elif encoder_accum <= -step_n:
-                            logical_cw = flip
-                            ev = Rotate(+1 if logical_cw else -1)
-                            encoder_accum = 0
+                            step_n = max(1, int(args.encoder_steps_per_detent))
+                            flip = bool(args.encoder_flip_direction)
+                            if encoder_accum >= step_n:
+                                logical_cw = not flip
+                                ev = Rotate(+1 if logical_cw else -1)
+                                encoder_accum = 0
+                            elif encoder_accum <= -step_n:
+                                logical_cw = flip
+                                ev = Rotate(+1 if logical_cw else -1)
+                                encoder_accum = 0
                         prev_ab = curr_ab
                 except Exception:
                     pass
 
-            if encoder_key_pin is not None and ev is None:
+            if encoder_key_pin is not None:
                 try:
                     curr_key = GPIO.input(int(encoder_key_pin))
                     active_low = str(args.encoder_key_active).lower() == "low"
@@ -1628,7 +1642,6 @@ def main() -> int:
                             key_is_down = False
                             key_down_at = 0.0
                             key_long_sent = False
-                            key_last_edge_at = now
                     prev_key = curr_key
                 except Exception:
                     pass

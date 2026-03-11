@@ -694,7 +694,7 @@ class RefreshPolicyTests(unittest.TestCase):
         merged = merge_rects(rects, 800, 480)
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
-        self.assertLess(ratio, 0.50)
+        self.assertLess(ratio, 0.65)
 
     def test_timer_running_toggle_includes_controls_region(self) -> None:
         prev = AppState(model=DashboardModel())
