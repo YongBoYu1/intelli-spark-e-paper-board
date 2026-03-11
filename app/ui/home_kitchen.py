@@ -13,6 +13,7 @@ from app.core.kitchen_queue import (
 )
 from app.core.state import AppState
 from app.shared.draw import draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
+from app.ui.home_kitchen_geometry import home_landscape_header_focus_box
 from app.ui.weather_detail import _draw_weather_icon_pack
 
 
@@ -268,13 +269,26 @@ def _weather_word(icon_name: str) -> str:
     return mapping.get(parts[0], parts[0].upper())
 
 
-def _group_tasks(state: AppState):
-    fridge = [r for r in state.model.reminders if (r.category or "") == "fridge"]
-    shop = [r for r in state.model.reminders if (r.category or "") != "fridge"]
+def _home_hidden_rids(state: AppState) -> set[str]:
+    return {
+        str(rid)
+        for rid in getattr(state.ui, "home_hidden_rids", [])
+        if str(rid or "").strip()
+    }
 
-    # Keep incomplete first, then completed (stable within each group).
-    fridge = sorted(fridge, key=lambda r: (r.completed,))
-    shop = sorted(shop, key=lambda r: (r.completed,))
+
+def _group_tasks(state: AppState):
+    hidden_rids = _home_hidden_rids(state)
+    fridge = []
+    shop = []
+    for reminder in state.model.reminders:
+        rid = str(getattr(reminder, "rid", "") or "").strip()
+        if rid and rid in hidden_rids:
+            continue
+        if (reminder.category or "") == "fridge":
+            fridge.append(reminder)
+        else:
+            shop.append(reminder)
     return fridge, shop
 
 
@@ -404,9 +418,9 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     split_x = ox0 + int((ox1 - ox0) * float(t["b_split_ratio"]))
     draw.line((split_x, oy0, split_x, oy1), fill=ink, width=int(t["b_divider_w"]))
 
-    # Focus on left panel (index 0)
+    # Optional whole-left-column ring for A/B compare.
     focus_idx = int(state.ui.focused_index or 0)
-    if bool(t.get("b_show_focus_ring")) and not state.ui.idle and focus_idx == 0:
+    if bool(t.get("b_show_focus_ring")) and not state.ui.idle and focus_idx in (0, 1):
         rounded_rect(
             draw,
             (ox0 + 2, oy0 + 2, split_x - 2, oy1 - 2),
@@ -521,8 +535,9 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     dy = wy + wh + int(t["b_weekday_date_gap"])
     draw.text((lx0, dy), month_day, font=f_date, fill=date_muted)
     _, dh = text_size(draw, month_day, f_date)
+    clock_bottom = dy + dh
 
-    weather_bottom = dy + dh
+    weather_bottom = clock_bottom
     location = str(getattr(state.model, "location", "") or "").strip()
     if location:
         city_text = location.upper() if bool(t.get("b_weather_city_upper", True)) else location
@@ -622,16 +637,26 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         weather_bottom = max(weather_bottom, desc_y + dh2, humidity_bottom)
 
     if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 0:
-        focus_pad_x = int(t.get("b_right_focus_pad_x", 6))
-        focus_pad_y = int(t.get("b_right_focus_pad_y", 3))
-        focus_right_trim = int(t.get("b_right_focus_right_trim", 2))
         focus_radius = int(t.get("b_right_focus_radius", 5))
         focus_w = max(1, int(t.get("b_right_focus_w", 1)))
-        fy0 = max(oy0 + 2, top_y + int(t.get("b_weather_top", 0)) - focus_pad_y)
-        fy1 = weather_bottom + focus_pad_y
-        fx0 = weather_left - focus_pad_x
-        fx1 = weather_right + focus_pad_x - focus_right_trim
-        if fy1 > fy0 and fx1 > fx0:
+        box = home_landscape_header_focus_box(w, h, kind="clock")
+        if box is not None:
+            fx0, fy0, fx1, fy1 = box
+            rounded_rect(
+                draw,
+                (fx0, fy0, fx1, fy1),
+                radius=max(0, min(focus_radius, (fy1 - fy0) // 2)),
+                outline=ink,
+                width=focus_w,
+                fill=None,
+            )
+
+    if bool(t.get("b_left_focus_indicator", True)) and not state.ui.idle and focus_idx == 1:
+        focus_radius = int(t.get("b_right_focus_radius", 5))
+        focus_w = max(1, int(t.get("b_right_focus_w", 1)))
+        box = home_landscape_header_focus_box(w, h, kind="weather")
+        if box is not None:
+            fx0, fy0, fx1, fy1 = box
             rounded_rect(
                 draw,
                 (fx0, fy0, fx1, fy1),
@@ -909,8 +934,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         if y + inv_row_h > mid_y - 8:
             break
         is_focus = (not state.ui.idle) and (focus_rid == item.rid)
-        if not item.completed:
-            rendered_focus_rids.append(item.rid)
+        rendered_focus_rids.append(item.rid)
         is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
         row_focus_w = focus_w + 1 if is_hold_focus else focus_w
 
@@ -1165,8 +1189,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
         if y + shop_row_h > shop_bottom:
             break
         is_focus = (not state.ui.idle) and (focus_rid == item.rid)
-        if not item.completed:
-            rendered_focus_rids.append(item.rid)
+        rendered_focus_rids.append(item.rid)
         is_hold_focus = bool(hold_rid) and (hold_rid == item.rid)
         row_focus_w = focus_w + 1 if is_hold_focus else focus_w
         
@@ -1243,7 +1266,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
 
     # Sync reducer focus/click queue with the exact rows currently rendered.
     state.ui.kitchen_visible_rids = rendered_focus_rids
-    state.ui.kitchen_visible_theme_key = kitchen_queue_theme_key(t)
+    state.ui.kitchen_visible_theme_key = kitchen_queue_theme_key(state, t)
+    state.ui.kitchen_visible_layout = "landscape"
     state.ui.kitchen_visible_reminders_version = int(state.ui.reminders_version or 0)
 
 

@@ -2,12 +2,34 @@ from __future__ import annotations
 
 from app.core.state import AppState
 
-KITCHEN_FOCUS_LEFT_PANEL = "left_panel"
+KITCHEN_FOCUS_CLOCK = "clock"
+KITCHEN_FOCUS_WEATHER = "weather"
 KITCHEN_FOCUS_INVENTORY_HEADER = "inventory_header"
 KITCHEN_FOCUS_INVENTORY_ITEM = "inventory_item"
 KITCHEN_FOCUS_REMINDERS_HEADER = "reminders_header"
 KITCHEN_FOCUS_REMINDERS_ITEM = "reminders_item"
 KITCHEN_FOCUS_NONE = "none"
+
+
+def _normalized_right_angle(raw) -> int:
+    try:
+        deg = int(raw or 0)
+    except Exception:
+        deg = 0
+    return (((deg % 360) + 45) // 90 * 90) % 360
+
+
+def _resolved_home_variant(state: AppState | None, theme: dict | None = None) -> str:
+    variant = str((theme or {}).get("home_variant") or "kitchen").strip().lower()
+    rotation_deg = 0 if state is None else getattr(state.ui, "rotation_deg", 0)
+    rot = _normalized_right_angle(rotation_deg)
+    if variant == "kitchen_portrait" and rot in (0, 180):
+        return "kitchen"
+    return variant
+
+
+def _inventory_default_rows(state: AppState | None, theme: dict | None = None) -> int:
+    return 4 if _resolved_home_variant(state, theme) == "kitchen_portrait" else 3
 
 
 def _max_rows(theme: dict | None, key: str, default: int) -> int:
@@ -18,11 +40,19 @@ def _max_rows(theme: dict | None, key: str, default: int) -> int:
         return default
 
 
-def kitchen_queue_theme_key(theme: dict | None = None) -> str:
+def kitchen_queue_theme_key(state: AppState | None = None, theme: dict | None = None) -> str:
     """Cache key for queue-shaping theme knobs."""
-    inv_max_rows = _max_rows(theme, "b_inventory_max_rows", 3)
+    inv_max_rows = _max_rows(theme, "b_inventory_max_rows", _inventory_default_rows(state, theme))
     shop_max_rows = _max_rows(theme, "b_shopping_max_rows", 5)
     return f"{inv_max_rows}:{shop_max_rows}"
+
+
+def _home_hidden_rids(state: AppState) -> set[str]:
+    return {
+        str(rid)
+        for rid in getattr(state.ui, "home_hidden_rids", [])
+        if str(rid or "").strip()
+    }
 
 
 def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> list[int]:
@@ -34,7 +64,7 @@ def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> 
     current_reminders_version = int(getattr(state.ui, "reminders_version", 0))
     if (
         cached_rids
-        and cached_theme_key == kitchen_queue_theme_key(theme)
+        and cached_theme_key == kitchen_queue_theme_key(state, theme)
         and cached_reminders_version == current_reminders_version
     ):
         rid_to_idx = {r.rid: i for i, r in enumerate(state.model.reminders)}
@@ -43,29 +73,30 @@ def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> 
             idx = rid_to_idx.get(rid)
             if idx is None:
                 continue
-            if state.model.reminders[idx].completed:
-                continue
             cached_idxs.append(idx)
-        # If cache became partial (e.g., focused item just toggled to completed),
-        # rebuild from model to avoid a temporary shortened focus queue.
         if cached_idxs and len(cached_idxs) == len(cached_rids):
             return cached_idxs
 
-    inv_max_rows = _max_rows(theme, "b_inventory_max_rows", 3)
+    inv_max_rows = _max_rows(theme, "b_inventory_max_rows", _inventory_default_rows(state, theme))
     shop_max_rows = _max_rows(theme, "b_shopping_max_rows", 5)
+    hidden_rids = _home_hidden_rids(state)
 
     fridge: list[int] = []
     shop: list[int] = []
 
     for i, r in enumerate(state.model.reminders):
-        if r.completed:
+        rid = str(getattr(r, "rid", "") or "").strip()
+        if rid and rid in hidden_rids:
             continue
         if (r.category or "") == "fridge":
-            if len(fridge) < inv_max_rows:
-                fridge.append(i)
+            target = fridge
         else:
-            if len(shop) < shop_max_rows:
-                shop.append(i)
+            target = shop
+        if target is fridge and len(fridge) >= inv_max_rows:
+            continue
+        if target is shop and len(shop) >= shop_max_rows:
+            continue
+        target.append(i)
 
     return fridge + shop
 
@@ -85,8 +116,8 @@ def kitchen_visible_section_indices(state: AppState, theme: dict | None = None) 
 
 def kitchen_focus_count(state: AppState, theme: dict | None = None) -> int:
     fridge, reminders = kitchen_visible_section_indices(state, theme)
-    # [LEFT_PANEL, INVENTORY_HEADER, INVENTORY_ITEMS..., REMINDERS_HEADER, REMINDERS_ITEMS...]
-    return 3 + len(fridge) + len(reminders)
+    # [CLOCK, WEATHER, INVENTORY_ITEMS..., REMINDERS_ITEMS...]
+    return 2 + len(fridge) + len(reminders)
 
 
 def kitchen_focus_target(
@@ -96,22 +127,16 @@ def kitchen_focus_target(
 ) -> tuple[str, int | None]:
     idx = int(focused_index or 0)
     if idx <= 0:
-        return (KITCHEN_FOCUS_LEFT_PANEL, None)
+        return (KITCHEN_FOCUS_CLOCK, None)
+    if idx == 1:
+        return (KITCHEN_FOCUS_WEATHER, None)
 
     fridge, reminders = kitchen_visible_section_indices(state, theme)
-    pos = idx - 1
-
-    if pos == 0:
-        return (KITCHEN_FOCUS_INVENTORY_HEADER, None)
-    pos -= 1
+    pos = idx - 2
 
     if pos < len(fridge):
         return (KITCHEN_FOCUS_INVENTORY_ITEM, fridge[pos])
     pos -= len(fridge)
-
-    if pos == 0:
-        return (KITCHEN_FOCUS_REMINDERS_HEADER, None)
-    pos -= 1
 
     if pos < len(reminders):
         return (KITCHEN_FOCUS_REMINDERS_ITEM, reminders[pos])

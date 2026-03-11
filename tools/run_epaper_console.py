@@ -444,19 +444,30 @@ def _load_model(repo_root: str) -> DashboardModel:
     )
 
 
-def _read_key_nonblocking() -> str:
+def _read_key_nonblocking(escape_sequence_timeout_s: float = 0.06) -> str:
     r, _, _ = select.select([sys.stdin], [], [], 0)
     if not r:
         return ""
     ch = sys.stdin.read(1)
     if ch != "\x1b":
         return ch
-    # Arrow keys: ESC [ A/B/C/D
-    if select.select([sys.stdin], [], [], 0)[0]:
-        ch2 = sys.stdin.read(1)
-        if ch2 == "[" and select.select([sys.stdin], [], [], 0)[0]:
-            ch3 = sys.stdin.read(1)
-            return f"\x1b[{ch3}"
+    # Arrow keys can arrive split over multiple reads on Pi/SSH terminals.
+    # Collect a short ESC tail so cursor-key sequences are not mistaken for Back.
+    tail = ""
+    deadline = time.monotonic() + max(0.0, float(escape_sequence_timeout_s))
+    while time.monotonic() < deadline and len(tail) < 8:
+        remaining = max(0.0, deadline - time.monotonic())
+        tail_ready, _, _ = select.select([sys.stdin], [], [], remaining)
+        if not tail_ready:
+            break
+        nxt = sys.stdin.read(1)
+        if not nxt:
+            break
+        tail += nxt
+        if tail in ("[A", "[B", "[C", "[D", "OA", "OB", "OC", "OD"):
+            return f"\x1b[{tail[-1]}"
+        if len(tail) >= 2 and tail[0] == "[" and tail[-1] in "ABCD":
+            return f"\x1b[{tail[-1]}"
     return "\x1b"
 
 
@@ -561,6 +572,8 @@ def _state_render_sig(state: AppState):
         state.ui.device_timezone,
         state.ui.voice_locale,
         state.ui.focused_index,
+        state.ui.kitchen_focus_rid_override,
+        tuple(str(rid) for rid in getattr(state.ui, "home_hidden_rids", []) if str(rid or "").strip()),
         state.ui.page,
         state.ui.idle,
         state.ui.widget_mode,
@@ -832,6 +845,7 @@ def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
         return False
     allowed = {
         "home.focus_move_row",
+        "home.focus_move_left_target",
         "home.focus_to_left_panel",
         "home.focus_from_left_panel",
         "home.focus_left_panel_only",
@@ -1285,6 +1299,12 @@ def main() -> int:
         help="Debounce window for encoder KEY press in ms (default: 180)",
     )
     parser.add_argument(
+        "--encoder-key-min-press-ms",
+        type=int,
+        default=None,
+        help="Minimum stable KEY press duration required to emit a click (default: theme or 35ms)",
+    )
+    parser.add_argument(
         "--encoder-key-long-press-ms",
         type=int,
         default=450,
@@ -1452,6 +1472,10 @@ def main() -> int:
     space_last_trigger_at = 0.0
     gpio_pins_in_use = set()
     encoder_key_debounce_s = max(0.0, float(args.encoder_key_debounce_ms) / 1000.0)
+    encoder_key_min_press_ms = args.encoder_key_min_press_ms
+    if encoder_key_min_press_ms is None:
+        encoder_key_min_press_ms = theme.get("encoder_key_min_press_ms", 35)
+    encoder_key_min_press_s = max(0.0, float(encoder_key_min_press_ms) / 1000.0)
     encoder_key_long_press_s = max(0.1, float(args.encoder_key_long_press_ms) / 1000.0)
     rotate_debounce_s = max(0.0, float(args.rotate_debounce_ms) / 1000.0)
     voice_space_cooldown_s = max(0.2, float(theme.get("voice_space_cooldown_s", 1.2) or 1.2))
@@ -1575,7 +1599,11 @@ def main() -> int:
                         else:
                             if key_is_down:
                                 press_dur = max(0.0, now - key_down_at)
-                                if (not key_long_sent) and press_dur < encoder_key_long_press_s:
+                                if (
+                                    (not key_long_sent)
+                                    and press_dur >= encoder_key_min_press_s
+                                    and press_dur < encoder_key_long_press_s
+                                ):
                                     ev = Click()
                             key_is_down = False
                             key_down_at = 0.0

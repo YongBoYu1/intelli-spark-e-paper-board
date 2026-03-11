@@ -3,15 +3,28 @@ from __future__ import annotations
 import os
 import time
 import unittest
+from unittest.mock import patch
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 from app.core.kitchen_queue import kitchen_visible_task_indices
-from app.core.reducer import Click, Rotate, reduce
-from app.core.state import AppState, DashboardModel, MemoItem, Reminder, Screen, WidgetMode
+from app.core.reducer import Click, Rotate, RotateButton, Tick, reduce
+from app.core.state import AppState, DashboardModel, MemoItem, Reminder, Screen, WeatherDay, WidgetMode
+from app.render.refresh_policy import (
+    _home_portrait_header_focus_rect,
+    build_ui_snapshot,
+    infer_dirty_rects_with_reasons,
+    merge_rects,
+    rect_contains,
+)
 from app.render.panel import build_panel_theme
 from app.shared.fonts import FontBook
 from app.ui.app import render_app
+from app.ui.home_kitchen import render_home_kitchen
+from app.ui.home_kitchen_geometry import (
+    home_landscape_header_focus_box,
+    home_portrait_header_focus_source_box,
+)
 
 
 def _test_font_book() -> FontBook:
@@ -40,6 +53,10 @@ def _rects_intersect(a: tuple[int, int, int, int], b: tuple[int, int, int, int])
     return not (ax1 <= bx0 or bx1 <= ax0 or ay1 <= by0 or by1 <= ay0)
 
 
+def _diff_bbox(prev: Image.Image, curr: Image.Image) -> tuple[int, int, int, int] | None:
+    return ImageChops.difference(prev, curr).convert("L").getbbox()
+
+
 class HomeKitchenFocusTests(unittest.TestCase):
     def test_kitchen_focus_clamps_at_bottom_instead_of_wrapping(self) -> None:
         model = DashboardModel()
@@ -49,11 +66,11 @@ class HomeKitchenFocusTests(unittest.TestCase):
         ]
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
-        # focus queue: [LEFT_PANEL, INV_HEADER, INV_ITEM, REM_HEADER, REM_ITEM]
-        state.ui.focused_index = 4
+        # focus queue: [CLOCK, WEATHER, INV_ITEM, REM_ITEM]
+        state.ui.focused_index = 3
 
         reduce(state, Rotate(+1), theme={"home_variant": "kitchen"})
-        self.assertEqual(state.ui.focused_index, 4)
+        self.assertEqual(state.ui.focused_index, 3)
 
     def test_kitchen_focus_clamps_at_top_instead_of_wrapping(self) -> None:
         model = DashboardModel()
@@ -68,17 +85,23 @@ class HomeKitchenFocusTests(unittest.TestCase):
         reduce(state, Rotate(-1), theme={"home_variant": "kitchen"})
         self.assertEqual(state.ui.focused_index, 0)
 
-    def test_kitchen_click_inventory_header_opens_inventory_screen(self) -> None:
+    def test_kitchen_landscape_click_inventory_row_toggles_item(self) -> None:
         model = DashboardModel()
         model.reminders = [Reminder(rid="r1", title="A", category="fridge")]
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
-        state.ui.focused_index = 1
+        state.ui.focused_index = 2
 
-        reduce(state, Click(), theme={"home_variant": "kitchen"})
-        self.assertEqual(state.ui.screen, Screen.INVENTORY)
+        with patch("app.core.reducer.time.time", return_value=100.0):
+            reduce(state, Click(), theme={"home_variant": "kitchen"})
+        self.assertTrue(state.model.reminders[0].completed)
+        self.assertEqual(state.ui.screen, Screen.HOME)
+        self.assertEqual(state.ui.home_pending_hide_rids, ["r1"])
+        self.assertFalse(state.ui.pending_reorder)
+        idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen"})
+        self.assertEqual([state.model.reminders[i].rid for i in idxs], ["r1"])
 
-    def test_kitchen_click_reminders_header_opens_reminders_screen(self) -> None:
+    def test_kitchen_landscape_click_reminder_row_toggles_item(self) -> None:
         model = DashboardModel()
         model.reminders = [
             Reminder(rid="r1", title="A", category="fridge"),
@@ -89,9 +112,10 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state.ui.focused_index = 3
 
         reduce(state, Click(), theme={"home_variant": "kitchen"})
-        self.assertEqual(state.ui.screen, Screen.REMINDERS)
+        self.assertTrue(state.model.reminders[1].completed)
+        self.assertEqual(state.ui.screen, Screen.HOME)
 
-    def test_kitchen_portrait_theme_uses_landscape_click_routing_at_zero_deg(self) -> None:
+    def test_kitchen_portrait_theme_uses_landscape_row_click_routing_at_zero_deg(self) -> None:
         model = DashboardModel()
         model.reminders = [
             Reminder(rid="r1", title="A", category="fridge"),
@@ -100,12 +124,13 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
         state.ui.rotation_deg = 0
-        state.ui.focused_index = 1
+        state.ui.focused_index = 2
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
-        self.assertEqual(state.ui.screen, Screen.INVENTORY)
+        self.assertTrue(state.model.reminders[0].completed)
+        self.assertEqual(state.ui.screen, Screen.HOME)
 
-    def test_kitchen_click_left_panel_opens_weather_even_with_timer_widget(self) -> None:
+    def test_kitchen_click_clock_focus_opens_timer_when_widget_mode_timer(self) -> None:
         state = AppState(model=DashboardModel())
         state.ui.screen = Screen.HOME
         state.ui.focused_index = 0
@@ -114,7 +139,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
 
         reduce(state, Click(), theme={"home_variant": "kitchen"})
 
-        self.assertEqual(state.ui.screen, Screen.WEATHER)
+        self.assertEqual(state.ui.screen, Screen.TIMER)
         self.assertFalse(state.ui.timer_running)
 
     def test_kitchen_click_left_panel_can_toggle_timer_when_enabled_by_theme(self) -> None:
@@ -133,7 +158,27 @@ class HomeKitchenFocusTests(unittest.TestCase):
         self.assertEqual(state.ui.screen, Screen.HOME)
         self.assertTrue(state.ui.timer_running)
 
-    def test_kitchen_portrait_click_uses_kitchen_visible_queue(self) -> None:
+    def test_kitchen_click_clock_focus_opens_calendar(self) -> None:
+        state = AppState(model=DashboardModel())
+        state.ui.screen = Screen.HOME
+        state.ui.focused_index = 0
+
+        reduce(state, Click(), theme={"home_variant": "kitchen"})
+
+        self.assertEqual(state.ui.screen, Screen.CALENDAR)
+
+    def test_kitchen_portrait_weather_focus_click_opens_weather(self) -> None:
+        state = AppState(model=DashboardModel())
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        state.ui.focused_index = 1
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+
+        self.assertEqual(state.ui.screen, Screen.WEATHER)
+        self.assertEqual(state.ui.weather_day_index, 0)
+
+    def test_kitchen_portrait_click_can_restore_visible_completed_inventory_row(self) -> None:
         model = DashboardModel()
         model.reminders = [
             Reminder(rid="f1", title="Fresh Milk", category="fridge", completed=True),
@@ -145,16 +190,47 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
         state.ui.rotation_deg = 90
-        state.ui.focused_index = 2
+        state.ui.focused_index = 3
         state.ui.reminders_version = 1
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
 
-        self.assertTrue(state.model.reminders[0].completed)
+        self.assertFalse(state.model.reminders[1].completed)
         self.assertFalse(state.model.reminders[3].completed)
-        self.assertTrue(state.model.reminders[4].completed)
+        self.assertFalse(state.model.reminders[4].completed)
+        self.assertEqual(state.ui.kitchen_focus_rid_override, "f2")
 
-    def test_kitchen_portrait_click_holds_focus_until_rotate(self) -> None:
+    def test_kitchen_landscape_completed_item_can_be_undone_after_rotate(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge", completed=False),
+            Reminder(rid="f2", title="Eggs", category="fridge", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.focused_index = 2
+
+        with patch("app.core.reducer.time.time", return_value=100.0):
+            reduce(state, Click(), theme={"home_variant": "kitchen"})
+        self.assertTrue(state.model.reminders[0].completed)
+        self.assertEqual(state.ui.focused_index, 2)
+
+        with patch("app.core.reducer.time.time", return_value=110.0):
+            reduce(state, Rotate(+1), theme={"home_variant": "kitchen"})
+        self.assertEqual(state.ui.focused_index, 3)
+        self.assertEqual(state.ui.home_hidden_rids, [])
+
+        with patch("app.core.reducer.time.time", return_value=111.0):
+            reduce(state, Rotate(-1), theme={"home_variant": "kitchen"})
+        self.assertEqual(state.ui.focused_index, 2)
+
+        with patch("app.core.reducer.time.time", return_value=112.0):
+            reduce(state, Click(), theme={"home_variant": "kitchen"})
+        self.assertFalse(state.model.reminders[0].completed)
+        self.assertEqual(state.ui.home_pending_hide_rids, [])
+        self.assertEqual(state.ui.home_hidden_rids, [])
+
+    def test_kitchen_portrait_first_rotate_after_click_moves_from_held_item(self) -> None:
         model = DashboardModel()
         model.reminders = [
             Reminder(rid="s1", title="A", category="shopping", completed=False),
@@ -164,18 +240,18 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
         state.ui.rotation_deg = 90
-        # focus queue: [LEFT, s1, s2, s3]
-        state.ui.focused_index = 2
+        # focus queue: [CLOCK, WEATHER, s1, s2, s3]
+        state.ui.focused_index = 3
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
         self.assertTrue(state.model.reminders[1].completed)
         self.assertEqual(state.ui.kitchen_focus_rid_override, "s2")
 
-        # Rotate releases hold and resumes normal actionable queue navigation.
+        # Rotate releases hold and moves one step from the held item.
         reduce(state, Rotate(+1), theme={"home_variant": "kitchen_portrait"})
         self.assertEqual(state.ui.kitchen_focus_rid_override, "")
         idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
-        pos = int(state.ui.focused_index) - 1
+        pos = int(state.ui.focused_index) - 2
         self.assertTrue(0 <= pos < len(idxs))
         self.assertEqual(state.model.reminders[idxs[pos]].rid, "s3")
 
@@ -189,7 +265,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
         state.ui.rotation_deg = 90
-        state.ui.focused_index = 2
+        state.ui.focused_index = 3
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
         self.assertTrue(state.model.reminders[1].completed)
@@ -199,7 +275,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         self.assertFalse(state.model.reminders[1].completed)
         self.assertEqual(state.ui.kitchen_focus_rid_override, "s2")
 
-    def test_kitchen_portrait_reverse_rotate_after_click_only_releases_hold(self) -> None:
+    def test_kitchen_portrait_reverse_rotate_after_click_moves_back_one_item(self) -> None:
         model = DashboardModel()
         model.reminders = [
             Reminder(rid="s1", title="A", category="shopping", completed=False),
@@ -209,7 +285,7 @@ class HomeKitchenFocusTests(unittest.TestCase):
         state = AppState(model=model)
         state.ui.screen = Screen.HOME
         state.ui.rotation_deg = 90
-        state.ui.focused_index = 2
+        state.ui.focused_index = 3
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
         self.assertEqual(state.ui.kitchen_focus_rid_override, "s2")
@@ -219,9 +295,59 @@ class HomeKitchenFocusTests(unittest.TestCase):
         self.assertEqual(state.ui.focused_index, 2)
 
         idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
-        pos = int(state.ui.focused_index) - 1
+        pos = int(state.ui.focused_index) - 2
         self.assertTrue(0 <= pos < len(idxs))
-        self.assertEqual(state.model.reminders[idxs[pos]].rid, "s3")
+        self.assertEqual(state.model.reminders[idxs[pos]].rid, "s1")
+
+    def test_kitchen_portrait_inventory_rotate_after_click_moves_once(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge", completed=False),
+            Reminder(rid="f2", title="Eggs", category="fridge", completed=False),
+            Reminder(rid="s1", title="Bread", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        state.ui.focused_index = 2
+
+        reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.kitchen_focus_rid_override, "f1")
+
+        reduce(state, Rotate(+1), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.kitchen_focus_rid_override, "")
+        self.assertEqual(state.ui.focused_index, 3)
+
+        idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
+        pos = int(state.ui.focused_index) - 2
+        self.assertTrue(0 <= pos < len(idxs))
+        self.assertEqual(state.model.reminders[idxs[pos]].rid, "f2")
+
+    def test_kitchen_home_pending_hide_promotes_on_minute_tick(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge", completed=False),
+            Reminder(rid="f2", title="Eggs", category="fridge", completed=False),
+            Reminder(rid="s1", title="Buy Bread", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.focused_index = 2
+        state.ui.clock_minute_bucket = 1
+
+        theme = {"home_variant": "kitchen", "home_completed_hide_grace_s": 30}
+        with patch("app.core.reducer.time.time", return_value=100.0):
+            reduce(state, Click(), theme=theme)
+
+        self.assertEqual(state.ui.home_pending_hide_rids, ["f1"])
+        self.assertEqual(state.ui.home_hidden_rids, [])
+
+        reduce(state, Tick(now=181.0), theme=theme)
+
+        self.assertEqual(state.ui.home_pending_hide_rids, [])
+        self.assertEqual(state.ui.home_hidden_rids, ["f1"])
+        idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen"})
+        self.assertEqual([state.model.reminders[i].rid for i in idxs], ["f2", "s1"])
 
     def test_kitchen_portrait_rotate_clamps_to_actionable_rows(self) -> None:
         model = DashboardModel()
@@ -237,11 +363,46 @@ class HomeKitchenFocusTests(unittest.TestCase):
         for _ in range(6):
             reduce(state, Rotate(+1), theme={"home_variant": "kitchen_portrait"})
 
-        self.assertEqual(state.ui.focused_index, 2)
+        self.assertEqual(state.ui.focused_index, 3)
 
         reduce(state, Click(), theme={"home_variant": "kitchen_portrait"})
-        self.assertFalse(state.model.reminders[0].completed)
         self.assertTrue(state.model.reminders[1].completed)
+
+    def test_kitchen_rotate_button_clamps_focus_after_orientation_change(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge", completed=False),
+            Reminder(rid="f2", title="Eggs", category="fridge", completed=False),
+            Reminder(rid="f3", title="Soup", category="fridge", completed=False),
+            Reminder(rid="f4", title="Sauce", category="fridge", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.focused_index = 5
+
+        reduce(state, RotateButton(), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.rotation_deg, 90)
+        self.assertEqual(state.ui.focused_index, 5)
+
+        reduce(state, RotateButton(), theme={"home_variant": "kitchen_portrait"})
+        self.assertEqual(state.ui.rotation_deg, 180)
+        self.assertEqual(state.ui.focused_index, 4)
+
+    def test_kitchen_portrait_queue_defaults_allow_four_inventory_rows(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", category="fridge", completed=False),
+            Reminder(rid="f2", title="Eggs", category="fridge", completed=False),
+            Reminder(rid="f3", title="Sauce", category="fridge", completed=False),
+            Reminder(rid="f4", title="Soup", category="fridge", completed=False),
+            Reminder(rid="s1", title="Bread", category="shopping", completed=False),
+        ]
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+
+        idxs = kitchen_visible_task_indices(state, {"home_variant": "kitchen_portrait"})
+        self.assertEqual([state.model.reminders[i].rid for i in idxs[:5]], ["f1", "f2", "f3", "f4", "s1"])
 
     def test_large_font_posted_timestamp_does_not_overlap_voice_lane(self) -> None:
         model = DashboardModel()
@@ -287,6 +448,261 @@ class HomeKitchenFocusTests(unittest.TestCase):
         assert posted_bbox is not None and voice_bbox is not None
         self.assertFalse(_rects_intersect(posted_bbox, voice_bbox))
         self.assertLess(posted_bbox[3], voice_bbox[1])
+
+    def test_landscape_weather_focus_dirty_rect_covers_actual_diff(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            reminders=[
+                Reminder(rid="f1", title="Fresh Milk", right="EXP 3D", completed=False, category="fridge"),
+                Reminder(rid="f2", title="Leftover Pizza", right="ADDED YDAY", completed=False, category="fridge"),
+                Reminder(rid="f3", title="Marinated Chicken", right="USE TNITE", completed=False, category="fridge"),
+                Reminder(rid="s1", title="Doctor Appointment", completed=False, category="shopping"),
+            ],
+            weather=[WeatherDay(dow="MON", icon="rain", hi=18, lo=11, humidity=97)],
+            memos=[MemoItem(mid="m1", text="Can someone pick up packages?", author="Alex", timestamp=1700000000.0)],
+        )
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 2
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 1
+
+        theme = build_panel_theme({"home_variant": "kitchen", "panel_mode": True})
+        fonts = _test_font_book()
+        prev_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        curr_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        render_app(prev_img, prev, fonts, theme)
+        render_app(curr_img, curr, fonts, theme)
+
+        diff_bbox = _diff_bbox(prev_img, curr_img)
+        self.assertIsNotNone(diff_bbox)
+        rects, _ = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert diff_bbox is not None and merged is not None
+        self.assertTrue(rect_contains(merged, diff_bbox, slack=2))
+
+    def test_landscape_weather_focus_renders_bottom_edge(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            weather=[WeatherDay(dow="MON", icon="cloud", hi=19, lo=11, humidity=66)],
+        )
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.focused_index = 1
+
+        theme = build_panel_theme({"home_variant": "kitchen", "panel_mode": True})
+        fonts = _test_font_book()
+        image = Image.new("1", (800, 480), 255)
+        render_home_kitchen(image, state, fonts, theme)
+
+        box = home_landscape_header_focus_box(800, 480, kind="weather")
+        self.assertIsNotNone(box)
+        assert box is not None
+        x0, _y0, x1, y1 = box
+        pixels = image.load()
+        dark = sum(1 for x in range(x0 + 12, x1 - 12) if pixels[x, y1] == 0)
+        self.assertGreater(dark, 8)
+
+    def test_landscape_shopping_focus_dirty_rect_covers_actual_diff(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            reminders=[
+                Reminder(rid="f1", title="Fresh Milk", right="EXP 3D", completed=False, category="fridge"),
+                Reminder(rid="f2", title="Leftover Pizza", right="ADDED YDAY", completed=False, category="fridge"),
+                Reminder(rid="f3", title="Marinated Chicken", right="USE TNITE", completed=False, category="fridge"),
+                Reminder(rid="s1", title="Doctor Appointment", completed=False, category="shopping"),
+                Reminder(rid="s2", title="Yoghurt Expires", completed=False, category="shopping"),
+                Reminder(rid="s3", title="Morning Yoga", completed=False, category="shopping"),
+            ],
+            weather=[WeatherDay(dow="MON", icon="rain", hi=18, lo=11, humidity=97)],
+            memos=[MemoItem(mid="m1", text="Can someone pick up packages?", author="Alex", timestamp=1700000000.0)],
+        )
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.focused_index = 5
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.focused_index = 6
+
+        theme = build_panel_theme({"home_variant": "kitchen", "panel_mode": True})
+        fonts = _test_font_book()
+        prev_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        curr_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        render_app(prev_img, prev, fonts, theme)
+        render_app(curr_img, curr, fonts, theme)
+
+        diff_bbox = _diff_bbox(prev_img, curr_img)
+        self.assertIsNotNone(diff_bbox)
+        rects, _ = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert diff_bbox is not None and merged is not None
+        self.assertTrue(rect_contains(merged, diff_bbox, slack=2))
+
+    def test_portrait_weather_to_inventory_focus_dirty_rect_covers_actual_diff(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            reminders=[
+                Reminder(rid="f1", title="Fresh Milk", right="EXP 3D", completed=False, category="fridge"),
+                Reminder(rid="f2", title="Leftover Pizza", right="ADDED YDAY", completed=False, category="fridge"),
+                Reminder(rid="f3", title="Marinated Chicken", right="USE TNITE", completed=False, category="fridge"),
+                Reminder(rid="s1", title="Doctor Appointment", completed=False, category="shopping"),
+            ],
+            weather=[WeatherDay(dow="MON", icon="cloud", hi=19, lo=11, humidity=66)],
+            memos=[MemoItem(mid="m1", text="Can someone pick up packages?", author="Alex", timestamp=1700000000.0)],
+        )
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.rotation_deg = 90
+        prev.ui.focused_index = 1
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.rotation_deg = 90
+        curr.ui.focused_index = 2
+
+        theme = build_panel_theme({"home_variant": "kitchen_portrait", "panel_mode": True})
+        fonts = _test_font_book()
+        prev_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        curr_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        render_app(prev_img, prev, fonts, theme)
+        render_app(curr_img, curr, fonts, theme)
+
+        diff_bbox = _diff_bbox(prev_img, curr_img)
+        self.assertIsNotNone(diff_bbox)
+        rects, _ = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert diff_bbox is not None and merged is not None
+        self.assertTrue(rect_contains(merged, diff_bbox, slack=2))
+
+    def test_portrait_clock_focus_dirty_rect_covers_actual_diff(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            reminders=[
+                Reminder(rid="f1", title="Fresh Milk", right="EXP 3D", completed=False, category="fridge"),
+                Reminder(rid="s1", title="Doctor Appointment", completed=False, category="shopping"),
+            ],
+            weather=[WeatherDay(dow="MON", icon="cloud", hi=19, lo=11, humidity=66)],
+            memos=[MemoItem(mid="m1", text="Can someone pick up packages?", author="Alex", timestamp=1700000000.0)],
+        )
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.rotation_deg = 90
+        prev.ui.focused_index = 2
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.rotation_deg = 90
+        curr.ui.focused_index = 0
+
+        theme = build_panel_theme({"home_variant": "kitchen_portrait", "panel_mode": True})
+        fonts = _test_font_book()
+        prev_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        curr_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        render_app(prev_img, prev, fonts, theme)
+        render_app(curr_img, curr, fonts, theme)
+
+        diff_bbox = _diff_bbox(prev_img, curr_img)
+        self.assertIsNotNone(diff_bbox)
+        rects, _ = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert diff_bbox is not None and merged is not None
+        self.assertTrue(rect_contains(merged, diff_bbox, slack=2))
+
+    def test_portrait_header_focus_source_boxes_fit_source_canvas(self) -> None:
+        for kind in ("clock", "weather"):
+            box = home_portrait_header_focus_source_box(
+                480,
+                800,
+                kind=kind,
+                has_weather_data=True,
+                has_humidity=True,
+            )
+            self.assertIsNotNone(box)
+            assert box is not None
+            x0, y0, x1, y1 = box
+            self.assertGreaterEqual(x0, 0)
+            self.assertGreaterEqual(y0, 0)
+            self.assertLess(x1, 480)
+            self.assertLess(y1, 800)
+            self.assertGreater(x1, x0)
+            self.assertGreater(y1, y0)
+
+    def test_portrait_clock_focus_changes_rendered_app_in_expected_region(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            weather=[WeatherDay(dow="MON", icon="cloud", hi=19, lo=11, humidity=66)],
+        )
+        base = AppState(model=model)
+        base.ui.screen = Screen.HOME
+        base.ui.rotation_deg = 90
+        base.ui.idle = True
+
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        state.ui.focused_index = 0
+
+        theme = build_panel_theme({"home_variant": "kitchen_portrait", "panel_mode": True})
+        fonts = _test_font_book()
+        base_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        focus_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        render_app(base_img, base, fonts, theme)
+        render_app(focus_img, state, fonts, theme)
+
+        diff_bbox = _diff_bbox(base_img, focus_img)
+        self.assertIsNotNone(diff_bbox)
+        expected = _home_portrait_header_focus_rect(
+            800,
+            480,
+            rotation_deg=90,
+            kind="clock",
+            weather_digest=build_ui_snapshot(state).weather_digest,
+        )
+        self.assertIsNotNone(expected)
+        assert diff_bbox is not None and expected is not None
+        self.assertTrue(rect_contains(expected, diff_bbox, slack=2))
+
+    def test_portrait_weather_focus_changes_rendered_app_in_expected_region(self) -> None:
+        model = DashboardModel(
+            location="Toronto",
+            weather=[WeatherDay(dow="MON", icon="cloud", hi=19, lo=11, humidity=66)],
+        )
+        base = AppState(model=model)
+        base.ui.screen = Screen.HOME
+        base.ui.rotation_deg = 90
+        base.ui.idle = True
+
+        state = AppState(model=model)
+        state.ui.screen = Screen.HOME
+        state.ui.rotation_deg = 90
+        state.ui.focused_index = 1
+
+        theme = build_panel_theme({"home_variant": "kitchen_portrait", "panel_mode": True})
+        fonts = _test_font_book()
+        base_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        focus_img = Image.new("RGB", (800, 480), (255, 255, 255))
+        render_app(base_img, base, fonts, theme)
+        render_app(focus_img, state, fonts, theme)
+
+        diff_bbox = _diff_bbox(base_img, focus_img)
+        self.assertIsNotNone(diff_bbox)
+        expected = _home_portrait_header_focus_rect(
+            800,
+            480,
+            rotation_deg=90,
+            kind="weather",
+            weather_digest=build_ui_snapshot(state).weather_digest,
+        )
+        self.assertIsNotNone(expected)
+        assert diff_bbox is not None and expected is not None
+        self.assertTrue(rect_contains(expected, diff_bbox, slack=2))
 
 
 if __name__ == "__main__":

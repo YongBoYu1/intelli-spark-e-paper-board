@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from app.core.settings_schema import SETTINGS_GROUPS, SETTINGS_ORDER
 from app.core.state import AppState, Screen
+from app.ui.home_kitchen_geometry import (
+    closed_box_to_rect,
+    home_landscape_header_focus_box,
+    home_portrait_header_focus_source_box_for_panel,
+)
+from app.ui.menu import home_menu_overlay_rect
 
 Rect = tuple[int, int, int, int]
 
@@ -255,6 +262,10 @@ class UiSnapshot:
     voice_locale: str
     font_size: str
     focused_index: int
+    kitchen_focus_rid_override: str
+    home_hidden_rids: tuple[str, ...]
+    kitchen_visible_rids: tuple[str, ...]
+    kitchen_visible_layout: str
     menu_focused: str
     menu_overlay_active: bool
     settings_focused_index: int
@@ -319,6 +330,10 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
         voice_locale=str(state.ui.voice_locale or "en-US"),
         font_size=str(state.ui.font_size or "medium"),
         focused_index=int(state.ui.focused_index or 0),
+        kitchen_focus_rid_override=str(state.ui.kitchen_focus_rid_override or ""),
+        home_hidden_rids=tuple(str(rid) for rid in getattr(state.ui, "home_hidden_rids", []) if str(rid or "").strip()),
+        kitchen_visible_rids=tuple(str(rid) for rid in getattr(state.ui, "kitchen_visible_rids", []) if str(rid or "").strip()),
+        kitchen_visible_layout=str(getattr(state.ui, "kitchen_visible_layout", "") or ""),
         menu_focused=str(state.ui.menu_focused.value if hasattr(state.ui.menu_focused, "value") else state.ui.menu_focused),
         menu_overlay_active=bool(state.ui.menu_overlay_active),
         settings_focused_index=int(state.ui.settings_focused_index or 0),
@@ -382,6 +397,364 @@ def _voice_overlay_region(width: int, height: int, *, rotation_deg: int = 0) -> 
         rx0, ry0, rx1, ry1 = rect
         rect = (w - rx1, h - ry1, w - rx0, h - ry0)
     return rect
+
+
+def _normalized_right_angle(raw) -> int:
+    try:
+        deg = int(raw or 0)
+    except (TypeError, ValueError):
+        deg = 0
+    return (((deg % 360) + 45) // 90 * 90) % 360
+
+
+def _transform_source_rect(rect: Rect, src_width: int, src_height: int, rotation_deg: int) -> Rect | None:
+    clipped = _clip_rect(rect, src_width, src_height)
+    if clipped is None:
+        return None
+    x0, y0, x1, y1 = clipped
+    rot = _normalized_right_angle(rotation_deg)
+    if rot == 90:
+        return (y0, src_width - x1, y1, src_width - x0)
+    if rot == 180:
+        return (src_width - x1, src_height - y1, src_width - x0, src_height - y0)
+    if rot == 270:
+        return (src_height - y1, x0, src_height - y0, x1)
+    return clipped
+
+
+def _home_portrait_source_metrics(width: int, height: int) -> dict[str, int]:
+    src_w = max(1, int(height))
+    src_h = max(1, int(width))
+
+    margin = 8
+    pad = 8
+    sec_gap = 4
+    header_h_ratio = 0.21
+    memo_h_ratio = 0.25
+    min_list_h = 220
+    header_col_gap = 16
+    weather_col_w = 156
+    list_split_ratio = 0.48
+    shop_min_h = 104
+    list_bottom_reserve = 20
+    voice_margin = 14
+    voice_lane_h = 29
+    focus_pad_x = 6
+    focus_pad_y = 4
+    inv_header_gap = 20
+    inv_row_h = 36
+    shop_header_gap = 18
+    shop_row_h = 36
+    header_text_h = 16
+
+    x0, y0, x1, y1 = margin, margin, src_w - margin, src_h - margin
+    inner_h = max(1, y1 - y0)
+    header_h = max(160, int(inner_h * header_h_ratio))
+    memo_h = max(188, int(inner_h * memo_h_ratio))
+    if header_h + memo_h + sec_gap * 2 + min_list_h > inner_h:
+        overflow = header_h + memo_h + sec_gap * 2 + min_list_h - inner_h
+        memo_h = max(150, memo_h - overflow)
+
+    header_y0 = y0
+    header_y1 = min(y1 - sec_gap * 2 - min_list_h, header_y0 + header_h)
+    memo_y0 = header_y1 + sec_gap
+    memo_y1 = min(y1 - sec_gap - min_list_h, memo_y0 + memo_h)
+    list_y0 = memo_y1 + sec_gap
+    list_y1 = y1
+
+    hx0, hx1 = x0 + pad, x1 - pad
+    hy0 = header_y0 + pad
+    weather_w = min(weather_col_w, max(120, int((hx1 - hx0) * 0.36)))
+    left_x0 = hx0
+    left_x1 = max(left_x0 + 120, hx1 - weather_w - header_col_gap)
+    weather_x0 = left_x1 + header_col_gap
+    weather_x1 = hx1
+
+    lx0, lx1 = x0 + pad, x1 - pad
+    voice_guard = max(0, voice_margin + voice_lane_h - margin - pad + 4)
+    ly0 = list_y0 + pad
+    ly1 = list_y1 - pad - max(list_bottom_reserve, voice_guard)
+    if ly1 <= ly0:
+        ly1 = ly0 + 1
+    list_h = max(80, ly1 - ly0)
+    inv_zone_bottom = min(ly1 - max(72, shop_min_h), ly0 + max(96, int(list_h * list_split_ratio)))
+    inv_header_y = ly0 + max(8, header_text_h // 2 + 2)
+    inv_row_y = inv_header_y + inv_header_gap
+
+    return {
+        "src_w": src_w,
+        "src_h": src_h,
+        "x0": x0,
+        "y0": y0,
+        "x1": x1,
+        "y1": y1,
+        "pad": pad,
+        "header_y0": header_y0,
+        "header_y1": header_y1,
+        "memo_y0": memo_y0,
+        "memo_y1": memo_y1,
+        "left_x0": left_x0,
+        "left_x1": left_x1,
+        "weather_x0": weather_x0,
+        "weather_x1": weather_x1,
+        "hy0": hy0,
+        "lx0": lx0,
+        "lx1": lx1,
+        "ly0": ly0,
+        "ly1": ly1,
+        "inv_zone_bottom": inv_zone_bottom,
+        "inv_header_y": inv_header_y,
+        "inv_row_y": inv_row_y,
+        "inv_row_h": inv_row_h,
+        "shop_header_gap": shop_header_gap,
+        "shop_row_h": shop_row_h,
+        "focus_pad_x": focus_pad_x,
+        "focus_pad_y": focus_pad_y,
+    }
+
+
+def _home_portrait_rendered_sections(
+    reminders_digest: tuple,
+    *,
+    hidden_rids: tuple[str, ...] = (),
+    inv_max: int = 4,
+    shop_max: int = 5,
+) -> tuple[tuple[tuple, ...], tuple[tuple, ...]]:
+    hidden = {str(rid) for rid in hidden_rids if str(rid or "").strip()}
+    fridge: list[tuple] = []
+    shop: list[tuple] = []
+    for item in reminders_digest or ():
+        try:
+            rid = str(item[0] or "")
+            category = str(item[4] or "")
+        except Exception:
+            continue
+        if rid and rid in hidden:
+            continue
+        if category == "fridge":
+            if len(fridge) < inv_max:
+                fridge.append(item)
+        else:
+            if len(shop) < shop_max:
+                shop.append(item)
+    return tuple(fridge), tuple(shop)
+
+
+def _home_portrait_focus_queue_rids(
+    reminders_digest: tuple,
+    *,
+    hidden_rids: tuple[str, ...] = (),
+    inv_max: int = 4,
+    shop_max: int = 5,
+) -> list[str]:
+    fridge_rows, shop_rows = _home_portrait_rendered_sections(
+        reminders_digest,
+        hidden_rids=hidden_rids,
+        inv_max=inv_max,
+        shop_max=shop_max,
+    )
+    queue: list[str] = []
+    for item in fridge_rows + shop_rows:
+        queue.append(str(item[0]))
+    return queue
+
+
+def _home_portrait_effective_focus_rid(snapshot: UiSnapshot) -> str:
+    if int(snapshot.focused_index or 0) <= 1:
+        return ""
+
+    hold_rid = str(snapshot.kitchen_focus_rid_override or "").strip()
+    fridge_rows, shop_rows = _home_portrait_rendered_sections(
+        snapshot.reminders_digest,
+        hidden_rids=snapshot.home_hidden_rids,
+    )
+    rendered_rids = {str(item[0]) for item in fridge_rows + shop_rows}
+    if hold_rid and hold_rid in rendered_rids:
+        return hold_rid
+
+    queue = _home_portrait_focus_queue_rids(
+        snapshot.reminders_digest,
+        hidden_rids=snapshot.home_hidden_rids,
+    )
+    pos = int(snapshot.focused_index or 0) - 2
+    if 0 <= pos < len(queue):
+        return queue[pos]
+    return ""
+
+
+def _home_portrait_row_source_rect(
+    width: int,
+    height: int,
+    *,
+    reminders_digest: tuple,
+    focus_rid: str,
+    hidden_rids: tuple[str, ...] = (),
+) -> Rect | None:
+    rid = str(focus_rid or "").strip()
+    if not rid:
+        return None
+
+    metrics = _home_portrait_source_metrics(width, height)
+    fridge_rows, shop_rows = _home_portrait_rendered_sections(reminders_digest, hidden_rids=hidden_rids)
+    fx0 = metrics["lx0"] - metrics["focus_pad_x"]
+    fx1 = metrics["lx1"] + metrics["focus_pad_x"]
+
+    for idx, item in enumerate(fridge_rows):
+        if str(item[0]) != rid:
+            continue
+        row_y = metrics["inv_row_y"] + idx * metrics["inv_row_h"]
+        return (
+            fx0,
+            row_y + metrics["focus_pad_y"],
+            fx1,
+            row_y + metrics["inv_row_h"] - metrics["focus_pad_y"],
+        )
+
+    shop_header_y = max(
+        metrics["inv_zone_bottom"],
+        metrics["inv_row_y"] + len(fridge_rows) * metrics["inv_row_h"] + 8,
+    )
+    shop_row_y = shop_header_y + metrics["shop_header_gap"]
+    for idx, item in enumerate(shop_rows):
+        if str(item[0]) != rid:
+            continue
+        row_y = shop_row_y + idx * metrics["shop_row_h"]
+        return (
+            fx0,
+            row_y + metrics["focus_pad_y"],
+            fx1,
+            row_y + metrics["shop_row_h"] - metrics["focus_pad_y"],
+        )
+    return None
+
+
+def _home_portrait_focus_row_rect(
+    width: int,
+    height: int,
+    *,
+    rotation_deg: int,
+    reminders_digest: tuple,
+    focus_rid: str,
+    hidden_rids: tuple[str, ...] = (),
+) -> Rect | None:
+    metrics = _home_portrait_source_metrics(width, height)
+    source_box = _home_portrait_row_source_rect(
+        width,
+        height,
+        reminders_digest=reminders_digest,
+        focus_rid=focus_rid,
+        hidden_rids=hidden_rids,
+    )
+    if source_box is None:
+        return None
+    source_rect = closed_box_to_rect(source_box, outline_width=1, extra_pad=7)
+    if source_rect is None:
+        return None
+    return _transform_source_rect(source_rect, metrics["src_w"], metrics["src_h"], rotation_deg)
+
+
+def _home_portrait_header_focus_rect(
+    width: int,
+    height: int,
+    *,
+    rotation_deg: int,
+    kind: str,
+    weather_digest: tuple,
+) -> Rect | None:
+    metrics = _home_portrait_source_metrics(width, height)
+    source_box = home_portrait_header_focus_source_box_for_panel(
+        width,
+        height,
+        kind=kind,
+        has_weather_data=bool(weather_digest),
+        has_humidity=bool(weather_digest and weather_digest[0][4] is not None),
+    )
+    source_rect = closed_box_to_rect(source_box, outline_width=1)
+    if source_rect is None:
+        return None
+    return _transform_source_rect(source_rect, metrics["src_w"], metrics["src_h"], rotation_deg)
+
+
+def _home_portrait_section_rect(
+    width: int,
+    height: int,
+    *,
+    rotation_deg: int,
+    section: str,
+    inventory_rows: int,
+    shopping_rows: int,
+) -> Rect | None:
+    metrics = _home_portrait_source_metrics(width, height)
+    fx0 = metrics["lx0"] - metrics["focus_pad_x"]
+    fx1 = metrics["lx1"] + metrics["focus_pad_x"]
+
+    if section == "inventory":
+        y0 = metrics["inv_header_y"] - 12
+        y1 = metrics["inv_row_y"] + max(0, inventory_rows) * metrics["inv_row_h"]
+        y1 = max(y0 + 16, min(metrics["inv_zone_bottom"], y1))
+    elif section == "shopping":
+        shop_header_y = max(
+            metrics["inv_zone_bottom"],
+            metrics["inv_row_y"] + max(0, inventory_rows) * metrics["inv_row_h"] + 8,
+        )
+        shop_row_y = shop_header_y + metrics["shop_header_gap"]
+        y0 = shop_header_y - 12
+        y1 = shop_row_y + max(0, shopping_rows) * metrics["shop_row_h"]
+        y1 = max(y0 + 16, min(metrics["ly1"], y1))
+    else:
+        return None
+
+    return _transform_source_rect((fx0, y0, fx1, y1), metrics["src_w"], metrics["src_h"], rotation_deg)
+
+
+def _home_portrait_regions(width: int, height: int, *, rotation_deg: int) -> dict[str, Rect | None]:
+    metrics = _home_portrait_source_metrics(width, height)
+    header_clock = _transform_source_rect(
+        (metrics["left_x0"], max(0, metrics["hy0"] - 16), metrics["left_x1"], metrics["header_y1"]),
+        metrics["src_w"],
+        metrics["src_h"],
+        rotation_deg,
+    )
+    header_weather = _transform_source_rect(
+        (metrics["weather_x0"], max(0, metrics["hy0"] - 16), metrics["weather_x1"], metrics["header_y1"]),
+        metrics["src_w"],
+        metrics["src_h"],
+        rotation_deg,
+    )
+    memo = _transform_source_rect(
+        (metrics["x0"] + metrics["pad"], metrics["memo_y0"] + metrics["pad"], metrics["x1"] - metrics["pad"], metrics["memo_y1"] - metrics["pad"]),
+        metrics["src_w"],
+        metrics["src_h"],
+        rotation_deg,
+    )
+    list_all = _transform_source_rect(
+        (
+            metrics["lx0"] - metrics["focus_pad_x"],
+            metrics["ly0"],
+            metrics["lx1"] + metrics["focus_pad_x"],
+            metrics["ly1"],
+        ),
+        metrics["src_w"],
+        metrics["src_h"],
+        rotation_deg,
+    )
+    menu_overlay_source = home_menu_overlay_rect(metrics["src_w"], metrics["src_h"])
+    menu_overlay = _transform_source_rect(
+        menu_overlay_source,
+        metrics["src_w"],
+        metrics["src_h"],
+        rotation_deg,
+    )
+    voice_source = _voice_overlay_region(metrics["src_w"], metrics["src_h"], rotation_deg=0)
+    voice_overlay = _transform_source_rect(voice_source, metrics["src_w"], metrics["src_h"], rotation_deg)
+    return {
+        "header_clock": header_clock,
+        "header_weather": header_weather,
+        "memo": memo,
+        "list_all": list_all,
+        "menu_overlay": menu_overlay,
+        "voice_overlay": voice_overlay,
+    }
 
 
 def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: int = 0) -> dict[str, Rect]:
@@ -521,40 +894,93 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
     }
 
 
+def _screen_source_size(width: int, height: int, rotation_deg: int) -> tuple[int, int]:
+    rot = _normalized_right_angle(rotation_deg)
+    if rot in (90, 270):
+        return (max(1, int(height)), max(1, int(width)))
+    return (max(1, int(width)), max(1, int(height)))
+
+
+def _settings_source_row_rect(width: int, height: int, row_index: int, *, rotation_deg: int = 0) -> Rect | None:
+    try:
+        target = int(row_index)
+    except (TypeError, ValueError):
+        return None
+    if target < 0 or target >= len(SETTINGS_ORDER):
+        return None
+
+    src_w, src_h = _screen_source_size(width, height, rotation_deg)
+    left = 24
+    right = max(left + 1, src_w - 24)
+    top = 90
+    row_h = 34
+    row_gap = 1
+    group_h = 20
+    group_gap = 7
+    y = top
+
+    index_map = {item: idx for idx, item in enumerate(SETTINGS_ORDER)}
+    for _group_name, group_items in SETTINGS_GROUPS:
+        y += group_h
+        for item in group_items:
+            current_idx = index_map.get(item, -1)
+            rect = (left, y, right, y + row_h)
+            if current_idx == target:
+                return rect
+            y += row_h + row_gap
+        y += group_gap
+    return None
+
+
+def _settings_row_rect(width: int, height: int, row_index: int, *, rotation_deg: int = 0) -> Rect | None:
+    src_w, src_h = _screen_source_size(width, height, rotation_deg)
+    source_rect = _settings_source_row_rect(width, height, row_index, rotation_deg=rotation_deg)
+    if source_rect is None:
+        return None
+    return _transform_source_rect(source_rect, src_w, src_h, rotation_deg)
+
+
+def _settings_footer_rect(width: int, height: int, *, rotation_deg: int = 0) -> Rect | None:
+    src_w, src_h = _screen_source_size(width, height, rotation_deg)
+    footer_h = 28
+    footer_top = max(0, src_h - footer_h)
+    source_rect = (24, footer_top, max(25, src_w - 24), src_h)
+    return _transform_source_rect(source_rect, src_w, src_h, rotation_deg)
+
+
 def _home_menu_overlay_region(width: int, height: int) -> Rect:
-    w = max(1, int(width))
-    h = max(1, int(height))
-    gap = 12
-    pill_h = 56
-    pill_w = 116
-    count = 5
-    total_w = (count * pill_w) + ((count - 1) * gap)
-    x0 = max(16, (w - total_w) // 2 - 14)
-    x1 = min(w - 16, x0 + total_w + 28)
-    cy = h // 2
-    y0 = max(80, cy - 46)
-    y1 = min(h - 80, y0 + 102)
-    return (x0, y0, x1, y1)
+    return home_menu_overlay_rect(width, height)
 
 
-def _home_visible_section_counts(reminders_digest: tuple, *, inv_max: int = 3, rem_max: int = 5) -> tuple[int, int]:
-    inv_count = 0
-    rem_count = 0
-    for item in reminders_digest or ():
-        try:
-            completed = bool(item[1])
-            category = str(item[4] or "")
-        except Exception:
-            continue
-        if completed:
-            continue
-        if category == "fridge":
-            if inv_count < inv_max:
-                inv_count += 1
-        else:
-            if rem_count < rem_max:
-                rem_count += 1
-    return inv_count, rem_count
+def _home_visible_section_counts(
+    reminders_digest: tuple,
+    *,
+    hidden_rids: tuple[str, ...] = (),
+    inv_max: int = 3,
+    rem_max: int = 5,
+) -> tuple[int, int]:
+    fridge_rows, rem_rows = _home_portrait_rendered_sections(
+        reminders_digest,
+        hidden_rids=hidden_rids,
+        inv_max=inv_max,
+        shop_max=rem_max,
+    )
+    return len(fridge_rows), len(rem_rows)
+
+
+def _home_visible_section_rows(
+    reminders_digest: tuple,
+    *,
+    hidden_rids: tuple[str, ...] = (),
+    inv_max: int = 3,
+    rem_max: int = 5,
+) -> tuple[tuple[tuple, ...], tuple[tuple, ...]]:
+    return _home_portrait_rendered_sections(
+        reminders_digest,
+        hidden_rids=hidden_rids,
+        inv_max=inv_max,
+        shop_max=rem_max,
+    )
 
 
 def _list_inventory_count(reminders_digest: tuple) -> int:
@@ -578,60 +1004,267 @@ def _list_focus_section(list_focused_index: int, reminders_digest: tuple) -> str
     return "inventory" if idx < inv_count else "reminders"
 
 
-def _home_focus_row_rect(width: int, height: int, focus_index: int, reminders_digest: tuple) -> Rect | None:
-    # Approximate row geometry from app/ui/home_kitchen.py theme defaults.
-    if int(focus_index) <= 0:
+def _home_focus_row_rect(
+    width: int,
+    height: int,
+    focus_index: int,
+    reminders_digest: tuple,
+    *,
+    hidden_rids: tuple[str, ...] = (),
+) -> Rect | None:
+    if int(focus_index) <= 1:
         return None
 
+    metrics = _home_landscape_metrics(width, height)
+    oy0 = metrics["oy0"]
+    oy1 = metrics["oy1"]
+    x0 = metrics["row_x0"]
+    x1 = metrics["row_x1"]
+    if x1 <= x0:
+        return None
+
+    inv_count, rem_count = _home_visible_section_counts(
+        reminders_digest,
+        hidden_rids=hidden_rids,
+        inv_max=3,
+        rem_max=5,
+    )
+    inv_row_y = int(metrics["inv_row_y"])
+    inv_row_h = int(metrics["inv_row_h"])
+    shop_row_y = _home_landscape_shopping_row_y(metrics, inv_count)
+    shop_row_h = int(metrics["shop_row_h"])
+    focus_pad_y = int(metrics["focus_pad_y"])
+
+    pos = int(focus_index) - 2
+    if pos < 0:
+        return None
+
+    if pos < inv_count:
+        row_y = inv_row_y + (pos * inv_row_h)
+        box = (x0, row_y + focus_pad_y, x1, row_y + inv_row_h - focus_pad_y)
+    else:
+        pos -= inv_count
+        if pos < 0 or pos >= rem_count:
+            return None
+        row_y = shop_row_y + (pos * shop_row_h)
+        box = (x0, row_y + focus_pad_y, x1, row_y + shop_row_h - focus_pad_y)
+
+    rect = closed_box_to_rect(box, outline_width=1, extra_pad=7)
+    if rect is None:
+        return None
+    rx0, ry0, rx1, ry1 = rect
+    ry0 = max(oy0, ry0)
+    ry1 = min(oy1, ry1)
+    if rx1 <= rx0 or ry1 <= ry0:
+        return None
+    return (rx0, ry0, rx1, ry1)
+
+
+def _home_focus_kind(focus_index: int) -> str:
+    idx = int(focus_index or 0)
+    if idx <= 0:
+        return "clock"
+    if idx == 1:
+        return "weather"
+    return "row"
+
+
+def _home_focus_transition_rect(
+    prev_rect: Rect | None,
+    curr_rect: Rect | None,
+    *,
+    width: int,
+    height: int,
+) -> Rect | None:
+    visible = [rect for rect in (prev_rect, curr_rect) if rect is not None]
+    if not visible:
+        return None
+    return merge_rects(visible, width, height)
+
+
+def _approx_font_height(size: int, *, scale: float = 0.82, minimum: int = 8) -> int:
+    return max(int(minimum), int(round(max(1, int(size)) * float(scale))))
+
+
+def _home_landscape_metrics(width: int, height: int) -> dict[str, int]:
     w = max(1, int(width))
     h = max(1, int(height))
     margin = 18
     ox0, oy0, ox1, oy1 = margin, margin, max(margin + 1, w - margin), max(margin + 1, h - margin)
     split_x = ox0 + int((ox1 - ox0) * 0.60)
+    left_pad = 24
     right_pad = 22
+    top_y = oy0 + left_pad
+    lx0 = ox0 + left_pad
+    lx1 = split_x - left_pad
+    weather_col_w = 142
+    weather_right = lx1 - 2
+    weather_left = weather_right - weather_col_w
+    focus_pad_x = 6
+    focus_pad_y = 4
+    focus_right_trim = 0
+
+    weather_top = top_y - 2
+    city_h = _approx_font_height(13, scale=0.84, minimum=10)
+    temp_h = _approx_font_height(66, scale=0.78, minimum=46)
+    desc_h = _approx_font_height(15, scale=0.86, minimum=12)
+    hum_h = _approx_font_height(15, scale=0.86, minimum=12)
+    icon_size = max(12, int(round(34 * 1.35)))
+    city_y = max(oy0 + 4, weather_top - city_h - 6)
+    desc_y = weather_top + temp_h + 16 + 5
+    icon_y = desc_y + desc_h + 10
+    humidity_bottom = icon_y + icon_size + 8 + hum_h
+
+    weekday_h = _approx_font_height(15, scale=0.86, minimum=12)
+    date_h = _approx_font_height(18, scale=0.86, minimum=14)
+    clock_bottom = top_y + _approx_font_height(70, scale=0.78, minimum=54) + 13 + weekday_h + 11 + date_h
+    weather_bottom = max(clock_bottom, city_y + city_h, desc_y + desc_h, humidity_bottom)
+
+    header_rule_y = weather_bottom + 28
+    micro_h = _approx_font_height(16, scale=0.78, minimum=12)
+    family_rule_y = header_rule_y + 8 + micro_h + 8
+
+    inv_y = oy0 + max(8, right_pad - 6)
+    inv_row_y = inv_y + 34
+    inv_row_h = 40
+    shop_title_h = _approx_font_height(13, scale=0.84, minimum=10)
+    shop_line_gap = 9
+    shop_rule_y_min_gap = 14
+    shop_header_gap = 24
+    shop_row_h = 40
+
     inner_x0 = split_x + 1 + right_pad
     inner_x1 = ox1 - right_pad
+    return {
+        "w": w,
+        "h": h,
+        "ox0": ox0,
+        "oy0": oy0,
+        "ox1": ox1,
+        "oy1": oy1,
+        "top_y": top_y,
+        "lx0": lx0,
+        "weather_left": weather_left,
+        "weather_right": weather_right,
+        "weather_top": weather_top,
+        "weather_bottom": weather_bottom,
+        "focus_pad_x": focus_pad_x,
+        "focus_pad_y": focus_pad_y,
+        "focus_right_trim": focus_right_trim,
+        "family_rule_y": family_rule_y,
+        "inv_y": inv_y,
+        "inv_row_y": inv_row_y,
+        "inv_row_h": inv_row_h,
+        "shop_title_h": shop_title_h,
+        "shop_line_gap": shop_line_gap,
+        "shop_rule_y_min_gap": shop_rule_y_min_gap,
+        "shop_header_gap": shop_header_gap,
+        "shop_row_h": shop_row_h,
+        "row_x0": max(0, inner_x0 - 10),
+        "row_x1": min(w, inner_x1 + focus_pad_x - focus_right_trim),
+    }
 
-    if inner_x1 <= inner_x0:
+
+def _home_landscape_shopping_row_y(metrics: dict[str, int], inventory_rows: int) -> int:
+    inv_bottom_y = int(metrics["inv_row_y"]) + max(0, int(inventory_rows)) * int(metrics["inv_row_h"])
+    shop_rule_y = max(int(metrics["family_rule_y"]), inv_bottom_y + int(metrics["shop_rule_y_min_gap"]))
+    shop_title_y = shop_rule_y - int(metrics["shop_title_h"]) - int(metrics["shop_line_gap"])
+    return max(shop_title_y + int(metrics["shop_header_gap"]), shop_rule_y + 10) + 5
+
+
+def _home_landscape_header_focus_rect(width: int, height: int, *, kind: str) -> Rect | None:
+    rect = closed_box_to_rect(home_landscape_header_focus_box(width, height, kind=kind), outline_width=1)
+    return _clip_rect(rect, max(1, int(width)), max(1, int(height))) if rect is not None else None
+
+
+def _home_landscape_focus_rect(
+    regions: dict[str, Rect],
+    width: int,
+    height: int,
+    *,
+    focus_index: int,
+    reminders_digest: tuple,
+    hidden_rids: tuple[str, ...] = (),
+) -> Rect | None:
+    kind = _home_focus_kind(focus_index)
+    if kind == "clock":
+        return _home_landscape_header_focus_rect(width, height, kind="clock")
+    if kind == "weather":
+        return _home_landscape_header_focus_rect(width, height, kind="weather")
+    return _home_focus_row_rect(width, height, focus_index, reminders_digest, hidden_rids=hidden_rids)
+
+
+def _home_landscape_section_rect(
+    width: int,
+    height: int,
+    *,
+    section: str,
+    inventory_rows: int,
+    shopping_rows: int,
+) -> Rect | None:
+    metrics = _home_landscape_metrics(width, height)
+    oy0 = metrics["oy0"]
+    oy1 = metrics["oy1"]
+    x0 = metrics["row_x0"]
+    x1 = metrics["row_x1"]
+    inv_y = metrics["inv_y"]
+    inv_row_y = metrics["inv_row_y"]
+    inv_row_h = metrics["inv_row_h"]
+    shop_row_y = _home_landscape_shopping_row_y(metrics, inventory_rows)
+    shop_row_h = metrics["shop_row_h"]
+    shop_rule_y = shop_row_y - int(metrics["shop_header_gap"])
+
+    if section == "inventory":
+        y0 = max(oy0, inv_y - 12)
+        y1 = min(oy1, max(y0 + 16, inv_row_y + max(0, inventory_rows) * inv_row_h))
+    elif section == "shopping":
+        y0 = max(oy0, shop_rule_y - 12)
+        y1 = min(oy1, max(y0 + 16, shop_row_y + max(0, shopping_rows) * shop_row_h))
+    else:
         return None
 
-    inv_start_y = oy0 + max(8, right_pad - 6) + 34
-    inv_row_h = 40
-    inv_count, _ = _home_visible_section_counts(reminders_digest, inv_max=3, rem_max=5)
-    inv_header_cy = oy0 + max(8, right_pad - 6) + (inv_row_h // 2)
-    shop_start_y = oy0 + int((oy1 - oy0) * 0.62)
-    shop_row_h = 40
-    shop_header_cy = shop_start_y - (shop_row_h // 2)
-    row_h = 56
-
-    pos = int(focus_index) - 1
-    if pos < 0:
-        return None
-
-    if pos == 0:
-        cy = inv_header_cy
-    else:
-        pos -= 1
-
-    if pos >= 0 and pos < inv_count:
-        cy = inv_start_y + (pos * inv_row_h) + (inv_row_h // 2)
-    elif pos >= inv_count:
-        pos -= inv_count
-        if pos == 0:
-            cy = shop_header_cy
-        else:
-            pos -= 1
-            cy = shop_start_y + (max(0, pos) * shop_row_h) + (shop_row_h // 2)
-    else:
-        cy = inv_header_cy
-
-    y0 = max(oy0, cy - (row_h // 2))
-    y1 = min(oy1, y0 + row_h)
-    x0 = max(0, inner_x0 - 10)
-    x1 = min(w, inner_x1 + 6)
     if x1 <= x0 or y1 <= y0:
         return None
     return (x0, y0, x1, y1)
+
+
+def _home_portrait_focus_rect(
+    home_regions: dict[str, Rect | None],
+    width: int,
+    height: int,
+    *,
+    rotation_deg: int,
+    focus_index: int,
+    weather_digest: tuple,
+    reminders_digest: tuple,
+    focus_rid: str,
+    hidden_rids: tuple[str, ...] = (),
+) -> Rect | None:
+    kind = _home_focus_kind(focus_index)
+    if kind == "clock":
+        return _home_portrait_header_focus_rect(
+            width,
+            height,
+            rotation_deg=rotation_deg,
+            kind="clock",
+            weather_digest=weather_digest,
+        )
+    if kind == "weather":
+        return _home_portrait_header_focus_rect(
+            width,
+            height,
+            rotation_deg=rotation_deg,
+            kind="weather",
+            weather_digest=weather_digest,
+        )
+    return _home_portrait_focus_row_rect(
+        width,
+        height,
+        rotation_deg=rotation_deg,
+        reminders_digest=reminders_digest,
+        focus_rid=focus_rid,
+        hidden_rids=hidden_rids,
+    )
 
 
 def infer_dirty_rects(prev: UiSnapshot, curr: UiSnapshot, width: int, height: int) -> list[Rect]:
@@ -760,13 +1393,21 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
 
     if curr.screen == Screen.SETTINGS:
         if prev.settings_focused_index != curr.settings_focused_index:
-            rects.append(regions["rows"])
+            prev_row = _settings_row_rect(width, height, prev.settings_focused_index, rotation_deg=curr.rotation_deg)
+            curr_row = _settings_row_rect(width, height, curr.settings_focused_index, rotation_deg=curr.rotation_deg)
+            if prev_row is not None:
+                rects.append(prev_row)
+            if curr_row is not None and curr_row != prev_row:
+                rects.append(curr_row)
+            if prev_row is None and curr_row is None:
+                rects.append(regions["rows"])
             reasons.append("settings.focus_move")
         if (
             prev.settings_notice != curr.settings_notice
             or prev.last_sync_at != curr.last_sync_at
         ):
-            rects.append(regions["footer"])
+            footer = _settings_footer_rect(width, height, rotation_deg=curr.rotation_deg)
+            rects.append(footer if footer is not None else regions["footer"])
             reasons.append("settings.footer_notice")
         if (
             prev.partial_refresh_mode != curr.partial_refresh_mode
@@ -775,7 +1416,8 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             or prev.bluetooth_enabled != curr.bluetooth_enabled
             or prev.auto_sync_enabled != curr.auto_sync_enabled
         ):
-            rects.append(regions["rows"])
+            curr_row = _settings_row_rect(width, height, curr.settings_focused_index, rotation_deg=curr.rotation_deg)
+            rects.append(curr_row if curr_row is not None else regions["rows"])
             reasons.append("settings.value_change")
         return rects, reasons
 
@@ -855,59 +1497,298 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         return rects, reasons
 
     # HOME and fallback.
+    portrait_home = str(curr.kitchen_visible_layout or prev.kitchen_visible_layout or "").strip().lower() == "portrait"
+    home_regions = _home_portrait_regions(width, height, rotation_deg=curr.rotation_deg) if portrait_home else regions
     if prev.menu_overlay_active != curr.menu_overlay_active:
-        rects.append(regions["home_menu_overlay"])
+        rect = home_regions["menu_overlay"] if portrait_home else regions["home_menu_overlay"]
+        if rect is not None:
+            rects.append(rect)
         reasons.append("home.menu_overlay_toggle")
     if curr.menu_overlay_active and prev.menu_focused != curr.menu_focused:
-        rects.append(regions["home_menu_overlay"])
+        rect = home_regions["menu_overlay"] if portrait_home else regions["home_menu_overlay"]
+        if rect is not None:
+            rects.append(rect)
         reasons.append("home.menu_overlay_focus")
 
-    if prev.focused_index != curr.focused_index:
-        prev_row = _home_focus_row_rect(width, height, prev.focused_index, prev.reminders_digest)
-        curr_row = _home_focus_row_rect(width, height, curr.focused_index, curr.reminders_digest)
-        if prev_row is not None and curr_row is not None:
-            rects.append(prev_row)
-            if curr_row != prev_row:
-                rects.append(curr_row)
+    if portrait_home:
+        prev_focus_rid = _home_portrait_effective_focus_rid(prev)
+        curr_focus_rid = _home_portrait_effective_focus_rid(curr)
+        if (
+            prev.focused_index != curr.focused_index
+            or prev.kitchen_focus_rid_override != curr.kitchen_focus_rid_override
+            or prev_focus_rid != curr_focus_rid
+        ):
+            prev_kind = _home_focus_kind(prev.focused_index)
+            curr_kind = _home_focus_kind(curr.focused_index)
+            prev_focus_rect = _home_portrait_focus_rect(
+                home_regions,
+                width,
+                height,
+                rotation_deg=prev.rotation_deg,
+                focus_index=prev.focused_index,
+                weather_digest=prev.weather_digest,
+                reminders_digest=prev.reminders_digest,
+                focus_rid=prev_focus_rid,
+                hidden_rids=prev.home_hidden_rids,
+            )
+            curr_focus_rect = _home_portrait_focus_rect(
+                home_regions,
+                width,
+                height,
+                rotation_deg=curr.rotation_deg,
+                focus_index=curr.focused_index,
+                weather_digest=curr.weather_digest,
+                reminders_digest=curr.reminders_digest,
+                focus_rid=curr_focus_rid,
+                hidden_rids=curr.home_hidden_rids,
+            )
+            left_targets = {"clock", "weather"}
+            if prev_kind == "row" and curr_kind == "row":
+                merged = _home_focus_transition_rect(prev_focus_rect, curr_focus_rect, width=width, height=height)
+                if merged is not None:
+                    rects.append(merged)
+                elif home_regions["list_all"] is not None:
+                    rects.append(home_regions["list_all"])
+                reasons.append("home.focus_move_row")
+            elif prev_kind in left_targets and curr_kind in left_targets:
+                merged = _home_focus_transition_rect(prev_focus_rect, curr_focus_rect, width=width, height=height)
+                if merged is not None:
+                    rects.append(merged)
+                reasons.append("home.focus_move_left_target")
+            else:
+                if prev_focus_rect is not None:
+                    rects.append(prev_focus_rect)
+                if curr_focus_rect is not None and curr_focus_rect != prev_focus_rect:
+                    rects.append(curr_focus_rect)
+                if curr_kind in left_targets:
+                    reasons.append("home.focus_to_left_panel")
+                else:
+                    reasons.append("home.focus_from_left_panel")
+    elif prev.focused_index != curr.focused_index:
+        prev_kind = _home_focus_kind(prev.focused_index)
+        curr_kind = _home_focus_kind(curr.focused_index)
+        prev_focus_rect = _home_landscape_focus_rect(
+            regions,
+            width,
+            height,
+            focus_index=prev.focused_index,
+            reminders_digest=prev.reminders_digest,
+            hidden_rids=prev.home_hidden_rids,
+        )
+        curr_focus_rect = _home_landscape_focus_rect(
+            regions,
+            width,
+            height,
+            focus_index=curr.focused_index,
+            reminders_digest=curr.reminders_digest,
+            hidden_rids=curr.home_hidden_rids,
+        )
+        left_targets = {"clock", "weather"}
+        if prev_kind == "row" and curr_kind == "row":
+            merged = _home_focus_transition_rect(prev_focus_rect, curr_focus_rect, width=width, height=height)
+            rects.append(merged if merged is not None else regions["right_list"])
             reasons.append("home.focus_move_row")
-        elif prev_row is not None and curr_row is None:
-            rects.append(prev_row)
-            rects.append(regions["left_focus_indicator"])
-            reasons.append("home.focus_to_left_panel")
-        elif prev_row is None and curr_row is not None:
-            rects.append(curr_row)
-            rects.append(regions["left_focus_indicator"])
-            reasons.append("home.focus_from_left_panel")
+        elif prev_kind in left_targets and curr_kind in left_targets:
+            merged = _home_focus_transition_rect(prev_focus_rect, curr_focus_rect, width=width, height=height)
+            if merged is not None:
+                rects.append(merged)
+            reasons.append("home.focus_move_left_target")
         else:
-            rects.append(regions["left_focus_indicator"])
-            reasons.append("home.focus_left_panel_only")
-        # Do not force a left-panel redraw on focus entering/leaving index 0.
-        # In current kitchen renderer there is no persistent left focus ring by default.
-    if prev.reminders_digest != curr.reminders_digest:
+            if prev_focus_rect is not None:
+                rects.append(prev_focus_rect)
+            if curr_focus_rect is not None and curr_focus_rect != prev_focus_rect:
+                rects.append(curr_focus_rect)
+            if curr_kind in left_targets:
+                reasons.append("home.focus_to_left_panel")
+            else:
+                reasons.append("home.focus_from_left_panel")
+    if prev.reminders_digest != curr.reminders_digest or prev.home_hidden_rids != curr.home_hidden_rids:
         prev_rids = tuple(str(r[0]) for r in prev.reminders_digest)
         curr_rids = tuple(str(r[0]) for r in curr.reminders_digest)
-        if prev_rids == curr_rids:
+        hidden_changed = prev.home_hidden_rids != curr.home_hidden_rids
+        if hidden_changed:
+            if portrait_home:
+                prev_inventory_rows, prev_shopping_rows = _home_portrait_rendered_sections(
+                    prev.reminders_digest,
+                    hidden_rids=prev.home_hidden_rids,
+                )
+                curr_inventory_rows, curr_shopping_rows = _home_portrait_rendered_sections(
+                    curr.reminders_digest,
+                    hidden_rids=curr.home_hidden_rids,
+                )
+            else:
+                prev_inventory_rows, prev_shopping_rows = _home_visible_section_rows(
+                    prev.reminders_digest,
+                    hidden_rids=prev.home_hidden_rids,
+                    inv_max=3,
+                    rem_max=5,
+                )
+                curr_inventory_rows, curr_shopping_rows = _home_visible_section_rows(
+                    curr.reminders_digest,
+                    hidden_rids=curr.home_hidden_rids,
+                    inv_max=3,
+                    rem_max=5,
+                )
+
+            changed = False
+            if prev_inventory_rows != curr_inventory_rows:
+                if portrait_home:
+                    rect = _home_portrait_section_rect(
+                        width,
+                        height,
+                        rotation_deg=curr.rotation_deg,
+                        section="inventory",
+                        inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                        shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                    )
+                else:
+                    rect = _home_landscape_section_rect(
+                        width,
+                        height,
+                        section="inventory",
+                        inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                        shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                    )
+                if rect is not None:
+                    rects.append(rect)
+                    changed = True
+            if prev_shopping_rows != curr_shopping_rows:
+                if portrait_home:
+                    rect = _home_portrait_section_rect(
+                        width,
+                        height,
+                        rotation_deg=curr.rotation_deg,
+                        section="shopping",
+                        inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                        shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                    )
+                else:
+                    rect = _home_landscape_section_rect(
+                        width,
+                        height,
+                        section="shopping",
+                        inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                        shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                    )
+                if rect is not None:
+                    rects.append(rect)
+                    changed = True
+            if not changed:
+                fallback = home_regions["list_all"] if portrait_home else regions["right_list"]
+                if fallback is not None:
+                    rects.append(fallback)
+            reasons.append("home.reminder_compact")
+        elif prev_rids == curr_rids:
             # Same row order: likely a click-toggle style change; update focused row only.
-            prev_row = _home_focus_row_rect(width, height, prev.focused_index, prev.reminders_digest)
-            curr_row = _home_focus_row_rect(width, height, curr.focused_index, curr.reminders_digest)
+            if portrait_home:
+                prev_focus_rid = _home_portrait_effective_focus_rid(prev)
+                curr_focus_rid = _home_portrait_effective_focus_rid(curr)
+                prev_row = _home_portrait_focus_row_rect(
+                    width,
+                    height,
+                    rotation_deg=prev.rotation_deg,
+                    reminders_digest=prev.reminders_digest,
+                    focus_rid=prev_focus_rid,
+                    hidden_rids=prev.home_hidden_rids,
+                )
+                curr_row = _home_portrait_focus_row_rect(
+                    width,
+                    height,
+                    rotation_deg=curr.rotation_deg,
+                    reminders_digest=curr.reminders_digest,
+                    focus_rid=curr_focus_rid,
+                    hidden_rids=curr.home_hidden_rids,
+                )
+            else:
+                prev_row = _home_focus_row_rect(
+                    width,
+                    height,
+                    prev.focused_index,
+                    prev.reminders_digest,
+                    hidden_rids=prev.home_hidden_rids,
+                )
+                curr_row = _home_focus_row_rect(
+                    width,
+                    height,
+                    curr.focused_index,
+                    curr.reminders_digest,
+                    hidden_rids=curr.home_hidden_rids,
+                )
             if prev_row is not None:
                 rects.append(prev_row)
             if curr_row is not None and curr_row != prev_row:
                 rects.append(curr_row)
             if prev_row is None and curr_row is None:
-                rects.append(regions["right_list"])
+                fallback = home_regions["list_all"] if portrait_home else regions["right_list"]
+                if fallback is not None:
+                    rects.append(fallback)
                 reasons.append("home.reminder_change_fallback")
             else:
                 reasons.append("home.reminder_row_update")
         else:
-            # Delayed reorder moves multiple rows; refresh right panel region.
-            rects.append(regions["right_list"])
+            changed = False
+            prev_inventory_rows, prev_shopping_rows = _home_visible_section_rows(
+                prev.reminders_digest,
+                hidden_rids=prev.home_hidden_rids,
+                inv_max=4 if portrait_home else 3,
+                rem_max=5,
+            )
+            curr_inventory_rows, curr_shopping_rows = _home_visible_section_rows(
+                curr.reminders_digest,
+                hidden_rids=curr.home_hidden_rids,
+                inv_max=4 if portrait_home else 3,
+                rem_max=5,
+            )
+            if prev_inventory_rows != curr_inventory_rows:
+                rect = _home_portrait_section_rect(
+                    width,
+                    height,
+                    rotation_deg=curr.rotation_deg,
+                    section="inventory",
+                    inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                    shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                ) if portrait_home else _home_landscape_section_rect(
+                    width,
+                    height,
+                    section="inventory",
+                    inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                    shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                )
+                if rect is not None:
+                    rects.append(rect)
+                    changed = True
+            if prev_shopping_rows != curr_shopping_rows:
+                rect = _home_portrait_section_rect(
+                    width,
+                    height,
+                    rotation_deg=curr.rotation_deg,
+                    section="shopping",
+                    inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                    shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                ) if portrait_home else _home_landscape_section_rect(
+                    width,
+                    height,
+                    section="shopping",
+                    inventory_rows=max(len(prev_inventory_rows), len(curr_inventory_rows)),
+                    shopping_rows=max(len(prev_shopping_rows), len(curr_shopping_rows)),
+                )
+                if rect is not None:
+                    rects.append(rect)
+                    changed = True
+            if not changed:
+                fallback = home_regions["list_all"] if portrait_home else regions["right_list"]
+                if fallback is not None:
+                    rects.append(fallback)
             reasons.append("home.reminder_reorder")
     if prev.memo_index != curr.memo_index:
-        rects.append(regions["left_family_board"])
+        rect = home_regions["memo"] if portrait_home else regions["left_family_board"]
+        if rect is not None:
+            rects.append(rect)
         reasons.append("home.family_board_update")
     if prev.weather_digest != curr.weather_digest:
-        rects.append(regions["left_weather"])
+        rect = home_regions["header_weather"] if portrait_home else regions["left_weather"]
+        if rect is not None:
+            rects.append(rect)
         reasons.append("home.weather_update")
     if (
         prev.timer_seconds != curr.timer_seconds
@@ -915,9 +1796,13 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         or prev.clock_minute_bucket != curr.clock_minute_bucket
         or prev.widget_mode != curr.widget_mode
     ):
-        rects.append(regions["left_clock"])
+        rect = home_regions["header_clock"] if portrait_home else regions["left_clock"]
+        if rect is not None:
+            rects.append(rect)
         reasons.append("home.clock_or_timer_state")
     if prev.voice_active != curr.voice_active or prev.voice_phase != curr.voice_phase:
-        rects.append(regions["voice_overlay"])
+        rect = home_regions["voice_overlay"] if portrait_home else regions["voice_overlay"]
+        if rect is not None:
+            rects.append(rect)
         reasons.append("home.voice_overlay")
     return rects, reasons

@@ -169,11 +169,18 @@ class UiState:
     kitchen_visible_rids: list[str] = field(default_factory=list)
     # Theme key used when the kitchen visible queue cache was produced.
     kitchen_visible_theme_key: str = ""
+    # Renderer-specific layout mode for the cached kitchen queue.
+    kitchen_visible_layout: str = ""
     # Reminder revision used when the kitchen visible queue cache was produced.
     kitchen_visible_reminders_version: int = -1
     # UX hold: after clicking a kitchen item, keep focus pinned on that item
     # until next explicit rotate input.
     kitchen_focus_rid_override: str = ""
+    # HOME-only completed-item policy: checked rows stay visible for a grace
+    # window, then disappear from HOME on a later natural refresh opportunity.
+    home_pending_hide_rids: list[str] = field(default_factory=list)
+    home_hidden_rids: list[str] = field(default_factory=list)
+    home_hide_due_at: float = 0.0
 
     # Delayed reorder: after toggling completion, wait a bit before moving completed to the bottom.
     pending_reorder: bool = False
