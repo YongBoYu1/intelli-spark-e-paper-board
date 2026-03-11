@@ -267,6 +267,58 @@ class RefreshPolicyTests(unittest.TestCase):
         _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("list.data_change", reasons)
 
+    def test_unified_list_focus_change_rotated_90_stays_compact(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", right="", completed=False, category="shopping"),
+            Reminder(rid="r2", title="Buy Bread", right="", completed=False, category="shopping"),
+        ]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.REMINDERS
+        prev.ui.rotation_deg = 90
+        prev.ui.list_focused_index = 0
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.REMINDERS
+        curr.ui.rotation_deg = 90
+        curr.ui.list_focused_index = 2
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("list.focus_move", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.85)
+
+    def test_unified_list_data_change_rotated_90_stays_compact(self) -> None:
+        model_prev = DashboardModel()
+        model_prev.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", right="", completed=False, category="shopping"),
+            Reminder(rid="r2", title="Buy Bread", right="", completed=False, category="shopping"),
+        ]
+        prev = AppState(model=model_prev)
+        prev.ui.screen = Screen.REMINDERS
+        prev.ui.rotation_deg = 90
+
+        model_curr = DashboardModel()
+        model_curr.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", right="", completed=True, category="shopping"),
+            Reminder(rid="r2", title="Buy Bread", right="", completed=False, category="shopping"),
+        ]
+        curr = AppState(model=model_curr)
+        curr.ui.screen = Screen.REMINDERS
+        curr.ui.rotation_deg = 90
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("list.data_change", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.85)
+
     def test_home_focus_move_prefers_row_dirty_rect(self) -> None:
         model = DashboardModel()
         model.reminders = [

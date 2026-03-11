@@ -847,20 +847,44 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             return out or {"card": (0, 0, w, h)}
         return source_regions
     if screen in (Screen.INVENTORY, Screen.REMINDERS):
+        src_w, src_h = _screen_source_size(width, height, rotation_deg)
         left = 24
-        right = w - 24
+        right = max(left + 1, src_w - 24)
         content_top = 104
-        footer_y = h - 40
-        content_bottom = footer_y - 6
-        split_x = left + int((right - left) * 0.40)
-        return {
-            "header": (16, 10, w - 16, 76),
-            "summary": (20, 76, w - 20, 104),
-            "list_left": (left, content_top, max(left + 1, split_x - 3), content_bottom),
-            "list_right": (min(right - 1, split_x + 3), content_top, right, content_bottom),
-            "divider": (max(left, split_x - 2), content_top, min(right, split_x + 2), content_bottom),
-            "footer": (16, max(0, h - 44), w - 16, h),
-        }
+        footer_y = max(content_top + 1, src_h - 40)
+        content_bottom = max(content_top + 1, footer_y - 6)
+
+        if src_h > src_w:
+            # Portrait-native list layout: inventory top (1/3), reminders bottom (2/3).
+            split_y = content_top + int((content_bottom - content_top) * (1.0 / 3.0))
+            split_y = max(content_top + 72, min(content_bottom - 120, split_y))
+            source_regions = {
+                "header": (16, 10, max(17, src_w - 16), 76),
+                "summary": (20, 76, max(21, src_w - 20), 104),
+                "list_left": (left, content_top, right, max(content_top + 1, split_y - 3)),
+                "list_right": (left, min(content_bottom - 1, split_y + 3), right, content_bottom),
+                "divider": (left, max(content_top, split_y - 2), right, min(content_bottom, split_y + 2)),
+                "footer": (16, max(0, src_h - 44), max(17, src_w - 16), src_h),
+            }
+        else:
+            split_x = left + int((right - left) * 0.40)
+            source_regions = {
+                "header": (16, 10, max(17, src_w - 16), 76),
+                "summary": (20, 76, max(21, src_w - 20), 104),
+                "list_left": (left, content_top, max(left + 1, split_x - 3), content_bottom),
+                "list_right": (min(right - 1, split_x + 3), content_top, right, content_bottom),
+                "divider": (max(left, split_x - 2), content_top, min(right, split_x + 2), content_bottom),
+                "footer": (16, max(0, src_h - 44), max(17, src_w - 16), src_h),
+            }
+
+        if rot in (90, 180, 270):
+            out: dict[str, Rect] = {}
+            for key, rect in source_regions.items():
+                transformed = _transform_source_rect(rect, src_w, src_h, rot)
+                if transformed is not None:
+                    out[key] = transformed
+            return out or {"list_right": (0, 0, w, h)}
+        return source_regions
     if screen == Screen.WEATHER:
         y0 = 16
         y1 = h - 16
