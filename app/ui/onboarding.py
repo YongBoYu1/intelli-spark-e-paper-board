@@ -509,12 +509,21 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
         y = rows_top
         for idx, (k, v) in enumerate(pref_rows):
             box = (42, y, w - 42, y + row_h)
-            fill_color = ink if idx == focused else bg
-            label_color = bg if idx == focused else ink
-            value_color = bg if idx == focused else muted
+            is_focused = idx == focused
+            fill_color = bg
+            label_color = ink
+            value_color = ink if is_focused else muted
             draw.rounded_rectangle(box, radius=12, outline=border, width=2, fill=fill_color)
-            if idx == focused:
+            if is_focused:
                 _draw_focus(draw, (box[0] - 2, box[1] - 2, box[2] + 2, box[3] + 2), ink)
+                rail_w = 10
+                draw.rounded_rectangle(
+                    (box[0] + 10, box[1] + 8, box[0] + 10 + rail_w, box[3] - 8),
+                    radius=4,
+                    outline=ink,
+                    width=1,
+                    fill=ink,
+                )
             key_text = truncate_text(draw, k, f["button"], max(80, int((box[2] - box[0]) * 0.55)))
             value_max_w = max(70, int((box[2] - box[0]) * 0.42))
             v_text = truncate_text(draw, str(v), f["body"], value_max_w)
@@ -530,8 +539,9 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
         lane_mid_y = int((lane_y0 + lane_y1) / 2)
         guide_w = min(248, max(190, int((w - 84) * 0.38)))
         guide_box = (w - 42 - guide_w, lane_y0 + 4, w - 42, lane_y1 - 4)
-        draw.rounded_rectangle(guide_box, radius=12, outline=border, width=2, fill=ink if focused == 3 else bg)
-        if focused == 3:
+        guide_focused = focused == 3
+        draw.rounded_rectangle(guide_box, radius=12, outline=border, width=2, fill=bg)
+        if guide_focused:
             _draw_focus(draw, (guide_box[0] - 2, guide_box[1] - 2, guide_box[2] + 2, guide_box[3] + 2), ink)
 
         lead = truncate_text(draw, "Next Step", f["button"], max(80, guide_box[0] - 82))
@@ -542,7 +552,7 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
 
         guide_label = truncate_text(draw, "Voice Guide >", f["body_focus"], max(90, guide_w - 24))
         gw = draw.textlength(guide_label, font=f["body_focus"])
-        draw.text((guide_box[0] + (guide_w - gw) / 2, guide_box[1] + 13), guide_label, fill=bg if focused == 3 else ink, font=f["body_focus"])
+        draw.text((guide_box[0] + (guide_w - gw) / 2, guide_box[1] + 13), guide_label, fill=ink, font=f["body_focus"])
         return
 
     if step == "voice_guide":
@@ -608,11 +618,11 @@ def render_onboarding(image, state: AppState, fonts, theme: dict) -> None:
         x1 = x0 + action_w
         y0 = actions_y0
         y1 = y0 + action_h
-        draw.rounded_rectangle((x0, y0, x1, y1), radius=10, outline=border, width=2, fill=ink)
+        draw.rounded_rectangle((x0, y0, x1, y1), radius=10, outline=border, width=2, fill=bg)
         _draw_focus(draw, (x0 - 2, y0 - 2, x1 + 2, y1 + 2), ink)
         txt = _meta_text(action_label, compact=f["meta_compact"])
         tw = text_width_spaced(draw, txt, f["meta"], spacing=f["meta_spacing"])
-        draw_text_spaced(draw, txt, x0 + (action_w - tw) / 2, y0 + 13, f["meta"], spacing=f["meta_spacing"], fill=bg)
+        draw_text_spaced(draw, txt, x0 + (action_w - tw) / 2, y0 + 13, f["meta"], spacing=f["meta_spacing"], fill=ink)
         return
 
     draw.text((42, 60), "Setup Complete", fill=ink, font=f["title"])
