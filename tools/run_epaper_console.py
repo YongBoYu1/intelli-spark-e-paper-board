@@ -785,6 +785,22 @@ def _screen_change_partial_enabled_with_theme(prev_screen: Screen, curr_screen: 
     return _screen_partial_enabled_with_theme(curr_screen, theme)
 
 
+def _screen_change_force_partial_with_theme(screen: Screen, theme: dict) -> bool:
+    if not bool(theme.get("refresh_force_partial_on_screen_change", True)):
+        return False
+
+    default_screens = "settings,timer,memo,calendar,inventory,reminders"
+    raw = theme.get("refresh_force_partial_on_screen_change_screens", default_screens)
+    if isinstance(raw, str):
+        names = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, (list, tuple)):
+        names = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
+    screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
+    return screen_name in set(names)
+
+
 def _prepare_partial_rects(
     rects: list[tuple[int, int, int, int]],
     *,
@@ -1882,6 +1898,11 @@ def main() -> int:
                         theme,
                     )
                 )
+                screen_change_force_partial = (
+                    screen_changed
+                    and screen_change_partial
+                    and _screen_change_force_partial_with_theme(pending_snapshot.screen, theme)
+                )
                 font_size_changed = pending_snapshot.font_size != committed_snapshot.font_size
                 force_flush = force_full_clean or screen_changed or rotation_changed or screen_force_clean
 
@@ -1998,6 +2019,7 @@ def main() -> int:
                                 compact_onboarding
                                 and bool(theme.get("refresh_onboarding_compact_force_partial", True))
                             )
+                            allow_over_limit_partial = bool(allow_over_limit_partial or screen_change_force_partial)
                             if (
                                 supports_partial
                                 and partial_enabled
