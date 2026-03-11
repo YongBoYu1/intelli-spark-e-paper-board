@@ -898,15 +898,29 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
         }
     if screen == Screen.CALENDAR:
         src_w, src_h = _screen_source_size(width, height, rotation_deg)
-        right_x = max(1, min(src_w - 1, int(src_w * 0.45)))
-        source_regions = {
-            "left_panel": (0, 0, right_x, src_h),
-            # Month grid body where date-cell focus/marker changes happen.
-            "left_grid": (24, 120, max(25, right_x - 20), max(121, src_h - 46)),
-            "right_panel": (right_x, 0, src_w, src_h),
-            "right_header": (right_x, 0, src_w, 90),
-            "right_agenda": (right_x, 90, src_w, src_h),
-        }
+        if src_h > src_w:
+            split_y = src_h // 2
+            split_y = max(260, min(src_h - 220, split_y))
+            agenda_header_top = split_y + 10
+            agenda_header_bottom = min(src_h - 96, agenda_header_top + 88)
+            source_regions = {
+                "left_panel": (0, 0, src_w, split_y),
+                # Month grid body where date-cell focus/marker changes happen.
+                "left_grid": (24, 120, max(25, src_w - 20), max(121, split_y - 14)),
+                "right_panel": (0, split_y, src_w, src_h),
+                "right_header": (0, split_y, src_w, max(split_y + 1, agenda_header_bottom)),
+                "right_agenda": (0, max(split_y + 1, agenda_header_bottom), src_w, src_h),
+            }
+        else:
+            right_x = max(1, min(src_w - 1, int(src_w * 0.45)))
+            source_regions = {
+                "left_panel": (0, 0, right_x, src_h),
+                # Month grid body where date-cell focus/marker changes happen.
+                "left_grid": (24, 120, max(25, right_x - 20), max(121, src_h - 46)),
+                "right_panel": (right_x, 0, src_w, src_h),
+                "right_header": (right_x, 0, src_w, 90),
+                "right_agenda": (right_x, 90, src_w, src_h),
+            }
         if rot in (90, 180, 270):
             out: dict[str, Rect] = {}
             for key, rect in source_regions.items():
@@ -1389,8 +1403,10 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             split = max(1, min(w - 1, int(w * 0.40)))
             return [(0, 0, split, h), (split, 0, w, h)], ["screen.change_to_list"]
         if curr.screen == Screen.CALENDAR:
-            split = max(1, min(w - 1, int(w * 0.45)))
-            return [(0, 0, split, h), (split, 0, w, h)], ["screen.change_to_calendar"]
+            regions = _screen_regions(curr.screen, width, height, rotation_deg=curr.rotation_deg)
+            left_panel = regions.get("left_panel", (0, 0, max(1, int(width)), max(1, int(height))))
+            right_panel = regions.get("right_panel", left_panel)
+            return [left_panel, right_panel], ["screen.change_to_calendar"]
         return [], []
     if int(prev.rotation_deg) != int(curr.rotation_deg):
         return [], []

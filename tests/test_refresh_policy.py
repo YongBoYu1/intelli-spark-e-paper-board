@@ -777,5 +777,25 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.98)
 
+    def test_calendar_mode_change_rotated_90_prefers_agenda_panel(self) -> None:
+        model = DashboardModel()
+        model.calendar = [CalendarEvent(eid="e1", title="Doctor", when="09:00", date_iso="2026-03-05")]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.CALENDAR
+        prev.ui.rotation_deg = 90
+        prev.ui.calendar_mode = "date"
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.CALENDAR
+        curr.ui.rotation_deg = 90
+        curr.ui.calendar_mode = "agenda"
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("calendar.date_or_mode_or_data", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.60)
+
 if __name__ == "__main__":
     unittest.main()
