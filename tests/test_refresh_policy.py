@@ -188,6 +188,30 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.90)
 
+    def test_memo_rotate_change_rotated_90_stays_compact(self) -> None:
+        model = DashboardModel()
+        model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=100.0, is_new=False),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=120.0, is_new=False),
+            MemoItem(mid="m3", text="C", author="Sis", timestamp=140.0, is_new=False),
+        ]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.MEMO
+        prev.ui.rotation_deg = 90
+        prev.ui.memo_index = 0
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.MEMO
+        curr.ui.rotation_deg = 90
+        curr.ui.memo_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("memo.focus_move", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.35)
+
     def test_memo_expand_toggle_generates_memo_expand_reason(self) -> None:
         model = DashboardModel()
         model.memos = [MemoItem(mid="m1", text="A", author="Mom", timestamp=100.0, is_new=False)]
@@ -678,6 +702,28 @@ class RefreshPolicyTests(unittest.TestCase):
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("calendar.date_or_mode_or_data", reasons)
         self.assertGreaterEqual(len(rects), 1)
+
+    def test_calendar_offset_change_avoids_full_screen_dirty_union(self) -> None:
+        model = DashboardModel()
+        model.calendar = [CalendarEvent(eid="e1", title="Doctor", when="09:00", date_iso="2026-03-05")]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.CALENDAR
+        prev.ui.rotation_deg = 90
+        prev.ui.calendar_offset_days = 0
+        prev.ui.calendar_mode = "date"
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.CALENDAR
+        curr.ui.rotation_deg = 90
+        curr.ui.calendar_offset_days = 1
+        curr.ui.calendar_mode = "date"
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("calendar.date_or_mode_or_data", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.98)
 
 if __name__ == "__main__":
     unittest.main()

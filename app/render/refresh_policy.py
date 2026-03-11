@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -831,11 +832,20 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
         cy = h // 2
         return {"pills": (40, max(0, cy - 56), w - 40, min(h, cy + 56))}
     if screen == Screen.MEMO:
-        return {
-            "header": (16, 10, w - 16, 76),
-            "card": (20, 80, w - 20, max(80, h - 60)),
-            "footer": (16, max(0, h - 58), w - 16, h),
+        src_w, src_h = _screen_source_size(width, height, rotation_deg)
+        source_regions = {
+            "header": (16, 10, src_w - 16, 76),
+            "card": (20, 80, src_w - 20, max(80, src_h - 60)),
+            "footer": (16, max(0, src_h - 58), src_w - 16, src_h),
         }
+        if rot in (90, 180, 270):
+            out: dict[str, Rect] = {}
+            for key, rect in source_regions.items():
+                transformed = _transform_source_rect(rect, src_w, src_h, rot)
+                if transformed is not None:
+                    out[key] = transformed
+            return out or {"card": (0, 0, w, h)}
+        return source_regions
     if screen in (Screen.INVENTORY, Screen.REMINDERS):
         left = 24
         right = w - 24
@@ -863,12 +873,24 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             "forecast": (20, y0 + hero_h + metric_h, w - 20, y1),
         }
     if screen == Screen.CALENDAR:
-        right_x = int(w * 0.45)
-        return {
-            "left_panel": (0, 0, right_x, h),
-            "right_panel": (right_x, 0, w, h),
-            "right_agenda": (right_x, 90, w, h),
+        src_w, src_h = _screen_source_size(width, height, rotation_deg)
+        right_x = max(1, min(src_w - 1, int(src_w * 0.45)))
+        source_regions = {
+            "left_panel": (0, 0, right_x, src_h),
+            # Month grid body where date-cell focus/marker changes happen.
+            "left_grid": (24, 120, max(25, right_x - 20), max(121, src_h - 46)),
+            "right_panel": (right_x, 0, src_w, src_h),
+            "right_header": (right_x, 0, src_w, 90),
+            "right_agenda": (right_x, 90, src_w, src_h),
         }
+        if rot in (90, 180, 270):
+            out: dict[str, Rect] = {}
+            for key, rect in source_regions.items():
+                transformed = _transform_source_rect(rect, src_w, src_h, rot)
+                if transformed is not None:
+                    out[key] = transformed
+            return out or {"right_panel": (0, 0, w, h)}
+        return source_regions
     # HOME / fallback
     menu_x0, menu_y0, menu_x1, menu_y1 = _home_menu_overlay_region(w, h)
     return {
@@ -945,6 +967,53 @@ def _settings_footer_rect(width: int, height: int, *, rotation_deg: int = 0) -> 
     footer_h = 28
     footer_top = max(0, src_h - footer_h)
     source_rect = (24, footer_top, max(25, src_w - 24), src_h)
+    return _transform_source_rect(source_rect, src_w, src_h, rotation_deg)
+
+
+def _memo_summary_rect(width: int, height: int, *, rotation_deg: int = 0) -> Rect | None:
+    src_w, src_h = _screen_source_size(width, height, rotation_deg)
+    outer_x0 = 24
+    outer_x1 = max(outer_x0 + 1, src_w - 24)
+    inner_x0 = outer_x0 + 4
+    inner_x1 = max(inner_x0 + 1, outer_x1 - 4)
+    inner_y0 = 86
+    source_rect = (inner_x0, max(0, inner_y0 - 2), inner_x1, min(src_h, inner_y0 + 20))
+    return _transform_source_rect(source_rect, src_w, src_h, rotation_deg)
+
+
+def _memo_focus_row_rect(
+    width: int,
+    height: int,
+    memo_index: int,
+    memos_digest: tuple,
+    *,
+    rotation_deg: int = 0,
+) -> Rect | None:
+    total = len(memos_digest or ())
+    if total <= 0:
+        return None
+
+    src_w, src_h = _screen_source_size(width, height, rotation_deg)
+    outer_x0 = 24
+    outer_x1 = max(outer_x0 + 1, src_w - 24)
+    inner_x0 = outer_x0 + 4
+    inner_x1 = max(inner_x0 + 1, outer_x1 - 4)
+    inner_y0 = 86
+    inner_y1 = max(inner_y0 + 1, src_h - 56)
+
+    list_gap = 6
+    row_h = 66
+    list_top = inner_y0 + 22
+    list_h = max(1, inner_y1 - list_top)
+    slots = max(1, (list_h + list_gap) // (row_h + list_gap))
+
+    selected = int(memo_index or 0) % total
+    start = max(0, min(selected - (slots // 2), total - slots))
+    visible_row = max(0, selected - start)
+    ry0 = list_top + visible_row * (row_h + list_gap)
+    ry1 = min(inner_y1, ry0 + row_h)
+
+    source_rect = (inner_x0, max(0, ry0 - 2), inner_x1, min(src_h, ry1 + 2))
     return _transform_source_rect(source_rect, src_w, src_h, rotation_deg)
 
 
@@ -1445,15 +1514,47 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
 
     if curr.screen == Screen.MEMO:
         if prev.memo_index != curr.memo_index:
-            rects.extend([regions["header"], regions["card"]])
+            summary = _memo_summary_rect(width, height, rotation_deg=curr.rotation_deg)
+            prev_row = _memo_focus_row_rect(
+                width,
+                height,
+                prev.memo_index,
+                prev.memos_digest,
+                rotation_deg=curr.rotation_deg,
+            )
+            curr_row = _memo_focus_row_rect(
+                width,
+                height,
+                curr.memo_index,
+                curr.memos_digest,
+                rotation_deg=curr.rotation_deg,
+            )
+            if summary is not None:
+                rects.append(summary)
+            if prev_row is not None:
+                rects.append(prev_row)
+            if curr_row is not None and curr_row != prev_row:
+                rects.append(curr_row)
+            if not rects:
+                rects.append(regions["card"])
             reasons.append("memo.focus_move")
             return rects, reasons
         if prev.memo_expanded != curr.memo_expanded:
-            rects.extend([regions["card"], regions["footer"]])
+            focus_row = _memo_focus_row_rect(
+                width,
+                height,
+                curr.memo_index,
+                curr.memos_digest,
+                rotation_deg=curr.rotation_deg,
+            )
+            rects.append(focus_row if focus_row is not None else regions["card"])
             reasons.append("memo.expand_toggle")
             return rects, reasons
         if prev.memos_digest != curr.memos_digest:
-            rects.extend([regions["header"], regions["card"]])
+            summary = _memo_summary_rect(width, height, rotation_deg=curr.rotation_deg)
+            if summary is not None:
+                rects.append(summary)
+            rects.append(regions["card"])
             reasons.append("memo.data_change")
         return rects, reasons
 
@@ -1482,13 +1583,32 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         return rects, reasons
 
     if curr.screen == Screen.CALENDAR:
-        if (
-            prev.calendar_offset_days != curr.calendar_offset_days
-            or prev.calendar_mode != curr.calendar_mode
-            or prev.reminders_digest != curr.reminders_digest
+        offset_changed = prev.calendar_offset_days != curr.calendar_offset_days
+        mode_changed = prev.calendar_mode != curr.calendar_mode
+        data_changed = (
+            prev.reminders_digest != curr.reminders_digest
             or prev.calendar_digest != curr.calendar_digest
+        )
+        if (
+            offset_changed
+            or mode_changed
+            or data_changed
         ):
-            rects.extend([regions["left_panel"], regions["right_panel"]])
+            if offset_changed:
+                prev_cursor = date.today() + timedelta(days=int(prev.calendar_offset_days or 0))
+                curr_cursor = date.today() + timedelta(days=int(curr.calendar_offset_days or 0))
+                if (prev_cursor.year, prev_cursor.month) != (curr_cursor.year, curr_cursor.month):
+                    rects.append(regions["left_panel"])
+                else:
+                    rects.append(regions.get("left_grid", regions["left_panel"]))
+                rects.append(regions.get("right_header", regions["right_panel"]))
+                rects.append(regions["right_agenda"])
+            elif mode_changed:
+                rects.append(regions.get("right_header", regions["right_panel"]))
+                rects.append(regions["right_agenda"])
+            else:
+                rects.append(regions.get("left_grid", regions["left_panel"]))
+                rects.append(regions["right_agenda"])
             reasons.append("calendar.date_or_mode_or_data")
             return rects, reasons
         if prev.calendar_selected_index != curr.calendar_selected_index:

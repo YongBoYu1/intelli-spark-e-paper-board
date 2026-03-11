@@ -801,6 +801,10 @@ def _screen_change_force_partial_with_theme(screen: Screen, theme: dict) -> bool
     return screen_name in set(names)
 
 
+def _calendar_force_partial_with_theme(theme: dict) -> bool:
+    return bool(theme.get("refresh_calendar_force_partial", True))
+
+
 def _prepare_partial_rects(
     rects: list[tuple[int, int, int, int]],
     *,
@@ -2019,7 +2023,13 @@ def main() -> int:
                                 compact_onboarding
                                 and bool(theme.get("refresh_onboarding_compact_force_partial", True))
                             )
+                            calendar_force_partial = (
+                                pending_snapshot.screen == Screen.CALENDAR
+                                and any(r.startswith("calendar.") for r in pending_reasons)
+                                and _calendar_force_partial_with_theme(theme)
+                            )
                             allow_over_limit_partial = bool(allow_over_limit_partial or screen_change_force_partial)
+                            allow_over_limit_partial = bool(allow_over_limit_partial or calendar_force_partial)
                             if (
                                 supports_partial
                                 and partial_enabled

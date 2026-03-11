@@ -84,6 +84,12 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         self.assertFalse(rec._screen_change_force_partial_with_theme(rec.Screen.SETTINGS, theme))
         self.assertTrue(rec._screen_change_force_partial_with_theme(rec.Screen.TIMER, theme))
 
+    def test_calendar_force_partial_default_on(self) -> None:
+        self.assertTrue(rec._calendar_force_partial_with_theme({}))
+
+    def test_calendar_force_partial_can_be_disabled(self) -> None:
+        self.assertFalse(rec._calendar_force_partial_with_theme({"refresh_calendar_force_partial": False}))
+
     def test_partial_gate_uses_total_area_not_single_rect_peak(self) -> None:
         rects = [
             (0, 120, 800, 360),
