@@ -926,7 +926,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     shop_count_spacing = max(0, shop_title_spacing - 1)
     _draw_list_header_line(
         shop_header_y,
-        title="SHOPPING LIST",
+        title="REMINDERS",
         count_text=shop_count,
         title_font=f_shop_title,
         count_font=f_shop_title,
