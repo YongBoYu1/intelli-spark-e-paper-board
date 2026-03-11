@@ -904,6 +904,14 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             max(ox0 + 28, left_split - 20),
             oy1,
         ),
+        # Right-side author tags (MOM/DAD/...) sit above the quote area and can be
+        # outside the compact family-board body rect during memo rotation updates.
+        "left_family_names": (
+            max(ox0 + 24, left_split - 196),
+            oy0 + int((oy1 - oy0) * 0.44),
+            max(ox0 + 30, left_split - 2),
+            oy0 + int((oy1 - oy0) * 0.58),
+        ),
         "left_focus_indicator": (
             max(ox0, left_split - 34),
             oy0 + 4,
@@ -1901,9 +1909,17 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
                     rects.append(fallback)
             reasons.append("home.reminder_reorder")
     if prev.memo_index != curr.memo_index:
-        rect = home_regions["memo"] if portrait_home else regions["left_family_board"]
-        if rect is not None:
-            rects.append(rect)
+        if portrait_home:
+            rect = home_regions["memo"]
+            if rect is not None:
+                rects.append(rect)
+        else:
+            body_rect = regions.get("left_family_board")
+            names_rect = regions.get("left_family_names")
+            if body_rect is not None:
+                rects.append(body_rect)
+            if names_rect is not None:
+                rects.append(names_rect)
         reasons.append("home.family_board_update")
     if prev.weather_digest != curr.weather_digest:
         rect = home_regions["header_weather"] if portrait_home else regions["left_weather"]

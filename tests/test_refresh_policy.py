@@ -445,7 +445,7 @@ class RefreshPolicyTests(unittest.TestCase):
         merged = merge_rects(rects, 800, 480)
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
-        self.assertLess(ratio, 0.24)
+        self.assertLess(ratio, 0.30)
 
     def test_home_portrait_focus_move_uses_rotated_row_rect(self) -> None:
         model = DashboardModel()
