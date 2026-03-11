@@ -288,6 +288,7 @@ class UiSnapshot:
     weather_day_index: int
     weather_digest: tuple
     calendar_digest: tuple
+    snapshot_date_ordinal: int
     calendar_offset_days: int
     calendar_mode: str
     calendar_selected_index: int
@@ -367,6 +368,7 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
             )
             for c in state.model.calendar
         ),
+        snapshot_date_ordinal=int(date.today().toordinal()),
         calendar_offset_days=int(state.ui.calendar_offset_days or 0),
         calendar_mode=str(state.ui.calendar_mode or "date"),
         calendar_selected_index=int(state.ui.calendar_selected_index or 0),
@@ -1670,8 +1672,10 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             or data_changed
         ):
             if offset_changed:
-                prev_cursor = date.today() + timedelta(days=int(prev.calendar_offset_days or 0))
-                curr_cursor = date.today() + timedelta(days=int(curr.calendar_offset_days or 0))
+                prev_base = date.fromordinal(int(prev.snapshot_date_ordinal or date.today().toordinal()))
+                curr_base = date.fromordinal(int(curr.snapshot_date_ordinal or date.today().toordinal()))
+                prev_cursor = prev_base + timedelta(days=int(prev.calendar_offset_days or 0))
+                curr_cursor = curr_base + timedelta(days=int(curr.calendar_offset_days or 0))
                 if (prev_cursor.year, prev_cursor.month) != (curr_cursor.year, curr_cursor.month):
                     rects.append(regions["left_panel"])
                 else:
