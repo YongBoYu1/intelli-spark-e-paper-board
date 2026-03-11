@@ -823,11 +823,20 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             "footer": (24, max(0, h - footer_h - 1), w - 24, h),
         }
     if screen == Screen.TIMER:
-        return {
-            "header": (24, 10, w - 24, 74),
-            "time_status": (64, 90, w - 64, max(90, h - 120)),
-            "controls": (24, max(0, h - 100), w - 24, h),
+        src_w, src_h = _screen_source_size(width, height, rotation_deg)
+        source_regions = {
+            "header": (24, 10, max(25, src_w - 24), 74),
+            "time_status": (64, 90, max(65, src_w - 64), max(90, src_h - 120)),
+            "controls": (24, max(0, src_h - 100), max(25, src_w - 24), src_h),
         }
+        if rot in (90, 180, 270):
+            out: dict[str, Rect] = {}
+            for key, rect in source_regions.items():
+                transformed = _transform_source_rect(rect, src_w, src_h, rot)
+                if transformed is not None:
+                    out[key] = transformed
+            return out or {"time_status": (0, 0, w, h)}
+        return source_regions
     if screen == Screen.MENU:
         cy = h // 2
         return {"pills": (40, max(0, cy - 56), w - 40, min(h, cy + 56))}
@@ -1564,6 +1573,9 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             or prev.widget_mode != curr.widget_mode
         ):
             rects.append(regions["time_status"])
+            if prev.timer_running != curr.timer_running:
+                # START/PAUSE label lives in controls row and changes with running state.
+                rects.append(regions["controls"])
             reasons.append("timer.time_or_state")
         return rects, reasons
 

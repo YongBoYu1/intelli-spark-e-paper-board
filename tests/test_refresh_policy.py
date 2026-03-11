@@ -696,6 +696,49 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.50)
 
+    def test_timer_running_toggle_includes_controls_region(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.TIMER
+        prev.ui.timer_seconds = 300
+        prev.ui.timer_running = False
+        prev.ui.timer_focused_index = 2
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.TIMER
+        curr.ui.timer_seconds = 300
+        curr.ui.timer_running = True
+        curr.ui.timer_focused_index = 2
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("timer.time_or_state", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert merged is not None
+        # controls row should be included (near bottom edge)
+        self.assertGreater(merged[3], 430)
+
+    def test_timer_running_toggle_rotated_90_stays_compact(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.TIMER
+        prev.ui.rotation_deg = 90
+        prev.ui.timer_seconds = 300
+        prev.ui.timer_running = False
+        prev.ui.timer_focused_index = 2
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.TIMER
+        curr.ui.rotation_deg = 90
+        curr.ui.timer_seconds = 300
+        curr.ui.timer_running = True
+        curr.ui.timer_focused_index = 2
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("timer.time_or_state", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.95)
+
     def test_weather_day_change_rotated_90_uses_rotated_regions(self) -> None:
         model = DashboardModel()
         model.weather = [
