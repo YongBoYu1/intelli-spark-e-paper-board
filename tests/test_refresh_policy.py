@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen
+from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen, WeatherDay
 from app.render.refresh_policy import (
     RefreshPolicyRuntime,
     align_rect_for_partial,
@@ -188,6 +188,30 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.90)
 
+    def test_memo_rotate_change_rotated_90_stays_compact(self) -> None:
+        model = DashboardModel()
+        model.memos = [
+            MemoItem(mid="m1", text="A", author="Mom", timestamp=100.0, is_new=False),
+            MemoItem(mid="m2", text="B", author="Dad", timestamp=120.0, is_new=False),
+            MemoItem(mid="m3", text="C", author="Sis", timestamp=140.0, is_new=False),
+        ]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.MEMO
+        prev.ui.rotation_deg = 90
+        prev.ui.memo_index = 0
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.MEMO
+        curr.ui.rotation_deg = 90
+        curr.ui.memo_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("memo.focus_move", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.35)
+
     def test_memo_expand_toggle_generates_memo_expand_reason(self) -> None:
         model = DashboardModel()
         model.memos = [MemoItem(mid="m1", text="A", author="Mom", timestamp=100.0, is_new=False)]
@@ -242,6 +266,58 @@ class RefreshPolicyTests(unittest.TestCase):
 
         _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("list.data_change", reasons)
+
+    def test_unified_list_focus_change_rotated_90_stays_compact(self) -> None:
+        model = DashboardModel()
+        model.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", right="", completed=False, category="shopping"),
+            Reminder(rid="r2", title="Buy Bread", right="", completed=False, category="shopping"),
+        ]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.REMINDERS
+        prev.ui.rotation_deg = 90
+        prev.ui.list_focused_index = 0
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.REMINDERS
+        curr.ui.rotation_deg = 90
+        curr.ui.list_focused_index = 2
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("list.focus_move", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.85)
+
+    def test_unified_list_data_change_rotated_90_stays_compact(self) -> None:
+        model_prev = DashboardModel()
+        model_prev.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", right="", completed=False, category="shopping"),
+            Reminder(rid="r2", title="Buy Bread", right="", completed=False, category="shopping"),
+        ]
+        prev = AppState(model=model_prev)
+        prev.ui.screen = Screen.REMINDERS
+        prev.ui.rotation_deg = 90
+
+        model_curr = DashboardModel()
+        model_curr.reminders = [
+            Reminder(rid="f1", title="Milk", right="", completed=False, category="fridge"),
+            Reminder(rid="r1", title="Buy Eggs", right="", completed=True, category="shopping"),
+            Reminder(rid="r2", title="Buy Bread", right="", completed=False, category="shopping"),
+        ]
+        curr = AppState(model=model_curr)
+        curr.ui.screen = Screen.REMINDERS
+        curr.ui.rotation_deg = 90
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("list.data_change", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.85)
 
     def test_home_focus_move_prefers_row_dirty_rect(self) -> None:
         model = DashboardModel()
@@ -421,7 +497,7 @@ class RefreshPolicyTests(unittest.TestCase):
         merged = merge_rects(rects, 800, 480)
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
-        self.assertLess(ratio, 0.24)
+        self.assertLess(ratio, 0.30)
 
     def test_home_portrait_focus_move_uses_rotated_row_rect(self) -> None:
         model = DashboardModel()
@@ -618,7 +694,74 @@ class RefreshPolicyTests(unittest.TestCase):
         merged = merge_rects(rects, 800, 480)
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
-        self.assertLess(ratio, 0.50)
+        self.assertLess(ratio, 0.65)
+
+    def test_timer_running_toggle_includes_controls_region(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.TIMER
+        prev.ui.timer_seconds = 300
+        prev.ui.timer_running = False
+        prev.ui.timer_focused_index = 2
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.TIMER
+        curr.ui.timer_seconds = 300
+        curr.ui.timer_running = True
+        curr.ui.timer_focused_index = 2
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("timer.time_or_state", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        assert merged is not None
+        # controls row should be included (near bottom edge)
+        self.assertGreater(merged[3], 430)
+
+    def test_timer_running_toggle_rotated_90_stays_compact(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.TIMER
+        prev.ui.rotation_deg = 90
+        prev.ui.timer_seconds = 300
+        prev.ui.timer_running = False
+        prev.ui.timer_focused_index = 2
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.TIMER
+        curr.ui.rotation_deg = 90
+        curr.ui.timer_seconds = 300
+        curr.ui.timer_running = True
+        curr.ui.timer_focused_index = 2
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("timer.time_or_state", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.95)
+
+    def test_weather_day_change_rotated_90_uses_rotated_regions(self) -> None:
+        model = DashboardModel()
+        model.weather = [
+            WeatherDay(dow="Mon", icon="sun", hi=10, lo=2),
+            WeatherDay(dow="Tue", icon="cloud", hi=11, lo=3),
+            WeatherDay(dow="Wed", icon="rain", hi=9, lo=1),
+        ]
+
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.WEATHER
+        prev.ui.rotation_deg = 90
+        prev.ui.weather_day_index = 0
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.WEATHER
+        curr.ui.rotation_deg = 90
+        curr.ui.weather_day_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("weather.day_or_data_change", reasons)
+        self.assertGreaterEqual(len(rects), 3)
+        x0, y0, x1, y1 = rects[0]
+        self.assertGreater((y1 - y0), (x1 - x0))
 
     def test_home_focus_row_mapping_uses_real_inventory_count(self) -> None:
         prev_model = DashboardModel()
@@ -678,6 +821,48 @@ class RefreshPolicyTests(unittest.TestCase):
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("calendar.date_or_mode_or_data", reasons)
         self.assertGreaterEqual(len(rects), 1)
+
+    def test_calendar_offset_change_avoids_full_screen_dirty_union(self) -> None:
+        model = DashboardModel()
+        model.calendar = [CalendarEvent(eid="e1", title="Doctor", when="09:00", date_iso="2026-03-05")]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.CALENDAR
+        prev.ui.rotation_deg = 90
+        prev.ui.calendar_offset_days = 0
+        prev.ui.calendar_mode = "date"
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.CALENDAR
+        curr.ui.rotation_deg = 90
+        curr.ui.calendar_offset_days = 1
+        curr.ui.calendar_mode = "date"
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("calendar.date_or_mode_or_data", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.98)
+
+    def test_calendar_mode_change_rotated_90_prefers_agenda_panel(self) -> None:
+        model = DashboardModel()
+        model.calendar = [CalendarEvent(eid="e1", title="Doctor", when="09:00", date_iso="2026-03-05")]
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.CALENDAR
+        prev.ui.rotation_deg = 90
+        prev.ui.calendar_mode = "date"
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.CALENDAR
+        curr.ui.rotation_deg = 90
+        curr.ui.calendar_mode = "agenda"
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("calendar.date_or_mode_or_data", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.60)
 
 if __name__ == "__main__":
     unittest.main()

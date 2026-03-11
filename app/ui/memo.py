@@ -141,9 +141,10 @@ def render_memo(image, state: AppState, fonts, theme: dict) -> None:
     idx = 0 if total <= 0 else (int(state.ui.memo_index or 0) % total)
     unread = sum(1 for m in memos if bool(getattr(m, "is_new", False)))
 
-    hint_text = "Rotate to select  -  Click to enter  -  Long press to home"
+    hint_text = "Rotate=Select  |  Click=Enter  |  Hold=Home"
     if meta_compact:
         hint_text = hint_text.upper()
+    hint_text = truncate_text(draw, hint_text, meta_font, max(80, outer_x1 - outer_x0))
     hint_w = text_width_spaced(draw, hint_text, meta_font, spacing=meta_spacing)
     hint_x = max(24, (w - 24) - hint_w)
     draw_text_spaced(draw, hint_text, hint_x, 52, meta_font, spacing=meta_spacing, fill=muted)

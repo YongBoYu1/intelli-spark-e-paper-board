@@ -768,7 +768,7 @@ def _screen_change_partial_enabled_with_theme(prev_screen: Screen, curr_screen: 
     if bool(theme.get("refresh_force_full_on_screen_change", False)):
         return False
 
-    default_screens = "memo,calendar,inventory,reminders,landing,onboarding"
+    default_screens = "settings,timer,memo,calendar,inventory,reminders,landing,onboarding"
     raw = theme.get("refresh_partial_screen_change_screens", default_screens)
     if isinstance(raw, str):
         names = [x.strip().lower() for x in raw.split(",") if x.strip()]
@@ -783,6 +783,26 @@ def _screen_change_partial_enabled_with_theme(prev_screen: Screen, curr_screen: 
 
     # Respect per-screen partial switch as well.
     return _screen_partial_enabled_with_theme(curr_screen, theme)
+
+
+def _screen_change_force_partial_with_theme(screen: Screen, theme: dict) -> bool:
+    if not bool(theme.get("refresh_force_partial_on_screen_change", True)):
+        return False
+
+    default_screens = "settings,timer,memo,calendar,inventory,reminders"
+    raw = theme.get("refresh_force_partial_on_screen_change_screens", default_screens)
+    if isinstance(raw, str):
+        names = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, (list, tuple)):
+        names = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
+    screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
+    return screen_name in set(names)
+
+
+def _calendar_force_partial_with_theme(theme: dict) -> bool:
+    return bool(theme.get("refresh_calendar_force_partial", True))
 
 
 def _prepare_partial_rects(
@@ -1557,31 +1577,45 @@ def main() -> int:
             ev = None
             voice_flow_ran = False
             voice_flow_demo_only = False
+            key_phys_down = bool(key_is_down)
+            if encoder_key_pin is not None:
+                try:
+                    curr_key_sample = GPIO.input(int(encoder_key_pin))
+                    active_low = str(args.encoder_key_active).lower() == "low"
+                    key_phys_down = bool((curr_key_sample == GPIO.LOW) if active_low else (curr_key_sample == GPIO.HIGH))
+                except Exception:
+                    key_phys_down = bool(key_is_down)
+
             if encoder_ready:
                 try:
                     curr_ab = (GPIO.input(int(encoder_pin_s1)) << 1) | GPIO.input(int(encoder_pin_s2))
                     if curr_ab != prev_ab:
-                        edge = (prev_ab, curr_ab)
-                        if edge in CW_SEQ:
-                            encoder_accum += 1
-                        elif edge in CCW_SEQ:
-                            encoder_accum -= 1
+                        # Ignore quadrature jitter while KEY is held down. Pressing the knob can
+                        # produce tiny AB edges that otherwise swallow/shift the click target.
+                        if key_phys_down:
+                            encoder_accum = 0
+                        else:
+                            edge = (prev_ab, curr_ab)
+                            if edge in CW_SEQ:
+                                encoder_accum += 1
+                            elif edge in CCW_SEQ:
+                                encoder_accum -= 1
 
-                        step_n = max(1, int(args.encoder_steps_per_detent))
-                        flip = bool(args.encoder_flip_direction)
-                        if encoder_accum >= step_n:
-                            logical_cw = not flip
-                            ev = Rotate(+1 if logical_cw else -1)
-                            encoder_accum = 0
-                        elif encoder_accum <= -step_n:
-                            logical_cw = flip
-                            ev = Rotate(+1 if logical_cw else -1)
-                            encoder_accum = 0
+                            step_n = max(1, int(args.encoder_steps_per_detent))
+                            flip = bool(args.encoder_flip_direction)
+                            if encoder_accum >= step_n:
+                                logical_cw = not flip
+                                ev = Rotate(+1 if logical_cw else -1)
+                                encoder_accum = 0
+                            elif encoder_accum <= -step_n:
+                                logical_cw = flip
+                                ev = Rotate(+1 if logical_cw else -1)
+                                encoder_accum = 0
                         prev_ab = curr_ab
                 except Exception:
                     pass
 
-            if encoder_key_pin is not None and ev is None:
+            if encoder_key_pin is not None:
                 try:
                     curr_key = GPIO.input(int(encoder_key_pin))
                     active_low = str(args.encoder_key_active).lower() == "low"
@@ -1608,7 +1642,6 @@ def main() -> int:
                             key_is_down = False
                             key_down_at = 0.0
                             key_long_sent = False
-                            key_last_edge_at = now
                     prev_key = curr_key
                 except Exception:
                     pass
@@ -1882,6 +1915,11 @@ def main() -> int:
                         theme,
                     )
                 )
+                screen_change_force_partial = (
+                    screen_changed
+                    and screen_change_partial
+                    and _screen_change_force_partial_with_theme(pending_snapshot.screen, theme)
+                )
                 font_size_changed = pending_snapshot.font_size != committed_snapshot.font_size
                 force_flush = force_full_clean or screen_changed or rotation_changed or screen_force_clean
 
@@ -1998,6 +2036,13 @@ def main() -> int:
                                 compact_onboarding
                                 and bool(theme.get("refresh_onboarding_compact_force_partial", True))
                             )
+                            calendar_force_partial = (
+                                pending_snapshot.screen == Screen.CALENDAR
+                                and any(r.startswith("calendar.") for r in pending_reasons)
+                                and _calendar_force_partial_with_theme(theme)
+                            )
+                            allow_over_limit_partial = bool(allow_over_limit_partial or screen_change_force_partial)
+                            allow_over_limit_partial = bool(allow_over_limit_partial or calendar_force_partial)
                             if (
                                 supports_partial
                                 and partial_enabled

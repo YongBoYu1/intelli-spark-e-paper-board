@@ -3,7 +3,7 @@ from __future__ import annotations
 from PIL import ImageDraw
 
 from app.core.state import AppState
-from app.shared.draw import draw_text_spaced, text_size, text_width_spaced
+from app.shared.draw import draw_text_spaced, text_size, text_width_spaced, truncate_text
 from app.shared.panel_font_templates import apply_panel_font_template
 
 
@@ -79,9 +79,10 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
     title_text = "TIMER"
     title_x = 24
     draw.text((title_x, title_y), title_text, font=title_font, fill=ink)
-    hint_text = "Rotate to select  -  Click to enter  -  Long press to home"
+    hint_text = "Rotate=Select  |  Click=Enter  |  Hold=Home"
     if meta_compact:
         hint_text = hint_text.upper()
+    hint_text = truncate_text(draw, hint_text, hint_font, max(80, w - 48))
     hint_w = text_width_spaced(draw, hint_text, hint_font, spacing=meta_spacing)
     hint_x = max(24, (w - 24) - hint_w)
     draw_text_spaced(draw, hint_text, hint_x, 52, hint_font, spacing=meta_spacing, fill=muted)
@@ -147,22 +148,23 @@ def render_timer(image, state: AppState, fonts, theme: dict) -> None:
         min_size=time_min_size,
         max_width=(w - 120),
     )
+    time_area_top = content_top
+    time_area_bottom = max(time_area_top + 1, available_bottom - status_gap - status_h)
+    time_area_h = max(1, time_area_bottom - time_area_top)
     for size in range(time_max_size, time_min_size - 1, -2):
         candidate = fonts.get(time_font_key, size)
         bbox = draw.textbbox((0, 0), time_text, font=candidate)
         tw = max(1, bbox[2] - bbox[0])
+        th = max(1, bbox[3] - bbox[1])
         if tw > (w - 120):
             continue
-        test_x = (w - tw) // 2
-        test_box = draw.textbbox((test_x, content_top), time_text, font=candidate)
-        test_bottom = test_box[3]
-        if test_bottom + status_gap + status_h <= available_bottom:
+        if th <= time_area_h:
             time_font = candidate
             break
 
-    time_w, _ = text_size(draw, time_text, time_font)
+    time_w, time_h = text_size(draw, time_text, time_font)
     time_x = (w - time_w) // 2
-    time_y = content_top
+    time_y = time_area_top + max(0, (time_area_h - time_h) // 2)
     time_box = draw.textbbox((time_x, time_y), time_text, font=time_font)
     if alert_active and not blink_on:
         pad_x = max(10, int((time_box[2] - time_box[0]) * 0.06))
