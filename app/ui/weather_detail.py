@@ -769,28 +769,28 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
             temp_font, _temp_full, temp_size = _fit_font_full_text_to_width(
                 draw,
                 fonts,
-                body_key,
+                body_focus_key,
                 temp_range,
-                max(13, int(body_base * 1.12)),
-                9,
-                max(44, col_w - 12),
+                max(18, int(body_base * 1.45)),
+                12,
+                max(72, col_w - 10),
             )
-            temp_font = fonts.get(body_key, temp_size)
+            temp_font = fonts.get(body_focus_key, temp_size)
             tw, _ = text_size(draw, temp_range, temp_font)
-            if tw > max(44, col_w - 12):
+            if tw > max(72, col_w - 10):
                 hi_raw = str(getattr(day, "hi", "--")).strip() or "--"
                 lo_raw = str(getattr(day, "lo", "--")).strip() or "--"
                 temp_range = f"{hi_raw}/{lo_raw}"
                 temp_font, _temp_full, temp_size = _fit_font_full_text_to_width(
                     draw,
                     fonts,
-                    body_key,
+                    body_focus_key,
                     temp_range,
-                    max(12, int(body_base * 1.05)),
-                    8,
-                    max(40, col_w - 10),
+                    max(16, int(body_base * 1.30)),
+                    10,
+                    max(64, col_w - 8),
                 )
-                temp_font = fonts.get(body_key, temp_size)
+                temp_font = fonts.get(body_focus_key, temp_size)
         else:
             temp_range = f"H: {_format_temp(getattr(day, 'hi', None))}  L: {_format_temp(getattr(day, 'lo', None))}"
             temp_font, temp_range, _ = _fit_font_to_width(
