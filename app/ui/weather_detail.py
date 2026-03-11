@@ -474,7 +474,7 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
                 fonts,
                 body_focus_key,
                 city_text,
-                max(18, int(body_base * 1.95)),
+                max(16, int(body_base * 1.55)),
                 max(9, int(theme.get("weather_city_min_font_size", 9) or 9)),
                 max(80, text_w),
             )
@@ -483,13 +483,17 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
         else:
             city_h = 0
 
-        hero_icon_size = max(66, min(116, int(min(panel_w * 0.28, hero_h * 0.34))))
+        hero_icon_size = max(58, min(104, int(min(panel_w * 0.26, hero_h * 0.30))))
         hero_icon_x = cx0 + (panel_w - hero_icon_size) // 2
-        hero_icon_y = city_y + city_h + (8 if show_city else 4)
+        hero_icon_y = city_y + city_h + (18 if show_city else 8)
+        max_icon_bottom = hero_y0 + int(hero_h * 0.56)
+        if hero_icon_y + hero_icon_size > max_icon_bottom:
+            hero_icon_size = max(50, max_icon_bottom - hero_icon_y)
+            hero_icon_x = cx0 + (panel_w - hero_icon_size) // 2
 
         inner_top = hero_icon_y + hero_icon_size + 8
         inner_bottom = hero_y1 - 10
-        while inner_bottom - inner_top < 40 and hero_icon_size > 56:
+        while inner_bottom - inner_top < 48 and hero_icon_size > 48:
             hero_icon_size -= 4
             hero_icon_x = cx0 + (panel_w - hero_icon_size) // 2
             inner_top = hero_icon_y + hero_icon_size + 8
@@ -733,34 +737,71 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
 
         day = days[indices[col]]
         if col == 0 and len(days) > 1:
-            day_label = str(theme.get("weather_tomorrow_label") or "Tomorrow")
+            if portrait_layout:
+                day_label = str(theme.get("weather_tomorrow_label_short") or "TMR").upper()
+            else:
+                day_label = str(theme.get("weather_tomorrow_label") or "Tomorrow")
         else:
             raw_dow = str(getattr(day, "dow", "--")).strip()
-            if len(raw_dow) <= 3:
+            if portrait_layout and len(raw_dow) > 3:
+                day_label = raw_dow[:3].upper()
+            elif len(raw_dow) <= 3:
                 day_label = (raw_dow or "--").upper()
             else:
                 day_label = raw_dow.title()
 
+        day_start = max(14, int(body_base * 1.45)) if portrait_layout else max(16, int(body_base * 1.75))
+        day_min = 10 if portrait_layout else 12
         day_font, day_label, _ = _fit_font_to_width(
             draw,
             fonts,
             body_focus_key,
             day_label,
-            max(16, int(body_base * 1.75)),
-            12,
-            max(60, col_w - 20),
+            day_start,
+            day_min,
+            max(48, col_w - (12 if portrait_layout else 20)),
         )
 
-        temp_range = f"H: {_format_temp(getattr(day, 'hi', None))}  L: {_format_temp(getattr(day, 'lo', None))}"
-        temp_font, temp_range, _ = _fit_font_to_width(
-            draw,
-            fonts,
-            body_key,
-            temp_range,
-            max(14, int(body_base * 1.35)),
-            11,
-            max(60, col_w - 20),
-        )
+        if portrait_layout:
+            hi_txt = _format_temp(getattr(day, "hi", None))
+            lo_txt = _format_temp(getattr(day, "lo", None))
+            temp_range = f"{hi_txt}/{lo_txt}"
+            temp_font, _temp_full, temp_size = _fit_font_full_text_to_width(
+                draw,
+                fonts,
+                body_key,
+                temp_range,
+                max(13, int(body_base * 1.12)),
+                9,
+                max(44, col_w - 12),
+            )
+            temp_font = fonts.get(body_key, temp_size)
+            tw, _ = text_size(draw, temp_range, temp_font)
+            if tw > max(44, col_w - 12):
+                hi_raw = str(getattr(day, "hi", "--")).strip() or "--"
+                lo_raw = str(getattr(day, "lo", "--")).strip() or "--"
+                temp_range = f"{hi_raw}/{lo_raw}"
+                temp_font, _temp_full, temp_size = _fit_font_full_text_to_width(
+                    draw,
+                    fonts,
+                    body_key,
+                    temp_range,
+                    max(12, int(body_base * 1.05)),
+                    8,
+                    max(40, col_w - 10),
+                )
+                temp_font = fonts.get(body_key, temp_size)
+        else:
+            temp_range = f"H: {_format_temp(getattr(day, 'hi', None))}  L: {_format_temp(getattr(day, 'lo', None))}"
+            temp_font, temp_range, _ = _fit_font_to_width(
+                draw,
+                fonts,
+                body_key,
+                temp_range,
+                max(14, int(body_base * 1.35)),
+                11,
+                max(60, col_w - 20),
+            )
 
         day_bb = draw.textbbox((0, 0), day_label, font=day_font)
         temp_bb = draw.textbbox((0, 0), temp_range, font=temp_font)
