@@ -17,7 +17,8 @@ from app.core.kitchen_queue import (
     kitchen_visible_task_indices,
 )
 from app.core.settings_schema import SettingsItem, SETTINGS_ORDER
-from app.core.state import AppState, Screen, Reminder, MenuItemId, WidgetMode
+from app.core.state import AppState, Screen, Reminder, MenuItemId, WeatherDay, WidgetMode
+from app.data.weather_api import resolve_weather_data
 
 
 class Event:
@@ -117,6 +118,114 @@ def _find_reminder_index_by_rid(state: AppState, rid: str) -> int:
         if str(r.rid or "") == key:
             return i
     return -1
+
+
+def _coerce_float(raw) -> float | None:
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    txt = str(raw).strip()
+    if not txt:
+        return None
+    cleaned: list[str] = []
+    for ch in txt:
+        if ch.isdigit() or ch in (".", "-"):
+            cleaned.append(ch)
+        else:
+            cleaned.append(" ")
+    token = "".join(cleaned).split()
+    if not token:
+        return None
+    try:
+        return float(token[0])
+    except Exception:
+        return None
+
+
+def _coerce_int(raw, *, default: int = 0) -> int:
+    val = _coerce_float(raw)
+    if val is None:
+        return int(default)
+    return int(round(val))
+
+
+def _coerce_int_opt(raw) -> int | None:
+    val = _coerce_float(raw)
+    if val is None:
+        return None
+    return int(round(val))
+
+
+def _weather_fallback_rows(state: AppState) -> list[dict]:
+    rows: list[dict] = []
+    for w in list(state.model.weather or []):
+        rows.append(
+            {
+                "dow": str(getattr(w, "dow", "") or ""),
+                "icon": str(getattr(w, "icon", "") or "cloud"),
+                "hi": getattr(w, "hi", 0),
+                "lo": getattr(w, "lo", 0),
+                "humidity": getattr(w, "humidity", None),
+                "feels_like": getattr(w, "feels_like", None),
+                "wind_kmh": getattr(w, "wind_kmh", None),
+                "uv_index": getattr(w, "uv_index", None),
+            }
+        )
+    return rows
+
+
+def _weather_rows_to_model(rows: object) -> list[WeatherDay]:
+    if not isinstance(rows, list):
+        return []
+    out: list[WeatherDay] = []
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        dow = str(row.get("dow") or f"D{i + 1}").strip() or f"D{i + 1}"
+        icon = str(row.get("icon") or "cloud").strip() or "cloud"
+        out.append(
+            WeatherDay(
+                dow=dow,
+                icon=icon,
+                hi=_coerce_int(row.get("hi"), default=0),
+                lo=_coerce_int(row.get("lo"), default=0),
+                humidity=_coerce_int_opt(row.get("humidity")),
+                feels_like=_coerce_float(row.get("feels_like")),
+                wind_kmh=_coerce_float(row.get("wind_kmh")),
+                uv_index=_coerce_float(row.get("uv_index")),
+            )
+        )
+    return out
+
+
+def _refresh_weather_now(state: AppState, now: float) -> bool:
+    fallback_rows = _weather_fallback_rows(state)
+    try:
+        location, rows = resolve_weather_data(state.model.location, fallback_rows)
+    except Exception:
+        state.ui.last_sync_at = float(now)
+        state.ui.sync_state = "fail"
+        return False
+
+    changed = False
+    next_location = str(location or "").strip()
+    if next_location and next_location != str(state.model.location or ""):
+        state.model.location = next_location
+        changed = True
+
+    next_weather = _weather_rows_to_model(rows)
+    if next_weather and next_weather != list(state.model.weather or []):
+        state.model.weather = next_weather
+        changed = True
+
+    if state.model.weather:
+        state.ui.weather_day_index = max(0, min(int(state.ui.weather_day_index or 0), len(state.model.weather) - 1))
+    else:
+        state.ui.weather_day_index = 0
+    state.ui.last_sync_at = float(now)
+    state.ui.sync_state = "ok"
+    return changed
 
 
 def _focused_kitchen_task_index(state: AppState, theme: Optional[dict] = None) -> int:
@@ -1385,6 +1494,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                     state.ui.calendar_selected_index = 0
         elif state.ui.screen == Screen.TIMER:
             _handle_timer_click(state, now, theme=theme)
+        elif state.ui.screen == Screen.WEATHER:
+            _refresh_weather_now(state, now)
         elif state.ui.screen == Screen.MEMO:
             if state.model.memos:
                 state.ui.memo_expanded = not bool(state.ui.memo_expanded)

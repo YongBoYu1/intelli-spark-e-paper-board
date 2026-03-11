@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import unittest
+from unittest.mock import patch
 
 from app.core.reducer import Back, Click, LongPress, Rotate, RotateButton, Tick, reduce
 from app.core.settings_schema import SettingsItem, SETTINGS_ORDER
@@ -110,6 +111,30 @@ class TimerReducerTests(unittest.TestCase):
 
         reduce(self.state, Click(), theme={})
         self.assertFalse(self.state.ui.memo_expanded)
+
+    def test_click_on_weather_refreshes_latest_data(self) -> None:
+        self.state.ui.screen = Screen.WEATHER
+        self.state.model.location = "Toronto"
+        self.state.model.weather = [
+            WeatherDay(dow="MON", icon="cloud", hi=6, lo=0, humidity=80),
+            WeatherDay(dow="TUE", icon="cloud", hi=5, lo=-1, humidity=75),
+        ]
+        self.state.ui.weather_day_index = 1
+
+        refreshed = [
+            {"dow": "MON", "icon": "rain", "hi": 7, "lo": 1, "humidity": 90, "feels_like": 3.5, "wind_kmh": 28, "uv_index": 1},
+        ]
+        with patch("app.core.reducer.resolve_weather_data", return_value=("Toronto", refreshed)) as mocked:
+            reduce(self.state, Click(), theme={})
+
+        mocked.assert_called_once()
+        self.assertEqual(len(self.state.model.weather), 1)
+        self.assertEqual(self.state.model.weather[0].icon, "rain")
+        self.assertEqual(self.state.model.weather[0].hi, 7)
+        self.assertEqual(self.state.model.weather[0].lo, 1)
+        self.assertEqual(self.state.ui.weather_day_index, 0)
+        self.assertEqual(self.state.ui.sync_state, "ok")
+        self.assertGreater(self.state.ui.last_sync_at, 0.0)
 
     def test_timer_rotate_cycles_focus(self) -> None:
         self.state.ui.screen = Screen.TIMER
