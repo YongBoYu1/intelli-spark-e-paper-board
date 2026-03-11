@@ -54,6 +54,24 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.LANDING, {}))
         self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.HOME, {}))
 
+    def test_screen_change_partial_default_allows_settings(self) -> None:
+        self.assertTrue(
+            rec._screen_change_partial_enabled_with_theme(
+                rec.Screen.HOME,
+                rec.Screen.SETTINGS,
+                {},
+            )
+        )
+
+    def test_screen_change_partial_default_allows_timer(self) -> None:
+        self.assertTrue(
+            rec._screen_change_partial_enabled_with_theme(
+                rec.Screen.HOME,
+                rec.Screen.TIMER,
+                {},
+            )
+        )
+
     def test_partial_gate_uses_total_area_not_single_rect_peak(self) -> None:
         rects = [
             (0, 120, 800, 360),
