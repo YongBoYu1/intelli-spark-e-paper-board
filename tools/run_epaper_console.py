@@ -1532,6 +1532,7 @@ def main() -> int:
 
             ev = None
             voice_flow_ran = False
+            voice_flow_demo_only = False
             if encoder_ready:
                 try:
                     curr_ab = (GPIO.input(int(encoder_pin_s1)) << 1) | GPIO.input(int(encoder_pin_s2))
@@ -1651,6 +1652,7 @@ def main() -> int:
                     continue
                 else:
                     # Voice record + send flow on keyboard space.
+                    voice_flow_demo_only = bool(in_voice_guide_demo)
                     driver_mode, voice_flow_ran = _run_voice_flow(
                         state=state,
                         epd=epd,
@@ -1662,7 +1664,7 @@ def main() -> int:
                         panel_dither=panel_dither,
                         voice_api_url=str(args.voice_api_url or ""),
                         voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
-                        voice_timezone=str(args.voice_timezone or "UTC"),
+                        voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),
                         voice_timeout_s=float(args.voice_timeout),
                         voice_max_sec=max(1, int(args.voice_max_sec)),
                         voice_audio_device=str(args.voice_audio_device or "default"),
@@ -1671,8 +1673,11 @@ def main() -> int:
                         current_mode=driver_mode,
                         supports_partial=bool(supports_partial),
                         refresh_debug=bool(refresh_debug),
-                        demo_only=bool(in_voice_guide_demo),
+                        demo_only=voice_flow_demo_only,
                     )
+                    if voice_flow_demo_only:
+                        # Let the normal frame pipeline render the updated onboarding demo panel.
+                        voice_flow_ran = False
                     space_last_trigger_at = time.time()
                     buffered = _drain_stdin_nonblocking(max_chars=512)
                     if "\x03" in buffered or "q" in buffered.lower():
