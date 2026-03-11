@@ -60,9 +60,10 @@ def render_unified_list(image, state: AppState, fonts, theme: dict) -> None:
 
     title_text = "LIST"
     draw.text((left, 16), title_text, font=title_font, fill=ink)
-    hint_text = "Rotate to select  -  Click to toggle  -  Long press to home"
+    hint_text = "Rotate=Select  |  Click=Toggle  |  Hold=Home"
     if meta_compact:
         hint_text = hint_text.upper()
+    hint_text = truncate_text(draw, hint_text, meta_font, max(80, right - left))
     hint_w = text_width_spaced(draw, hint_text, meta_font, spacing=meta_spacing)
     hint_x = max(left, right - hint_w)
     draw_text_spaced(draw, hint_text, hint_x, 52, meta_font, spacing=meta_spacing, fill=muted)
