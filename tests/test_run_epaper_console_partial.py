@@ -14,6 +14,9 @@ class _FakeEpd:
     def __init__(self):
         self.mode = "full"
         self.partial_call = None
+        self.init_count = 0
+        self.full_display_count = 0
+        self.clear_count = 0
 
     def init_part(self):
         self.mode = "part"
@@ -23,12 +26,45 @@ class _FakeEpd:
 
     def init(self):
         self.mode = "full"
+        self.init_count += 1
 
     def display_Partial(self, image, x0, y0, x1, y1):
         self.partial_call = (image, x0, y0, x1, y1)
 
+    def getbuffer(self, image):
+        return image
+
+    def display(self, image):
+        self.full_display_count += 1
+
+    def Clear(self):
+        self.clear_count += 1
+
 
 class RunEpaperConsolePartialTests(unittest.TestCase):
+    def test_partial_budget_default_matches_playbook(self) -> None:
+        self.assertFalse(rec._partial_budget_enabled_with_theme({}))
+
+    def test_onboarding_is_in_default_partial_whitelist(self) -> None:
+        self.assertTrue(rec._screen_partial_enabled_with_theme(rec.Screen.ONBOARDING, {}))
+        self.assertTrue(rec._screen_partial_enabled_with_theme(rec.Screen.LANDING, {}))
+
+    def test_onboarding_force_full_clean_default(self) -> None:
+        self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.ONBOARDING, {}))
+        self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.LANDING, {}))
+        self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.HOME, {}))
+
+    def test_partial_gate_uses_total_area_not_single_rect_peak(self) -> None:
+        rects = [
+            (0, 120, 800, 360),
+            (0, 350, 800, 480),
+        ]
+        max_ratio = max(rec.rect_area_ratio(r, 800, 480) for r in rects)
+        gate_ratio = rec._partial_gate_area_ratio(rects, width=800, height=480)
+
+        self.assertLess(max_ratio, 0.70)
+        self.assertGreater(gate_ratio, 0.70)
+
     def test_read_key_nonblocking_waits_for_split_left_arrow_sequence(self) -> None:
         stdin_mock = type("FakeStdin", (), {})()
         reads = iter(["\x1b", "[", "D"])
@@ -103,6 +139,73 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
 
         expected_len = ((x1 - x0) // 8) * (y1 - y0)
         self.assertEqual(len(payload), expected_len)
+
+    def test_blit_full_clean_reinits_driver(self) -> None:
+        epd = _FakeEpd()
+        frame = Image.new("1", (800, 480), 255)
+
+        mode = rec._blit_full_clean(epd, frame)
+
+        self.assertEqual(mode, "full")
+        self.assertEqual(epd.init_count, 1)
+        self.assertEqual(epd.clear_count, 1)
+        self.assertEqual(epd.full_display_count, 1)
+
+    def test_render_frame_uses_global_tone_params(self) -> None:
+        epd = _FakeEpd()
+        epd.width = 800
+        epd.height = 480
+        state = AppState(model=DashboardModel())
+        state.ui.screen = rec.Screen.ONBOARDING
+
+        class _Fonts:
+            def get(self, _k, _s):
+                from PIL import ImageFont
+                return ImageFont.load_default()
+
+        with patch("tools.run_epaper_console.render_app"), patch("tools.run_epaper_console.quantize_for_panel") as qp:
+            qp.return_value = Image.new("1", (800, 480), 255)
+            rec._render_frame(
+                epd,
+                state,
+                _Fonts(),
+                {"panel_threshold_onboarding": 140, "panel_gamma_onboarding": 0.88},
+                panel_threshold=168,
+                panel_muted=150,
+                panel_gamma=1.0,
+                panel_dither=False,
+            )
+
+            kwargs = qp.call_args.kwargs
+            self.assertEqual(kwargs.get("threshold"), 168)
+            self.assertAlmostEqual(float(kwargs.get("gamma")), 1.0, places=3)
+
+    def test_render_frame_onboarding_stays_binary_panel_frame(self) -> None:
+        epd = _FakeEpd()
+        epd.width = 800
+        epd.height = 480
+        state = AppState(model=DashboardModel())
+        state.ui.screen = rec.Screen.ONBOARDING
+
+        class _Fonts:
+            def get(self, _k, _s):
+                from PIL import ImageFont
+                return ImageFont.load_default()
+
+        base = Image.new("1", (800, 480), 255)
+        with patch("tools.run_epaper_console.render_app"), patch("tools.run_epaper_console.quantize_for_panel", return_value=base):
+            out = rec._render_frame(
+                epd,
+                state,
+                _Fonts(),
+                {},
+                panel_threshold=168,
+                panel_muted=150,
+                panel_gamma=1.0,
+                panel_dither=False,
+            )
+        self.assertEqual(out.mode, "1")
+        self.assertEqual(out.size, (800, 480))
 
     @patch("tools.run_epaper_console.resolve_weather_data")
     @patch("tools.run_epaper_console.resolve_dashboard_location")

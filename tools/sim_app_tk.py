@@ -20,7 +20,19 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen, WidgetMode
-from app.core.reducer import reduce, Rotate, Click, LongPress, RotateButton, Back, Tick, MemoDelta
+from app.core.reducer import (
+    reduce,
+    Rotate,
+    Click,
+    LongPress,
+    RotateButton,
+    Back,
+    Tick,
+    MemoDelta,
+    apply_onboarding_voice_demo_result,
+    apply_onboarding_voice_demo_error,
+    open_onboarding_voice_guide,
+)
 from app.data.location import resolve_dashboard_location
 from app.data.weather_api import resolve_weather_data
 from app.render.panel import build_panel_theme, quantize_for_panel
@@ -649,6 +661,11 @@ class Simulator(tk.Tk):
             state="readonly",
             width=10,
         ).grid(row=1, column=12, pady=(8, 0), sticky="w")
+        ttk.Button(
+            self.controls,
+            text="Show Landing",
+            command=self._start_onboarding_from_landing,
+        ).grid(row=1, column=13, padx=(10, 0), pady=(8, 0), sticky="w")
         ttk.Label(self.controls, text="Mic Input").grid(row=2, column=0, padx=(0, 6), pady=(8, 0), sticky="w")
         self.mic_combo = ttk.Combobox(
             self.controls,
@@ -660,6 +677,11 @@ class Simulator(tk.Tk):
         self.mic_combo.grid(row=2, column=1, columnspan=3, padx=(0, 8), pady=(8, 0), sticky="w")
         self.mic_combo.bind("<<ComboboxSelected>>", self._on_mic_selected)
         ttk.Button(self.controls, text="Refresh Mic", command=self._refresh_ffmpeg_devices).grid(row=2, column=4, pady=(8, 0), sticky="w")
+        ttk.Button(
+            self.controls,
+            text="Restart Landing",
+            command=self._start_onboarding_from_landing,
+        ).grid(row=2, column=5, padx=(8, 0), pady=(8, 0), sticky="w")
 
         self.preview = ttk.Label(self)
         self.preview.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
@@ -676,6 +698,8 @@ class Simulator(tk.Tk):
             "  R = Rotate screen (+90°)\n"
             "  S = Open settings\n"
             "  T = Open timer (home only)\n"
+            "  O = Restart onboarding from landing\n"
+            "  G = Open voice guide directly\n"
             "  Hold Space = Record, Release Space = Send to Voice API\n"
             "  B / Esc / Backspace = Back (dashboard -> menu, detail/menu -> dashboard)\n"
             "  ↑/↓ = Memo (when left panel focused)\n"
@@ -694,6 +718,10 @@ class Simulator(tk.Tk):
         self.bind("S", lambda _e: self._open_settings())
         self.bind("t", lambda _e: self._open_timer())
         self.bind("T", lambda _e: self._open_timer())
+        self.bind("o", lambda _e: self._start_onboarding_from_landing())
+        self.bind("O", lambda _e: self._start_onboarding_from_landing())
+        self.bind("g", lambda _e: self._open_voice_guide_direct())
+        self.bind("G", lambda _e: self._open_voice_guide_direct())
         self.bind_all("<KeyPress-Return>", self._on_enter_press)
         self.bind_all("<KeyPress-KP_Enter>", self._on_enter_press)
         self.bind("b", lambda _e: self._dispatch(Back()))
@@ -796,6 +824,21 @@ class Simulator(tk.Tk):
         ui = self.state.ui
         return (
             ui.screen.value,
+            bool(ui.setup_completed),
+            bool(ui.landing_rotate_seen),
+            bool(ui.landing_confirm_seen),
+            int(ui.landing_voice_demo_index or 0),
+            int(ui.landing_voice_demo_cycles or 0),
+            str(ui.landing_status or ""),
+            str(ui.onboarding_step or ""),
+            int(ui.onboarding_focus_index or 0),
+            int(ui.onboarding_qr_focus_index or 0),
+            int(ui.onboarding_prefs_focus_index or 0),
+            int(ui.onboarding_voice_guide_focus_index or 0),
+            str(ui.onboarding_status or ""),
+            str(ui.onboarding_voice_demo_heard or ""),
+            bool(ui.onboarding_voice_demo_attempted),
+            str(ui.voice_locale or ""),
             int(ui.focused_index or 0),
             int(ui.page or 0),
             bool(ui.idle),
@@ -885,6 +928,46 @@ class Simulator(tk.Tk):
         self.state.ui.timer_focused_index = 2
         self.state.ui.screen = Screen.TIMER
         self._render()
+
+    def _start_onboarding_from_landing(self):
+        # Force-first-run path for simulator demos.
+        self.state.ui.setup_completed = False
+        self.state.ui.screen = Screen.LANDING
+        self.state.ui.boot_started_at = time.time()
+        self.state.ui.boot_min_show_s = 0.0
+        self.state.ui.landing_rotate_seen = False
+        self.state.ui.landing_confirm_seen = False
+        locale = str(self.state.ui.voice_locale or "en-US")
+        self.state.ui.landing_voice_demo_index = 1 if locale == "es-ES" else (2 if locale == "fr-FR" else 0)
+        self.state.ui.landing_voice_demo_cycles = 0
+        self.state.ui.landing_last_demo_at = time.time()
+        self.state.ui.landing_status = ""
+        self.state.ui.onboarding_step = "start"
+        self.state.ui.onboarding_focus_index = 0
+        self.state.ui.onboarding_qr_focus_index = 0
+        self.state.ui.onboarding_prefs_focus_index = 0
+        self.state.ui.onboarding_voice_guide_focus_index = 0
+        self.state.ui.onboarding_pair_token = ""
+        self.state.ui.onboarding_pair_expires_at = 0.0
+        self.state.ui.onboarding_status = ""
+        self.state.ui.onboarding_voice_demo_heard = ""
+        self.state.ui.onboarding_voice_demo_attempted = False
+        self.state.ui.onboarding_voice_demo_case_index = 0
+        self.state.ui.onboarding_voice_demo_pass_mask = 0
+        self.state.ui.onboarding_voice_demo_action = ""
+        self.state.ui.onboarding_voice_sample_text = "Add milk to inventory"
+        self.state.ui.onboarding_voice_expected_action = "Add inventory"
+        self.state.ui.idle = False
+        self.state.ui.last_interaction_at = time.time()
+        self._render()
+        return "break"
+
+    def _open_voice_guide_direct(self):
+        open_onboarding_voice_guide(self.state)
+        self.state.ui.idle = False
+        self.state.ui.last_interaction_at = time.time()
+        self._render()
+        return "break"
 
     def _on_enter_press(self, _event=None):
         self._dispatch(Click())
@@ -1133,6 +1216,18 @@ class Simulator(tk.Tk):
     def _start_voice_recording(self):
         if self.voice_busy:
             return
+        in_voice_guide_demo = (
+            self.state.ui.screen == Screen.ONBOARDING
+            and str(self.state.ui.onboarding_step or "").strip().lower() == "voice_guide"
+        )
+        if ((not bool(self.state.ui.setup_completed)) or self.state.ui.screen in (Screen.LANDING, Screen.ONBOARDING)) and (not in_voice_guide_demo):
+            msg = "Voice is available after first setup."
+            if self.state.ui.screen == Screen.LANDING:
+                self.state.ui.landing_status = msg
+            elif self.state.ui.screen == Screen.ONBOARDING:
+                self.state.ui.onboarding_status = msg
+            self._render()
+            return
 
         api_url = str(self.voice_api_url.get() or "").strip()
         if not api_url:
@@ -1230,9 +1325,13 @@ class Simulator(tk.Tk):
 
         self._set_voice_overlay("processing", f"Interpreting ({elapsed_s:.1f}s)")
         self._render()
+        demo_only = (
+            self.state.ui.screen == Screen.ONBOARDING
+            and str(self.state.ui.onboarding_step or "").strip().lower() == "voice_guide"
+        )
         threading.Thread(
             target=self._voice_worker,
-            args=(self.voice_request_api_url, self.voice_request_timeout_s, audio_path),
+            args=(self.voice_request_api_url, self.voice_request_timeout_s, audio_path, demo_only),
             daemon=True,
         ).start()
 
@@ -1243,9 +1342,10 @@ class Simulator(tk.Tk):
         else:
             self._start_voice_recording()
 
-    def _voice_worker(self, api_url: str, timeout_s: float, audio_path: str) -> None:
+    def _voice_worker(self, api_url: str, timeout_s: float, audio_path: str, demo_only: bool) -> None:
         try:
-            meta = build_request_meta(locale="zh-CN", tz_name=_local_timezone_name())
+            locale = str(self.state.ui.voice_locale or "en-US")
+            meta = build_request_meta(locale=locale, tz_name=_local_timezone_name())
             payload = interpret_audio_via_backend(
                 api_url=api_url,
                 audio_path=audio_path,
@@ -1256,7 +1356,10 @@ class Simulator(tk.Tk):
             if isinstance(payload, dict):
                 payload = dict(payload)
                 payload["_debug_request_id"] = str(meta.request_id or "")
-            self.after(0, lambda p=payload: self._apply_voice_payload(p))
+            if demo_only:
+                self.after(0, lambda p=payload: self._apply_voice_demo_payload(p))
+            else:
+                self.after(0, lambda p=payload: self._apply_voice_payload(p))
         except VoiceClientError as e:
             self.after(0, lambda msg=str(e): self._voice_error(msg))
         except Exception as e:
@@ -1267,6 +1370,16 @@ class Simulator(tk.Tk):
             except Exception:
                 pass
             self.after(0, self._voice_done)
+
+    def _apply_voice_demo_payload(self, payload: dict) -> None:
+        transcript = ""
+        if isinstance(payload, dict):
+            transcript = str(payload.get("transcript") or "").strip()
+        apply_onboarding_voice_demo_result(self.state, transcript)
+        self.last_heard = transcript
+        self.last_tool = "voice_demo"
+        self._set_voice_overlay("idle")
+        self._render()
 
     def _apply_voice_payload(self, payload: dict) -> None:
         transcript = ""
@@ -1315,7 +1428,15 @@ class Simulator(tk.Tk):
     def _voice_error(self, msg: str) -> None:
         self.last_heard = ""
         self.last_tool = "error"
-        self._set_voice_overlay("error", msg, hold_s=4.0)
+        in_voice_guide_demo = (
+            self.state.ui.screen == Screen.ONBOARDING
+            and str(self.state.ui.onboarding_step or "").strip().lower() == "voice_guide"
+        )
+        if in_voice_guide_demo:
+            apply_onboarding_voice_demo_error(self.state, msg)
+            self._set_voice_overlay("idle")
+        else:
+            self._set_voice_overlay("error", msg, hold_s=4.0)
         self._render()
 
     def _voice_done(self) -> None:

@@ -121,6 +121,52 @@ class RefreshPolicyTests(unittest.TestCase):
         _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("menu.focus_move", reasons)
 
+    def test_onboarding_step_change_generates_panel_dirty_reason(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.ONBOARDING
+        prev.ui.onboarding_step = "start"
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.ONBOARDING
+        curr.ui.onboarding_step = "pair_qr"
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("onboarding.step_change", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertEqual(merged, (18, 18, 782, 462))
+
+    def test_landing_demo_change_updates_partial_regions(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.LANDING
+        prev.ui.landing_voice_demo_index = 0
+        prev.ui.landing_status = "Rotate"
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.LANDING
+        curr.ui.landing_voice_demo_index = 1
+        curr.ui.landing_status = "Confirm"
+
+        _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("landing.demo_or_status", reasons)
+
+    def test_landing_language_confirm_change_avoids_full_rect(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.LANDING
+        prev.ui.device_language = "en-US"
+        prev.ui.landing_rotate_seen = False
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.LANDING
+        curr.ui.device_language = "fr-FR"
+        curr.ui.landing_rotate_seen = True
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("landing.state_change", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.45)
+
     def test_memo_rotate_change_generates_memo_focus_reason(self) -> None:
         model = DashboardModel()
         model.memos = [
@@ -218,6 +264,50 @@ class RefreshPolicyTests(unittest.TestCase):
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.20)
+
+    def test_onboarding_voice_focus_uses_stable_panel_region(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.ONBOARDING
+        prev.ui.onboarding_step = "voice_guide"
+        prev.ui.onboarding_voice_guide_focus_index = 0
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.ONBOARDING
+        curr.ui.onboarding_step = "voice_guide"
+        curr.ui.onboarding_voice_guide_focus_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("onboarding.voice_focus", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertGreater(ratio, 0.75)
+        self.assertLess(ratio, 0.90)
+
+    def test_onboarding_start_focus_rotated_90_stays_compact(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.ONBOARDING
+        prev.ui.rotation_deg = 90
+        prev.ui.onboarding_step = "start"
+        prev.ui.onboarding_focus_index = 0
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.ONBOARDING
+        curr.ui.rotation_deg = 90
+        curr.ui.onboarding_step = "start"
+        curr.ui.onboarding_focus_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("onboarding.start_focus", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        x0, y0, x1, y1 = merged or (0, 0, 0, 0)
+        self.assertGreaterEqual(x0, 0)
+        self.assertGreaterEqual(y0, 0)
+        self.assertLessEqual(x1, 800)
+        self.assertLessEqual(y1, 480)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.40)
 
     def test_home_click_toggle_prefers_row_dirty_rect(self) -> None:
         model_prev = DashboardModel()

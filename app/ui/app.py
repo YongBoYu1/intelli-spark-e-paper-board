@@ -16,7 +16,9 @@ from app.ui.menu import render_menu, render_menu_overlay_home
 from app.ui.settings import render_settings
 from app.ui.timer import render_timer
 from app.ui.placeholder import render_placeholder
+from app.ui.onboarding import render_landing, render_onboarding
 from app.ui.layout import compute_layout
+from app.shared.mic_icon import draw_mic_icon as _draw_mic_icon, normalize_mic_style as _normalize_mic_style
 from app.shared.panel_font_templates import apply_panel_font_template
 
 
@@ -165,175 +167,6 @@ def _voice_zone_hint(state: AppState, phase_label: str, *, active: bool) -> str:
     return ""
 
 
-_MIC_STYLE_ALIASES: dict[str, str] = {
-    "hero_solid": "heroicons_solid",
-    "hero_outline": "heroicons_outline",
-    "capsule_solid": "bootstrap_fill",
-    "block_solid": "tabler_filled",
-    "outline": "heroicons_outline",
-    "lucide_outline": "heroicons_outline",
-    "retro": "tabler_outline",
-}
-
-_MIC_ICON_MASKS_16: dict[str, tuple[str, ...]] = {
-    # Heroicons solid (source: assets/icons/heroicons/16-solid-microphone.svg)
-    # Mask extracted from vector render and tuned for 1-bit readability.
-    "heroicons_solid": (
-        "................",
-        "......####......",
-        "......####......",
-        "......####......",
-        "......####......",
-        "......####......",
-        "...#..####..#...",
-        "...##.####.##...",
-        "...##.####.##...",
-        "...###....###...",
-        "....########....",
-        ".....######.....",
-        ".......##.......",
-        ".....######.....",
-        ".....######.....",
-        "................",
-    ),
-    # Heroicons outline (derived from heroicons solid contour for e-paper).
-    "heroicons_outline": (
-        "................",
-        "......####......",
-        "......#..#......",
-        "......#..#......",
-        "......#..#......",
-        "......#..#......",
-        "...#..#..#..#...",
-        "...##.#..#.##...",
-        "...##.####.##...",
-        "...###....###...",
-        "....########....",
-        ".....######.....",
-        ".......##.......",
-        ".....######.....",
-        ".....######.....",
-        "................",
-    ),
-    # Tabler outline (source: assets/icons/tabler/microphone-outline.svg)
-    "tabler_outline": (
-        "................",
-        "......####......",
-        "......####......",
-        ".....##..##.....",
-        ".....##..##.....",
-        ".....##..##.....",
-        "...#.##..##.#...",
-        "...#.##..##.#...",
-        "...##.####.##...",
-        "...##..##..##...",
-        "....###..###....",
-        ".....######.....",
-        ".......##.......",
-        ".....######.....",
-        ".....######.....",
-        "................",
-    ),
-    # Tabler filled (source: assets/icons/tabler/microphone-filled.svg)
-    "tabler_filled": (
-        "................",
-        "......####......",
-        "......####......",
-        ".....######.....",
-        ".....######.....",
-        ".....######.....",
-        "...#.######.#...",
-        "...#.######.#...",
-        "...##.####.##...",
-        "...##..##..##...",
-        "....###..###....",
-        ".....######.....",
-        ".......##.......",
-        ".....######.....",
-        ".....######.....",
-        "................",
-    ),
-    # Tabler half-fill (mid-state between outline and filled for processing/confirm).
-    "tabler_half": (
-        "................",
-        "......####......",
-        "......####......",
-        ".....##..##.....",
-        ".....######.....",
-        ".....######.....",
-        "...#.######.#...",
-        "...#.##..##.#...",
-        "...##.####.##...",
-        "...##..##..##...",
-        "....###..###....",
-        ".....######.....",
-        ".......##.......",
-        ".....######.....",
-        ".....######.....",
-        "................",
-    ),
-    # Bootstrap outline (source: assets/icons/bootstrap/mic.svg)
-    "bootstrap_outline": (
-        "................",
-        "......####......",
-        "......#..#......",
-        ".....##..##.....",
-        ".....##..##.....",
-        ".....##..##.....",
-        ".....##..##.....",
-        "....###..###....",
-        "....###..###....",
-        "....#.####.#....",
-        "....##.##.##....",
-        ".....######.....",
-        ".......##.......",
-        ".......##.......",
-        ".....######.....",
-        "................",
-    ),
-    # Bootstrap fill (source: assets/icons/bootstrap/mic-fill.svg)
-    "bootstrap_fill": (
-        "................",
-        "......####......",
-        "......####......",
-        ".....######.....",
-        ".....######.....",
-        ".....######.....",
-        ".....######.....",
-        "....########....",
-        "....########....",
-        "....#.####.#....",
-        "....##.##.##....",
-        ".....######.....",
-        ".......##.......",
-        ".......##.......",
-        ".....######.....",
-        "................",
-    ),
-}
-
-
-def _draw_mask_icon(draw: ImageDraw.ImageDraw, x: int, y: int, size: int, color, rows: tuple[str, ...]) -> None:
-    s = max(14, int(size))
-    mask = Image.new("1", (16, 16), 0)
-    pix = mask.load()
-    for yy, row in enumerate(rows[:16]):
-        for xx, ch in enumerate(row[:16]):
-            if ch == "#":
-                pix[xx, yy] = 1
-    if s != 16:
-        mask = mask.resize((s, s), Image.NEAREST)
-    draw.bitmap((int(x), int(y)), mask, fill=color)
-
-
-def _normalize_mic_style(style: str) -> str:
-    key = str(style or "").strip().lower()
-    key = _MIC_STYLE_ALIASES.get(key, key)
-    if key not in _MIC_ICON_MASKS_16:
-        return "tabler_outline"
-    return key
-
-
 def _resolve_voice_mic_style(theme: dict, *, phase_label: str, active: bool) -> str:
     mode = str((theme or {}).get("voice_zone_mic_mode", "tabler_state") or "tabler_state").strip().lower()
     if mode in ("tabler_state", "auto_tabler", "stateful", "auto"):
@@ -346,16 +179,6 @@ def _resolve_voice_mic_style(theme: dict, *, phase_label: str, active: bool) -> 
         return "tabler_outline"
     raw_style = str((theme or {}).get("voice_zone_mic_style", "tabler_outline") or "tabler_outline")
     return _normalize_mic_style(raw_style)
-
-
-def _draw_mic_icon(draw: ImageDraw.ImageDraw, x: int, y: int, size: int, color, *, style: str = "tabler_outline") -> None:
-    """
-    Draw a 1-bit-friendly microphone icon silhouette.
-    Styles map to masks derived from open-source SVG icon families.
-    """
-    key = _normalize_mic_style(style)
-    rows = _MIC_ICON_MASKS_16.get(key) or _MIC_ICON_MASKS_16["tabler_outline"]
-    _draw_mask_icon(draw, x, y, size, color, rows)
 
 
 def _voice_action_prompt(tool_name: str) -> str:
@@ -701,6 +524,12 @@ def _mode_color(image, value):
 
 
 def _render_no_rotation(image, state: AppState, fonts, theme: dict) -> None:
+    if state.ui.screen == Screen.LANDING:
+        render_landing(image, state, fonts, theme)
+        return
+    if state.ui.screen == Screen.ONBOARDING:
+        render_onboarding(image, state, fonts, theme)
+        return
     if state.ui.screen == Screen.MENU:
         render_menu(image, state, fonts, theme)
         _draw_voice_overlay(image, state, fonts, theme)
@@ -792,6 +621,9 @@ def _render_no_rotation(image, state: AppState, fonts, theme: dict) -> None:
         )
 def render_app(image, state: AppState, fonts, theme: dict) -> None:
     scale = _font_scale(state)
+    if state.ui.screen in (Screen.LANDING, Screen.ONBOARDING):
+        # Keep onboarding typography stable regardless of global font size to avoid overlap.
+        scale = 1.0
     scaled_fonts = fonts if abs(scale - 1.0) < 1e-6 else _ScaledFontBook(fonts, scale)
     rotation = _normalized_right_angle(state.ui.rotation_deg)
 
