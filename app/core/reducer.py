@@ -228,9 +228,9 @@ def _activate_kitchen_left_target(state: AppState, target_kind: str, now: float,
 
 def _home_hide_grace_s(theme: dict) -> float:
     try:
-        value = float(theme.get("home_completed_hide_grace_s", 45.0) or 45.0)
+        value = float(theme.get("home_completed_hide_grace_s", 15.0) or 15.0)
     except Exception:
-        value = 45.0
+        value = 15.0
     return max(5.0, value)
 
 
@@ -1188,15 +1188,11 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             state.ui.settings_notice = ""
             state.ui.settings_notice_due_at = 0.0
 
-        if state.ui.screen == Screen.HOME and _is_kitchen_variant(variant) and minute_changed:
+        if state.ui.screen == Screen.HOME and _is_kitchen_variant(variant):
             if _maybe_promote_home_pending_hide(state, now, theme=theme):
                 _clamp_focus_kitchen(state, theme)
 
         return state
-
-    if state.ui.screen == Screen.HOME and _is_kitchen_variant(variant) and not isinstance(event, Click):
-        if _maybe_promote_home_pending_hide(state, now, theme=theme):
-            _clamp_focus_kitchen(state, theme)
 
     # Any non-tick event wakes the UI
     state.ui.idle = False
@@ -1421,7 +1417,6 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         state.ui.screen = Screen.HOME
         state.ui.menu_overlay_active = False
         state.ui.kitchen_focus_rid_override = ""
-        _maybe_promote_home_pending_hide(state, now, theme=theme)
         if _is_kitchen_variant(variant):
             _clamp_focus_kitchen(state, theme)
         else:
@@ -1469,7 +1464,6 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             state.ui.screen = Screen.HOME
             state.ui.menu_overlay_active = False
             state.ui.kitchen_focus_rid_override = ""
-            _maybe_promote_home_pending_hide(state, now, theme=theme)
             if _is_kitchen_variant(variant):
                 _clamp_focus_kitchen(state, theme)
             else:
