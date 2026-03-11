@@ -355,17 +355,27 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
 
     draw.rectangle((0, 0, w, h), fill=card)
 
-    pad_x = int(theme.get("weather_detail_pad_x", 22) or 22)
-    pad_y = int(theme.get("weather_detail_pad_y", 16) or 16)
+    portrait_layout = h > w
+    if portrait_layout:
+        pad_x = int(theme.get("weather_detail_pad_x_portrait", 16) or 16)
+        pad_y = int(theme.get("weather_detail_pad_y_portrait", 14) or 14)
+    else:
+        pad_x = int(theme.get("weather_detail_pad_x", 22) or 22)
+        pad_y = int(theme.get("weather_detail_pad_y", 16) or 16)
     cx0 = pad_x
     cy0 = pad_y
     cx1 = w - pad_x - 1
     cy1 = h - pad_y - 1
 
     content_h = max(120, cy1 - cy0 + 1)
-    hero_h = max(150, int(content_h * 0.41))
-    metric_h = max(88, int(content_h * 0.20))
-    min_forecast_h = 96
+    if portrait_layout:
+        hero_h = max(220, int(content_h * 0.39))
+        metric_h = max(112, int(content_h * 0.18))
+        min_forecast_h = 184
+    else:
+        hero_h = max(150, int(content_h * 0.41))
+        metric_h = max(88, int(content_h * 0.20))
+        min_forecast_h = 96
     if hero_h + metric_h > content_h - min_forecast_h:
         overflow = hero_h + metric_h - (content_h - min_forecast_h)
         hero_h = max(142, hero_h - overflow // 2)
@@ -411,141 +421,236 @@ def render_weather_detail(image, state: AppState, fonts, theme: dict) -> None:
     uv_raw = _metric(current, ("uv", "uv_index", "uvi"))
     uv_val = _parse_number(uv_raw)
 
-    # 1) Hero block: feels line + big temp + H/L line, with icon at right.
+    # 1) Hero block: portrait uses stacked icon+text, landscape keeps split columns.
     panel_w = cx1 - cx0 + 1
-    icon_box_w = max(96, min(124, int(panel_w * 0.16)))
-    right_anchor_cx = forecast_col_centers[2]
-    icon_x0 = right_anchor_cx - (icon_box_w // 2)
-    icon_x1 = icon_x0 + icon_box_w
-    if icon_x1 > cx1 - 2:
-        shift = icon_x1 - (cx1 - 2)
-        icon_x0 -= shift
-        icon_x1 -= shift
-    if icon_x0 < cx0 + 2:
-        shift = (cx0 + 2) - icon_x0
-        icon_x0 += shift
-        icon_x1 += shift
-
     city_text = str(getattr(state.model, "location", "") or "").strip()
     show_city = bool(city_text)
-    city_box_w = icon_box_w if show_city else 0
-    left_anchor_cx = forecast_col_centers[0]
-    city_box_x0 = (left_anchor_cx - (city_box_w // 2)) if show_city else cx0 + 6
-    city_box_x1 = city_box_x0 + city_box_w
-    if show_city and city_box_x0 < cx0 + 2:
-        shift = (cx0 + 2) - city_box_x0
-        city_box_x0 += shift
-        city_box_x1 += shift
-    if show_city and city_box_x1 > cx1 - 2:
-        shift = city_box_x1 - (cx1 - 2)
-        city_box_x0 -= shift
-        city_box_x1 -= shift
-    text_xmin = city_box_x1 + 12 if show_city else cx0 + 8
-    text_xmax = icon_x0 - 12
-    text_w = max(100, text_xmax - text_xmin)
-    text_cx = (text_xmin + text_xmax) // 2
-
     feels_txt = f"Feels Like {_format_temp_with_unit(feels_val)}"
     temp_txt = _format_temp_with_unit(current_temp_raw)
     range_txt = f"H: {_format_temp(hi_raw)}  L: {_format_temp(lo_raw)}"
 
-    feels_font, feels_txt, feels_size = _fit_font_to_width(
-        draw,
-        fonts,
-        body_key,
-        feels_txt,
-        max(15, int(body_base * 1.45)),
-        13,
-        text_w,
-    )
-    temp_font, temp_txt, temp_size = _fit_font_to_width(
-        draw,
-        fonts,
-        body_focus_key,
-        temp_txt,
-        max(42, int(body_base * 4.45)),
-        32,
-        text_w,
-    )
-    range_font, range_txt, range_size = _fit_font_to_width(
-        draw,
-        fonts,
-        body_key,
-        range_txt,
-        max(15, int(body_base * 1.45)),
-        12,
-        text_w,
-    )
+    if portrait_layout:
+        text_xmin = cx0 + 10
+        text_xmax = cx1 - 10
+        text_w = max(120, text_xmax - text_xmin)
+        text_cx = (text_xmin + text_xmax) // 2
 
-    feels_font = fonts.get(body_key, feels_size)
-    range_font = fonts.get(body_key, range_size)
-    _, feels_h = text_size(draw, feels_txt, feels_font)
-    _, range_h = text_size(draw, range_txt, range_font)
-
-    inner_top = hero_y0 + 6
-    inner_bottom = hero_y1 - 24
-    feels_y = inner_top
-    range_y = inner_bottom - range_h
-    temp_top = feels_y + feels_h + 4
-    temp_bottom = range_y - 8
-    temp_track_h = max(40, temp_bottom - temp_top)
-
-    while True:
-        temp_font = fonts.get(body_focus_key, temp_size)
-        _, temp_h = text_size(draw, temp_txt, temp_font)
-        if temp_h <= temp_track_h or temp_size <= 32:
-            break
-        temp_size -= 1
-
-    _, temp_h = text_size(draw, temp_txt, temp_font)
-    temp_y = temp_top + max(0, (temp_track_h - temp_h) // 2)
-    shift_up = min(2, max(0, feels_y - hero_y0 - 1))
-    feels_y -= shift_up
-    temp_y -= shift_up
-    range_y -= shift_up
-
-    _draw_centered_text_clamped(draw, feels_txt, feels_font, text_cx, feels_y, text_xmin, text_xmax, ink)
-    _draw_centered_text_clamped(draw, temp_txt, temp_font, text_cx, temp_y, text_xmin, text_xmax, ink)
-    _draw_centered_text_clamped(draw, range_txt, range_font, text_cx, range_y, text_xmin, text_xmax, ink)
-
-    icon_box_h = max(70, hero_h - 32)
-    hero_icon_size = max(62, min(92, icon_box_w - 10, icon_box_h))
-    hero_icon_x = icon_x0 + (icon_box_w - hero_icon_size) // 2
-    hero_icon_y = hero_y0 + (hero_h - hero_icon_size) // 2
-
-    if show_city:
-        city_frame_size = hero_icon_size
-        city_frame_x0 = city_box_x0 + max(0, (city_box_w - city_frame_size) // 2)
-        city_frame_y0 = hero_icon_y
-
-        city_font, city_label, _ = _fit_font_full_text_to_width(
+        feels_font, feels_txt, feels_size = _fit_font_to_width(
+            draw,
+            fonts,
+            body_key,
+            feels_txt,
+            max(16, int(body_base * 1.40)),
+            13,
+            text_w,
+        )
+        temp_font, temp_txt, temp_size = _fit_font_to_width(
             draw,
             fonts,
             body_focus_key,
-            city_text,
-            max(18, int(body_base * 2.15)),
-            max(4, int(theme.get("weather_city_min_font_size", 4) or 4)),
-            max(24, city_frame_size - 8),
+            temp_txt,
+            max(44, int(body_base * 4.10)),
+            30,
+            text_w,
         )
-        city_bb = draw.textbbox((0, 0), city_label, font=city_font)
-        city_w = city_bb[2] - city_bb[0]
-        city_h = city_bb[3] - city_bb[1]
-        city_x = city_frame_x0 + max(0, (city_frame_size - city_w) // 2) - city_bb[0]
-        city_y = city_frame_y0 + max(0, (city_frame_size - city_h) // 2) - city_bb[1]
-        draw.text((city_x, city_y), city_label, font=city_font, fill=ink)
+        range_font, range_txt, range_size = _fit_font_to_width(
+            draw,
+            fonts,
+            body_key,
+            range_txt,
+            max(15, int(body_base * 1.30)),
+            12,
+            text_w,
+        )
+        feels_font = fonts.get(body_key, feels_size)
+        range_font = fonts.get(body_key, range_size)
+        _, feels_h = text_size(draw, feels_txt, feels_font)
+        _, range_h = text_size(draw, range_txt, range_font)
 
-    _draw_weather_icon_pack(
-        image,
-        draw,
-        theme,
-        icon,
-        hero_icon_x,
-        hero_icon_y,
-        size=hero_icon_size,
-        size_h=None,
-        ink=ink,
-        stroke=max(3, int(hero_icon_size * 0.06)),
-    )
+        city_y = hero_y0 + 2
+        if show_city:
+            city_font, city_label, _ = _fit_font_full_text_to_width(
+                draw,
+                fonts,
+                body_focus_key,
+                city_text,
+                max(18, int(body_base * 1.95)),
+                max(9, int(theme.get("weather_city_min_font_size", 9) or 9)),
+                max(80, text_w),
+            )
+            city_w, city_h = text_size(draw, city_label, city_font)
+            draw.text((text_cx - (city_w // 2), city_y), city_label, font=city_font, fill=ink)
+        else:
+            city_h = 0
+
+        hero_icon_size = max(66, min(116, int(min(panel_w * 0.28, hero_h * 0.34))))
+        hero_icon_x = cx0 + (panel_w - hero_icon_size) // 2
+        hero_icon_y = city_y + city_h + (8 if show_city else 4)
+
+        inner_top = hero_icon_y + hero_icon_size + 8
+        inner_bottom = hero_y1 - 10
+        while inner_bottom - inner_top < 40 and hero_icon_size > 56:
+            hero_icon_size -= 4
+            hero_icon_x = cx0 + (panel_w - hero_icon_size) // 2
+            inner_top = hero_icon_y + hero_icon_size + 8
+
+        feels_y = inner_top
+        range_y = inner_bottom - range_h
+        temp_top = feels_y + feels_h + 4
+        temp_bottom = range_y - 6
+        temp_track_h = max(28, temp_bottom - temp_top)
+        while True:
+            temp_font = fonts.get(body_focus_key, temp_size)
+            _, temp_h = text_size(draw, temp_txt, temp_font)
+            if temp_h <= temp_track_h or temp_size <= 28:
+                break
+            temp_size -= 1
+        _, temp_h = text_size(draw, temp_txt, temp_font)
+        temp_y = temp_top + max(0, (temp_track_h - temp_h) // 2)
+
+        _draw_centered_text_clamped(draw, feels_txt, feels_font, text_cx, feels_y, text_xmin, text_xmax, ink)
+        _draw_centered_text_clamped(draw, temp_txt, temp_font, text_cx, temp_y, text_xmin, text_xmax, ink)
+        _draw_centered_text_clamped(draw, range_txt, range_font, text_cx, range_y, text_xmin, text_xmax, ink)
+        _draw_weather_icon_pack(
+            image,
+            draw,
+            theme,
+            icon,
+            hero_icon_x,
+            hero_icon_y,
+            size=hero_icon_size,
+            size_h=None,
+            ink=ink,
+            stroke=max(3, int(hero_icon_size * 0.06)),
+        )
+    else:
+        icon_box_w = max(96, min(124, int(panel_w * 0.16)))
+        right_anchor_cx = forecast_col_centers[2]
+        icon_x0 = right_anchor_cx - (icon_box_w // 2)
+        icon_x1 = icon_x0 + icon_box_w
+        if icon_x1 > cx1 - 2:
+            shift = icon_x1 - (cx1 - 2)
+            icon_x0 -= shift
+            icon_x1 -= shift
+        if icon_x0 < cx0 + 2:
+            shift = (cx0 + 2) - icon_x0
+            icon_x0 += shift
+            icon_x1 += shift
+
+        city_box_w = icon_box_w if show_city else 0
+        left_anchor_cx = forecast_col_centers[0]
+        city_box_x0 = (left_anchor_cx - (city_box_w // 2)) if show_city else cx0 + 6
+        city_box_x1 = city_box_x0 + city_box_w
+        if show_city and city_box_x0 < cx0 + 2:
+            shift = (cx0 + 2) - city_box_x0
+            city_box_x0 += shift
+            city_box_x1 += shift
+        if show_city and city_box_x1 > cx1 - 2:
+            shift = city_box_x1 - (cx1 - 2)
+            city_box_x0 -= shift
+            city_box_x1 -= shift
+        text_xmin = city_box_x1 + 12 if show_city else cx0 + 8
+        text_xmax = icon_x0 - 12
+        text_w = max(100, text_xmax - text_xmin)
+        text_cx = (text_xmin + text_xmax) // 2
+
+        feels_font, feels_txt, feels_size = _fit_font_to_width(
+            draw,
+            fonts,
+            body_key,
+            feels_txt,
+            max(15, int(body_base * 1.45)),
+            13,
+            text_w,
+        )
+        temp_font, temp_txt, temp_size = _fit_font_to_width(
+            draw,
+            fonts,
+            body_focus_key,
+            temp_txt,
+            max(42, int(body_base * 4.45)),
+            32,
+            text_w,
+        )
+        range_font, range_txt, range_size = _fit_font_to_width(
+            draw,
+            fonts,
+            body_key,
+            range_txt,
+            max(15, int(body_base * 1.45)),
+            12,
+            text_w,
+        )
+
+        feels_font = fonts.get(body_key, feels_size)
+        range_font = fonts.get(body_key, range_size)
+        _, feels_h = text_size(draw, feels_txt, feels_font)
+        _, range_h = text_size(draw, range_txt, range_font)
+
+        inner_top = hero_y0 + 6
+        inner_bottom = hero_y1 - 24
+        feels_y = inner_top
+        range_y = inner_bottom - range_h
+        temp_top = feels_y + feels_h + 4
+        temp_bottom = range_y - 8
+        temp_track_h = max(40, temp_bottom - temp_top)
+
+        while True:
+            temp_font = fonts.get(body_focus_key, temp_size)
+            _, temp_h = text_size(draw, temp_txt, temp_font)
+            if temp_h <= temp_track_h or temp_size <= 32:
+                break
+            temp_size -= 1
+
+        _, temp_h = text_size(draw, temp_txt, temp_font)
+        temp_y = temp_top + max(0, (temp_track_h - temp_h) // 2)
+        shift_up = min(2, max(0, feels_y - hero_y0 - 1))
+        feels_y -= shift_up
+        temp_y -= shift_up
+        range_y -= shift_up
+
+        _draw_centered_text_clamped(draw, feels_txt, feels_font, text_cx, feels_y, text_xmin, text_xmax, ink)
+        _draw_centered_text_clamped(draw, temp_txt, temp_font, text_cx, temp_y, text_xmin, text_xmax, ink)
+        _draw_centered_text_clamped(draw, range_txt, range_font, text_cx, range_y, text_xmin, text_xmax, ink)
+
+        icon_box_h = max(70, hero_h - 32)
+        hero_icon_size = max(62, min(92, icon_box_w - 10, icon_box_h))
+        hero_icon_x = icon_x0 + (icon_box_w - hero_icon_size) // 2
+        hero_icon_y = hero_y0 + (hero_h - hero_icon_size) // 2
+
+        if show_city:
+            city_frame_size = hero_icon_size
+            city_frame_x0 = city_box_x0 + max(0, (city_box_w - city_frame_size) // 2)
+            city_frame_y0 = hero_icon_y
+
+            city_font, city_label, _ = _fit_font_full_text_to_width(
+                draw,
+                fonts,
+                body_focus_key,
+                city_text,
+                max(18, int(body_base * 2.15)),
+                max(4, int(theme.get("weather_city_min_font_size", 4) or 4)),
+                max(24, city_frame_size - 8),
+            )
+            city_bb = draw.textbbox((0, 0), city_label, font=city_font)
+            city_w = city_bb[2] - city_bb[0]
+            city_h = city_bb[3] - city_bb[1]
+            city_x = city_frame_x0 + max(0, (city_frame_size - city_w) // 2) - city_bb[0]
+            city_y = city_frame_y0 + max(0, (city_frame_size - city_h) // 2) - city_bb[1]
+            draw.text((city_x, city_y), city_label, font=city_font, fill=ink)
+
+        _draw_weather_icon_pack(
+            image,
+            draw,
+            theme,
+            icon,
+            hero_icon_x,
+            hero_icon_y,
+            size=hero_icon_size,
+            size_h=None,
+            ink=ink,
+            stroke=max(3, int(hero_icon_size * 0.06)),
+        )
 
     # 2) Metrics row: text only (icons removed by design).
     uv_index_txt = "--" if uv_val is None else str(int(round(uv_val)))

@@ -886,16 +886,29 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             return out or {"list_right": (0, 0, w, h)}
         return source_regions
     if screen == Screen.WEATHER:
+        src_w, src_h = _screen_source_size(width, height, rotation_deg)
         y0 = 16
-        y1 = h - 16
+        y1 = max(y0 + 1, src_h - 16)
         total = max(100, y1 - y0)
-        hero_h = int(total * 0.41)
-        metric_h = int(total * 0.20)
-        return {
-            "hero": (20, y0, w - 20, y0 + hero_h),
-            "metrics": (20, y0 + hero_h, w - 20, y0 + hero_h + metric_h),
-            "forecast": (20, y0 + hero_h + metric_h, w - 20, y1),
+        if src_h > src_w:
+            hero_h = int(total * 0.39)
+            metric_h = int(total * 0.18)
+        else:
+            hero_h = int(total * 0.41)
+            metric_h = int(total * 0.20)
+        source_regions = {
+            "hero": (20, y0, max(21, src_w - 20), y0 + hero_h),
+            "metrics": (20, y0 + hero_h, max(21, src_w - 20), y0 + hero_h + metric_h),
+            "forecast": (20, y0 + hero_h + metric_h, max(21, src_w - 20), y1),
         }
+        if rot in (90, 180, 270):
+            out: dict[str, Rect] = {}
+            for key, rect in source_regions.items():
+                transformed = _transform_source_rect(rect, src_w, src_h, rot)
+                if transformed is not None:
+                    out[key] = transformed
+            return out or {"forecast": (0, 0, w, h)}
+        return source_regions
     if screen == Screen.CALENDAR:
         src_w, src_h = _screen_source_size(width, height, rotation_deg)
         if src_h > src_w:

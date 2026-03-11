@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen
+from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen, WeatherDay
 from app.render.refresh_policy import (
     RefreshPolicyRuntime,
     align_rect_for_partial,
@@ -695,6 +695,30 @@ class RefreshPolicyTests(unittest.TestCase):
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.50)
+
+    def test_weather_day_change_rotated_90_uses_rotated_regions(self) -> None:
+        model = DashboardModel()
+        model.weather = [
+            WeatherDay(dow="Mon", icon="sun", hi=10, lo=2),
+            WeatherDay(dow="Tue", icon="cloud", hi=11, lo=3),
+            WeatherDay(dow="Wed", icon="rain", hi=9, lo=1),
+        ]
+
+        prev = AppState(model=model)
+        prev.ui.screen = Screen.WEATHER
+        prev.ui.rotation_deg = 90
+        prev.ui.weather_day_index = 0
+
+        curr = AppState(model=model)
+        curr.ui.screen = Screen.WEATHER
+        curr.ui.rotation_deg = 90
+        curr.ui.weather_day_index = 1
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("weather.day_or_data_change", reasons)
+        self.assertGreaterEqual(len(rects), 3)
+        x0, y0, x1, y1 = rects[0]
+        self.assertGreater((y1 - y0), (x1 - x0))
 
     def test_home_focus_row_mapping_uses_real_inventory_count(self) -> None:
         prev_model = DashboardModel()
