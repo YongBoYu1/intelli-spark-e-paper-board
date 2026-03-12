@@ -11,6 +11,7 @@ import time
 import uuid
 from zoneinfo import ZoneInfo
 
+from app.core.reducer import open_app_by_name
 from app.core.state import AppState, MemoItem, Reminder, Screen, WidgetMode
 from app.voice.policy import decide_voice_policy
 
@@ -484,36 +485,7 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
         app_name = _canonical_open_app_name(str(action.args.get("app") or ""))
         if not app_name:
             return VoiceApplyResult(changed=False, status="error", message="Invalid app target")
-
-        prev_screen = state.ui.screen
-        if app_name == "home":
-            state.ui.screen = Screen.HOME
-        elif app_name == "weather":
-            state.ui.screen = Screen.WEATHER
-            state.ui.weather_day_index = 0
-        elif app_name == "calendar":
-            state.ui.screen = Screen.CALENDAR
-            state.ui.calendar_offset_days = 0
-            state.ui.calendar_mode = "date"
-            state.ui.calendar_selected_index = 0
-        elif app_name == "timer":
-            state.ui.widget_mode = WidgetMode.TIMER
-            state.ui.screen = Screen.TIMER
-            state.ui.timer_last_tick_at = time.time()
-        elif app_name == "memo":
-            state.ui.screen = Screen.MEMO
-            count = len(state.model.memos)
-            state.ui.memo_index = (int(state.ui.memo_index or 0) % max(1, count)) if count > 0 else 0
-            state.ui.memo_expanded = False
-        elif app_name == "reminders":
-            state.ui.screen = Screen.REMINDERS
-            _set_list_focus_for_source(state, "reminders")
-        elif app_name == "inventory":
-            state.ui.screen = Screen.REMINDERS
-            _set_list_focus_for_source(state, "inventory")
-        elif app_name == "settings":
-            state.ui.screen = Screen.SETTINGS
-        changed = bool(state.ui.screen != prev_screen)
+        changed = open_app_by_name(state, app_name, now=time.time(), theme={})
         return VoiceApplyResult(changed=changed, status="done", message=f"Opened {app_name}")
 
     if action.tool == "shopping_add_item":
@@ -1446,19 +1418,6 @@ def _mark_voice_completed(state: AppState, model_idx: int, *, now_ts: float | No
     state.ui.pending_reorder = True
     state.ui.reorder_due_at = max(float(state.ui.reorder_due_at or 0.0), now_v + 2.0)
     return True
-
-
-def _set_list_focus_for_source(state: AppState, source: str) -> None:
-    src = str(source or "").strip().lower()
-    if src == "inventory":
-        state.ui.list_focused_index = 0
-        return
-    inventory_count = len([r for r in state.model.reminders if str(r.category or "") == "fridge"])
-    reminder_count = len([r for r in state.model.reminders if str(r.category or "") != "fridge"])
-    if reminder_count <= 0:
-        state.ui.list_focused_index = 0
-    else:
-        state.ui.list_focused_index = max(0, inventory_count)
 
 
 def _norm_item_name(value: str) -> str:

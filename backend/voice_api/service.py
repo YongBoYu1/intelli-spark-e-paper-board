@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import re
 import tempfile
@@ -65,6 +66,30 @@ _SYSTEM_PROMPT_FALLBACK = (
     "undo_last_action_group, redo_last_action_group, no_action."
 )
 _CORRECTION_SCOPE_DEFAULT = "default"
+_TIMING_LOG = logging.getLogger("voice_api.timing")
+
+
+def _timing_log(event: str, **fields: Any) -> None:
+    parts: list[str] = []
+    for k, v in fields.items():
+        if v is None:
+            continue
+        parts.append(f"{k}={v}")
+    suffix = " ".join(parts)
+    if suffix:
+        _TIMING_LOG.info("voice_timing event=%s %s", event, suffix)
+    else:
+        _TIMING_LOG.info("voice_timing event=%s", event)
+
+
+def _load_audio_inline_part(*, audio_path: str, types_mod: Any) -> tuple[Any, int, int]:
+    started = time.perf_counter()
+    with open(audio_path, "rb") as f:
+        data = f.read()
+    part = types_mod.Part.from_bytes(data=data, mime_type="audio/wav")
+    size_kb = int(len(data) / 1024)
+    prep_ms = int((time.perf_counter() - started) * 1000)
+    return part, size_kb, prep_ms
 
 
 def interpret_request(payload: dict[str, Any]) -> dict[str, Any]:
@@ -76,7 +101,9 @@ def interpret_request(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
+    started_total = time.perf_counter()
     req = dict(payload or {})
+    request_id = str(req.get("request_id") or "").strip()
     request_time = str(req.get("request_time") or "").strip()
     timezone_name = str(req.get("timezone") or "UTC").strip() or "UTC"
     locale = str(req.get("locale") or "en-US").strip() or "en-US"
@@ -85,15 +112,30 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
     board_context = req.get("board_context") if isinstance(req.get("board_context"), dict) else None
     correction_scope_id = _correction_scope_from_request(req=req, board_context=board_context)
     transcript_raw = transcript
+    input_mode = "audio" if bool(audio_base64) else "text"
+    enable_no_action_retry = _env_flag("VOICE_ENABLE_NO_ACTION_RETRY", default=False)
+
+    def _finish(plan: dict[str, Any], transcript_out: str) -> dict[str, Any]:
+        action = _first_action_from_plan(plan)
+        _timing_log(
+            "interpret_done",
+            request_id=(request_id or "<none>"),
+            mode=input_mode,
+            action=str(action.get("tool") or "no_action"),
+            retry=int(bool(enable_no_action_retry)),
+            transcript_len=len(str(transcript_out or "")),
+            total_ms=int((time.perf_counter() - started_total) * 1000),
+        )
+        return {"plan": plan, "action": action, "transcript": transcript_out}
 
     if not transcript and not audio_base64:
         no_plan = _single_action_plan(_no_action("missing_audio_or_transcript"))
-        return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": ""}
+        return _finish(no_plan, "")
 
     api_key = str(os.environ.get("GOOGLE_API_KEY") or "").strip()
     if not api_key:
         no_plan = _single_action_plan(_no_action("missing_google_api_key"))
-        return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": transcript}
+        return _finish(no_plan, transcript)
 
     model = str(os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash").strip()
     audio_model = str(os.environ.get("GEMINI_AUDIO_MODEL") or model).strip() or model
@@ -116,16 +158,17 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
                 board_context=board_context,
             )
             plan = normalize_plan(raw_plan, request_time=request_time)
-            plan = _maybe_retry_low_risk_no_action_from_audio(
-                plan=plan,
-                api_key=api_key,
-                model=audio_model,
-                request_time=request_time,
-                timezone_name=timezone_name,
-                locale=locale,
-                audio_path=temp_audio_path,
-                board_context=board_context,
-            )
+            if enable_no_action_retry:
+                plan = _maybe_retry_low_risk_no_action_from_audio(
+                    plan=plan,
+                    api_key=api_key,
+                    model=audio_model,
+                    request_time=request_time,
+                    timezone_name=timezone_name,
+                    locale=locale,
+                    audio_path=temp_audio_path,
+                    board_context=board_context,
+                )
             if include_audio_transcript and not transcript_raw:
                 try:
                     transcript_raw = _transcribe_audio_via_gemini(
@@ -138,14 +181,14 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
                     transcript_raw = ""
             if not _validate_plan_against_schema(plan):
                 no_plan = _single_action_plan(_no_action("schema_validation_failed"))
-                return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": transcript_raw}
-            return {"plan": plan, "action": _first_action_from_plan(plan), "transcript": transcript_raw}
+                return _finish(no_plan, transcript_raw)
+            return _finish(plan, transcript_raw)
 
         transcript_raw = transcript
         transcript = _apply_scope_corrections(transcript=transcript, scope_id=correction_scope_id)
         if not transcript:
             no_plan = _single_action_plan(_no_action("missing_audio_or_transcript"))
-            return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": transcript_raw}
+            return _finish(no_plan, transcript_raw)
 
         raw_plan = _call_gemini_for_action(
             api_key=api_key,
@@ -158,23 +201,24 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
         plan = normalize_plan(raw_plan, request_time=request_time)
-        plan = _maybe_retry_low_risk_no_action(
-            plan=plan,
-            api_key=api_key,
-            model=model,
-            transcript=transcript,
-            request_time=request_time,
-            timezone_name=timezone_name,
-            locale=locale,
-            board_context=board_context,
-        )
+        if enable_no_action_retry:
+            plan = _maybe_retry_low_risk_no_action(
+                plan=plan,
+                api_key=api_key,
+                model=model,
+                transcript=transcript,
+                request_time=request_time,
+                timezone_name=timezone_name,
+                locale=locale,
+                board_context=board_context,
+            )
         if not _validate_plan_against_schema(plan):
             no_plan = _single_action_plan(_no_action("schema_validation_failed"))
-            return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": transcript_raw}
-        return {"plan": plan, "action": _first_action_from_plan(plan), "transcript": transcript_raw}
+            return _finish(no_plan, transcript_raw)
+        return _finish(plan, transcript_raw)
     except Exception as e:
         no_plan = _single_action_plan(_no_action(f"gemini_error:{str(e)[:80]}"))
-        return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": transcript_raw}
+        return _finish(no_plan, transcript_raw)
     finally:
         if temp_audio_path:
             try:
@@ -558,6 +602,51 @@ def _apply_scope_corrections(*, transcript: str, scope_id: str) -> str:
         return txt
 
 
+def _thinking_budget_from_env() -> int:
+    raw = str(os.environ.get("VOICE_THINKING_BUDGET") or "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except Exception:
+            pass
+    # Speed-first default for voice command routing.
+    return 0
+
+
+def _build_runtime_prompt(
+    *,
+    mode: str,
+    request_time: str,
+    timezone_name: str,
+    locale: str,
+    board_context: dict[str, Any] | None,
+    transcript: str = "",
+    retry_mode: str = "",
+) -> str:
+    lines: list[str] = [
+        f"request_time: {request_time}",
+        f"timezone: {timezone_name}",
+        f"locale: {locale}",
+        _board_context_line(board_context),
+        "Locale is a strong hint; mixed-language speech is allowed.",
+        "Return function calls only (no plain text).",
+        "If not actionable, call no_action(reason='insufficient_intent').",
+    ]
+    if mode == "text":
+        lines.append("Input mode: transcript (ASR text already provided).")
+        lines.append(f"transcript: {transcript}")
+    else:
+        lines.append("Input mode: audio. Transcribe and map directly to tool calls.")
+    if retry_mode == "no_action_low_risk":
+        lines.extend(
+            [
+                "Recovery pass: previous interpretation produced no_action.",
+                "Only use low-risk tools in this pass.",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def _call_gemini_for_action(
     *,
     api_key: str,
@@ -573,53 +662,49 @@ def _call_gemini_for_action(
     from google import genai
     from google.genai import types
 
+    started = time.perf_counter()
     client = genai.Client(api_key=api_key)
+    prompt = _build_runtime_prompt(
+        mode="text",
+        request_time=request_time,
+        timezone_name=timezone_name,
+        locale=locale,
+        board_context=board_context,
+        transcript=transcript,
+        retry_mode=retry_mode,
+    )
+    thinking_budget = _thinking_budget_from_env()
 
-    contents: list[Any] = []
-    context_lines = [
-        f"request_time: {request_time}",
-        f"timezone: {timezone_name}",
-        f"locale: {locale}",
-        "Locale is a strong hint, but user may mix languages in one utterance.",
-        "Important: transcript below is already ASR output. Do NOT claim transcript is missing.",
-        "Return function calls only (no plain text).",
-        "For multi-intent utterances, return all reasonable function calls in order.",
-        "Use undo_last_action_group / redo_last_action_group only when user explicitly says undo/redo/revert.",
-        "Phrases like 'do that again', 'same again', 'one more time' usually mean repeat recent_action_groups, not redo.",
-        "For vague pronouns (it/that/one/thing) without clear referent in context, prefer no_action(reason='insufficient_context').",
-        "If one sentence lists multiple shopping items, emit one shopping_add_item per item in order.",
-        "Checklist intents (check/tick/cross off items) should map to shopping_remove_item by name or position; use source='reminders' or 'inventory'.",
-        "Treat casual leftover-in-fridge phrasing as inventory_log_event(event_type='added').",
-        "Use timer_set for new timer duration; use timer_add/timer_pause/timer_resume/timer_stop for control intents.",
-        "Do not infer timer_set from bare numbers unless timer intent is explicit.",
-    ]
-    if retry_mode == "no_action_low_risk":
-        context_lines.extend(
-            [
-                "Recovery pass: previous interpretation produced no_action.",
-                "Only use low-risk tools from this call; do not emit clear-all or memo-delete/update actions.",
-                "If still uncertain, call no_action(reason='insufficient_intent').",
-            ]
-        )
-    context_lines.append(f"transcript: {transcript}")
-    if board_context:
-        context_lines.append(_board_context_line(board_context))
-    contents.append("\n".join(context_lines))
-
+    model_started = time.perf_counter()
     response = client.models.generate_content(
         model=model,
-        contents=contents,
+        contents=[prompt],
         config=types.GenerateContentConfig(
             system_instruction=_load_system_prompt(),
+            temperature=0.0,
+            candidate_count=1,
+            max_output_tokens=256,
+            thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget, include_thoughts=False),
             tools=_tool_declarations(allowed_tools=allowed_tools),
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode="ANY")
             ),
         ),
     )
+    model_ms = int((time.perf_counter() - model_started) * 1000)
 
     actions = _extract_function_call_actions(response)
     if actions:
+        _timing_log(
+            "gemini_text",
+            model=model,
+            retry=(retry_mode or "none"),
+            transcript_len=len(str(transcript or "")),
+            actions=len(actions),
+            thinking_budget=thinking_budget,
+            model_ms=model_ms,
+            total_ms=int((time.perf_counter() - started) * 1000),
+        )
         if len(actions) == 1:
             return actions[0]
         return {"actions": actions}
@@ -630,10 +715,32 @@ def _call_gemini_for_action(
         try:
             parsed = json.loads(text)
             if isinstance(parsed, dict):
+                _timing_log(
+                    "gemini_text",
+                    model=model,
+                    retry=(retry_mode or "none"),
+                    transcript_len=len(str(transcript or "")),
+                    actions=1,
+                    source="json_text_fallback",
+                    thinking_budget=thinking_budget,
+                    model_ms=model_ms,
+                    total_ms=int((time.perf_counter() - started) * 1000),
+                )
                 return parsed
         except Exception:
             pass
 
+    _timing_log(
+        "gemini_text",
+        model=model,
+        retry=(retry_mode or "none"),
+        transcript_len=len(str(transcript or "")),
+        actions=0,
+        source="no_function_call",
+        thinking_budget=thinking_budget,
+        model_ms=model_ms,
+        total_ms=int((time.perf_counter() - started) * 1000),
+    )
     return _no_action("no_function_call")
 
 
@@ -652,57 +759,70 @@ def _call_gemini_for_action_from_audio(
     from google import genai
     from google.genai import types
 
+    started = time.perf_counter()
     client = genai.Client(api_key=api_key)
-    uploaded_file = client.files.upload(file=audio_path)
-    uploaded_file = _wait_for_file_ready(client, uploaded_file)
-
-    prompt = "\n".join(
-        [
-            f"request_time: {request_time}",
-            f"timezone: {timezone_name}",
-            f"locale: {locale}",
-            "Locale is a strong hint, but user may mix languages in one utterance.",
-            _board_context_line(board_context),
-            "Transcribe and interpret this audio.",
-            "Return function calls only (no plain text).",
-            "For multi-intent utterances, return all reasonable function calls in order.",
-            "Use undo_last_action_group / redo_last_action_group only when user explicitly says undo/redo/revert.",
-            "Phrases like 'do that again', 'same again', 'one more time' usually mean repeat recent_action_groups, not redo.",
-            "For vague pronouns (it/that/one/thing) without clear referent in context, prefer no_action(reason='insufficient_context').",
-            "If one sentence lists multiple shopping items, emit one shopping_add_item per item in order.",
-            "Checklist intents (check/tick/cross off items) should map to shopping_remove_item by name or position; use source='reminders' or 'inventory'.",
-            "Treat casual leftover-in-fridge phrasing as inventory_log_event(event_type='added').",
-            "Use timer_set for new timer duration; use timer_add/timer_pause/timer_resume/timer_stop for control intents.",
-            "Do not infer timer_set from bare numbers unless timer intent is explicit.",
-            "If not actionable, call no_action.",
-        ]
+    audio_part, audio_kb, prep_ms = _load_audio_inline_part(audio_path=audio_path, types_mod=types)
+    prompt = _build_runtime_prompt(
+        mode="audio",
+        request_time=request_time,
+        timezone_name=timezone_name,
+        locale=locale,
+        board_context=board_context,
+        retry_mode=retry_mode,
     )
-    if retry_mode == "no_action_low_risk":
-        prompt = "\n".join(
-            [
-                prompt,
-                "Recovery pass: previous interpretation produced no_action.",
-                "Only use low-risk tools from this call; do not emit clear-all or memo-delete/update actions.",
-                "If still uncertain, call no_action(reason='insufficient_intent').",
-            ]
-        )
+    thinking_budget = _thinking_budget_from_env()
 
+    model_started = time.perf_counter()
     response = client.models.generate_content(
         model=model,
-        contents=[prompt, uploaded_file],
+        contents=[prompt, audio_part],
         config=types.GenerateContentConfig(
             system_instruction=_load_system_prompt(),
+            temperature=0.0,
+            candidate_count=1,
+            max_output_tokens=256,
+            thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget, include_thoughts=False),
             tools=_tool_declarations(allowed_tools=allowed_tools),
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode="ANY")
             ),
         ),
     )
+    model_ms = int((time.perf_counter() - model_started) * 1000)
     actions = _extract_function_call_actions(response)
     if actions:
+        _timing_log(
+            "gemini_audio",
+            model=model,
+            retry=(retry_mode or "none"),
+            actions=len(actions),
+            input_mode="inline",
+            audio_kb=audio_kb,
+            prep_ms=prep_ms,
+            upload_ms=0,
+            wait_ms=0,
+            thinking_budget=thinking_budget,
+            model_ms=model_ms,
+            total_ms=int((time.perf_counter() - started) * 1000),
+        )
         if len(actions) == 1:
             return actions[0]
         return {"actions": actions}
+    _timing_log(
+        "gemini_audio",
+        model=model,
+        retry=(retry_mode or "none"),
+        actions=0,
+        input_mode="inline",
+        audio_kb=audio_kb,
+        prep_ms=prep_ms,
+        upload_ms=0,
+        wait_ms=0,
+        thinking_budget=thinking_budget,
+        model_ms=model_ms,
+        total_ms=int((time.perf_counter() - started) * 1000),
+        source="no_function_call",
+    )
     return _no_action("no_function_call")
 
 
@@ -710,23 +830,43 @@ def _transcribe_audio_via_gemini(*, api_key: str, model: str, audio_path: str, l
     from google import genai
     from google.genai import types
 
+    started = time.perf_counter()
     client = genai.Client(api_key=api_key)
-    uploaded_file = client.files.upload(file=audio_path)
-    uploaded_file = _wait_for_file_ready(client, uploaded_file)
+    audio_part, audio_kb, prep_ms = _load_audio_inline_part(audio_path=audio_path, types_mod=types)
+    thinking_budget = _thinking_budget_from_env()
     prompt = (
         "Transcribe this audio into plain text. "
         f"Primary locale hint: {locale}. "
         "Keep mixed-language words as spoken and do not translate. "
         "Output transcript only. If unclear, output the best-effort short transcript."
     )
+    model_started = time.perf_counter()
     response = client.models.generate_content(
         model=model,
-        contents=[prompt, uploaded_file],
+        contents=[prompt, audio_part],
         config=types.GenerateContentConfig(
             temperature=0.0,
+            candidate_count=1,
+            max_output_tokens=192,
+            thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget, include_thoughts=False),
         ),
     )
+    model_ms = int((time.perf_counter() - model_started) * 1000)
     txt = str(getattr(response, "text", "") or "").strip()
+    _timing_log(
+        "gemini_transcribe",
+        model=model,
+        locale=locale,
+        transcript_len=len(txt),
+        input_mode="inline",
+        audio_kb=audio_kb,
+        prep_ms=prep_ms,
+        upload_ms=0,
+        wait_ms=0,
+        thinking_budget=thinking_budget,
+        model_ms=model_ms,
+        total_ms=int((time.perf_counter() - started) * 1000),
+    )
     return txt
 
 
@@ -735,21 +875,47 @@ def _wait_for_file_ready(client: Any, uploaded_file: Any, timeout_s: float = 8.0
     if not name:
         return uploaded_file
 
-    started = time.time()
+    started = time.perf_counter()
     last_file = uploaded_file
-    while time.time() - started < timeout_s:
+    polls = 0
+    while time.perf_counter() - started < timeout_s:
         try:
             got = client.files.get(name=name)
+            polls += 1
             last_file = got
             state_obj = getattr(got, "state", None)
             state_txt = str(getattr(state_obj, "name", state_obj) or "").upper()
             if not state_txt or "ACTIVE" in state_txt:
+                _timing_log(
+                    "audio_file_ready",
+                    status=(state_txt or "UNKNOWN"),
+                    polls=polls,
+                    elapsed_ms=int((time.perf_counter() - started) * 1000),
+                )
                 return got
             if "FAILED" in state_txt:
+                _timing_log(
+                    "audio_file_ready",
+                    status=state_txt,
+                    polls=polls,
+                    elapsed_ms=int((time.perf_counter() - started) * 1000),
+                )
                 return got
         except Exception:
+            _timing_log(
+                "audio_file_ready",
+                status="GET_EXCEPTION",
+                polls=polls,
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+            )
             return last_file
         time.sleep(0.25)
+    _timing_log(
+        "audio_file_ready",
+        status="TIMEOUT",
+        polls=polls,
+        elapsed_ms=int((time.perf_counter() - started) * 1000),
+    )
     return last_file
 
 
