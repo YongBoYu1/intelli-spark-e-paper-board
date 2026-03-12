@@ -13,6 +13,7 @@ from typing import Any
 from backend.voice_api.correction_kb import get_correction_kb
 
 _ALLOWED_TOOLS = {
+    "open_app",
     "inventory_log_event",
     "inventory_set_expiry",
     "inventory_clear_all",
@@ -20,19 +21,47 @@ _ALLOWED_TOOLS = {
     "shopping_remove_item",
     "shopping_clear_all",
     "timer_set",
+    "timer_add",
+    "timer_pause",
+    "timer_resume",
+    "timer_stop",
     "memo_add",
+    "memo_delete",
+    "memo_update",
+    "memo_clear_all",
     "undo_last_action_group",
     "redo_last_action_group",
     "no_action",
 }
 _ALLOWED_EVENT_TYPES = {"consumed", "used", "added", "restocked", "finished"}
-_MAX_PLAN_ACTIONS = 4
+_OPEN_APP_NAMES = {"home", "weather", "calendar", "timer", "memo", "reminders", "inventory", "settings"}
+_NO_ACTION_RETRY_BLOCKED_REASONS = {
+    "missing_audio_or_transcript",
+    "missing_google_api_key",
+    "schema_validation_failed",
+    "invalid_response_shape",
+}
+_LOW_RISK_RETRY_TOOLS = {
+    "open_app",
+    "inventory_log_event",
+    "inventory_set_expiry",
+    "shopping_add_item",
+    "shopping_remove_item",
+    "timer_set",
+    "timer_add",
+    "timer_pause",
+    "timer_resume",
+    "timer_stop",
+    "memo_add",
+    "no_action",
+}
 
 _SYSTEM_PROMPT_FALLBACK = (
     "You are a voice-command interpreter for a smart fridge magnet. "
-    "Return 1-4 function calls in order for actionable intents. "
-    "Available action tools: inventory_log_event, inventory_set_expiry, inventory_clear_all, "
-    "shopping_add_item, shopping_remove_item, shopping_clear_all, timer_set, memo_add, "
+    "Return one or more function calls in order for actionable intents. "
+    "Available action tools: open_app, inventory_log_event, inventory_set_expiry, inventory_clear_all, "
+    "shopping_add_item, shopping_remove_item, shopping_clear_all, timer_set, timer_add, timer_pause, timer_resume, timer_stop, "
+    "memo_add, memo_delete, memo_update, memo_clear_all, "
     "undo_last_action_group, redo_last_action_group, no_action."
 )
 _CORRECTION_SCOPE_DEFAULT = "default"
@@ -50,7 +79,7 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
     req = dict(payload or {})
     request_time = str(req.get("request_time") or "").strip()
     timezone_name = str(req.get("timezone") or "UTC").strip() or "UTC"
-    locale = str(req.get("locale") or "zh-CN").strip() or "zh-CN"
+    locale = str(req.get("locale") or "en-US").strip() or "en-US"
     transcript = str(req.get("transcript") or "").strip()
     audio_base64 = str(req.get("audio_base64") or "").strip()
     board_context = req.get("board_context") if isinstance(req.get("board_context"), dict) else None
@@ -80,18 +109,6 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
                 locale=locale,
             )
         transcript_raw = transcript
-        correction_plan = _maybe_build_explicit_correction_plan(
-            transcript=transcript,
-            board_context=board_context,
-            request_time=request_time,
-            scope_id=correction_scope_id,
-        )
-        if correction_plan is not None:
-            plan = normalize_plan(correction_plan, request_time=request_time)
-            if not _validate_plan_against_schema(plan):
-                no_plan = _single_action_plan(_no_action("schema_validation_failed"))
-                return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": transcript_raw}
-            return {"plan": plan, "action": _first_action_from_plan(plan), "transcript": transcript_raw}
         transcript = _apply_scope_corrections(transcript=transcript, scope_id=correction_scope_id)
         if not transcript:
             # Fallback: let Gemini infer directly from audio when text transcription is empty.
@@ -105,12 +122,6 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
                 board_context=board_context,
             )
             plan = normalize_plan(raw_plan, request_time=request_time)
-            plan = _repair_context_reference_no_action(
-                plan,
-                transcript=transcript,
-                board_context=board_context,
-                request_time=request_time,
-            )
             if not _validate_plan_against_schema(plan):
                 no_plan = _single_action_plan(_no_action("schema_validation_failed"))
                 return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": ""}
@@ -127,11 +138,15 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
         plan = normalize_plan(raw_plan, request_time=request_time)
-        plan = _repair_context_reference_no_action(
-            plan,
+        plan = _maybe_retry_low_risk_no_action(
+            plan=plan,
+            api_key=api_key,
+            model=model,
             transcript=transcript,
-            board_context=board_context,
             request_time=request_time,
+            timezone_name=timezone_name,
+            locale=locale,
+            board_context=board_context,
         )
         if not _validate_plan_against_schema(plan):
             no_plan = _single_action_plan(_no_action("schema_validation_failed"))
@@ -160,6 +175,19 @@ def normalize_action(raw_action: dict[str, Any] | None, *, request_time: str) ->
     if tool not in _ALLOWED_TOOLS:
         return _no_action("unsupported_tool")
 
+    if tool == "open_app":
+        raw_app = str(
+            args.get("app")
+            or args.get("app_name")
+            or args.get("screen")
+            or args.get("target")
+            or ""
+        ).strip()
+        app_name = _canonical_open_app_name(raw_app)
+        if not app_name:
+            return _no_action("invalid_app_name")
+        return {"tool": "open_app", "args": {"app": app_name}}
+
     if tool == "shopping_add_item":
         item_raw = str(args.get("item_name") or args.get("item") or "").strip()
         item_name = _canonical_item_name(item_raw)
@@ -170,9 +198,19 @@ def normalize_action(raw_action: dict[str, Any] | None, *, request_time: str) ->
     if tool == "shopping_remove_item":
         item_raw = str(args.get("item_name") or args.get("item") or "").strip()
         item_name = _canonical_item_name(item_raw)
-        if not item_name:
-            return _no_action("missing_item_name")
-        return {"tool": "shopping_remove_item", "args": {"item_name": item_name}}
+        source = _normalize_remove_source(args)
+        if source is None:
+            return _no_action("invalid_remove_source")
+        if item_name:
+            out_args: dict[str, Any] = {"item_name": item_name}
+            if source != "reminders":
+                out_args["source"] = source
+            return {"tool": "shopping_remove_item", "args": out_args}
+
+        positional = _normalize_positional_remove_args(args)
+        if positional is None:
+            return _no_action("missing_item_or_position")
+        return {"tool": "shopping_remove_item", "args": positional}
 
     if tool == "shopping_clear_all":
         confirm_token = str(args.get("confirm_token") or args.get("confirm") or "").strip().lower()
@@ -204,12 +242,51 @@ def normalize_action(raw_action: dict[str, Any] | None, *, request_time: str) ->
             return _no_action("invalid_duration_seconds")
         return {"tool": "timer_set", "args": {"duration_seconds": secs}}
 
+    if tool == "timer_add":
+        secs = _coerce_timer_delta_seconds(args)
+        if secs <= 0:
+            return _no_action("invalid_duration_seconds")
+        return {"tool": "timer_add", "args": {"delta_seconds": secs}}
+
+    if tool in {"timer_pause", "timer_resume", "timer_stop"}:
+        return {"tool": tool, "args": {}}
+
     if tool == "memo_add":
         text = str(args.get("text") or args.get("memo_text") or args.get("content") or "").strip()
         if not text:
             return _no_action("missing_memo_text")
         author = str(args.get("author") or "Voice").strip() or "Voice"
         return {"tool": "memo_add", "args": {"text": text[:240], "author": author[:24]}}
+
+    if tool == "memo_delete":
+        target = _normalize_memo_target(args)
+        if target is None:
+            return _no_action("missing_memo_target")
+        return {"tool": "memo_delete", "args": target}
+
+    if tool == "memo_update":
+        text = str(
+            args.get("text")
+            or args.get("new_text")
+            or args.get("content")
+            or args.get("memo_text")
+            or ""
+        ).strip()
+        if not text:
+            return _no_action("missing_memo_text")
+        target = _normalize_memo_target(args)
+        if target is None:
+            return _no_action("missing_memo_target")
+        out_args = dict(target)
+        out_args["text"] = text[:240]
+        return {"tool": "memo_update", "args": out_args}
+
+    if tool == "memo_clear_all":
+        confirm_token = str(args.get("confirm_token") or args.get("confirm") or "").strip().lower()
+        out_args: dict[str, Any] = {}
+        if confirm_token:
+            out_args["confirm_token"] = confirm_token
+        return {"tool": "memo_clear_all", "args": out_args}
 
     if tool in {"undo_last_action_group", "redo_last_action_group"}:
         return {"tool": tool, "args": {}}
@@ -280,7 +357,7 @@ def normalize_plan(raw_plan: dict[str, Any] | None, *, request_time: str) -> dic
         raw_actions.append(dict(source))
 
     actions: list[dict[str, Any]] = []
-    for raw in raw_actions[: _MAX_PLAN_ACTIONS]:
+    for raw in raw_actions:
         normalized = normalize_action(raw, request_time=request_time)
         if not isinstance(normalized, dict):
             continue
@@ -295,7 +372,7 @@ def normalize_plan(raw_plan: dict[str, Any] | None, *, request_time: str) -> dic
         actions = [_no_action(reason)]
 
     return {
-        "actions": actions[: _MAX_PLAN_ACTIONS],
+        "actions": actions,
         "needs_clarification": needs_clarification,
         "clarification": clarification,
         "response_copy": response_copy,
@@ -318,6 +395,79 @@ def _first_action_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
             if isinstance(row, dict):
                 return row
     return _no_action("missing_action")
+
+
+def _is_no_action(action: dict[str, Any] | None) -> bool:
+    if not isinstance(action, dict):
+        return False
+    return str(action.get("tool") or "").strip() == "no_action"
+
+
+def _should_retry_no_action(plan: dict[str, Any]) -> bool:
+    if not isinstance(plan, dict):
+        return False
+    first = _first_action_from_plan(plan)
+    if not _is_no_action(first):
+        return False
+    reason = str((first.get("args") or {}).get("reason") or "no_action").strip().lower()
+    if reason.startswith("gemini_error:"):
+        return False
+    if reason in _NO_ACTION_RETRY_BLOCKED_REASONS:
+        return False
+    return True
+
+
+def _plan_is_low_risk_retry_safe(plan: dict[str, Any]) -> bool:
+    if not isinstance(plan, dict):
+        return False
+    actions = plan.get("actions")
+    if not isinstance(actions, list) or not actions:
+        return False
+    for row in actions:
+        if not isinstance(row, dict):
+            return False
+        tool = str(row.get("tool") or "").strip()
+        if not tool or tool not in _LOW_RISK_RETRY_TOOLS:
+            return False
+    return True
+
+
+def _maybe_retry_low_risk_no_action(
+    *,
+    plan: dict[str, Any],
+    api_key: str,
+    model: str,
+    transcript: str,
+    request_time: str,
+    timezone_name: str,
+    locale: str,
+    board_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not _should_retry_no_action(plan):
+        return plan
+    txt = str(transcript or "").strip()
+    if not txt:
+        return plan
+    try:
+        retry_raw = _call_gemini_for_action(
+            api_key=api_key,
+            model=model,
+            transcript=txt,
+            request_time=request_time,
+            timezone_name=timezone_name,
+            locale=locale,
+            board_context=board_context,
+            allowed_tools=_LOW_RISK_RETRY_TOOLS,
+            retry_mode="no_action_low_risk",
+        )
+        retry_plan = normalize_plan(retry_raw, request_time=request_time)
+        if not _plan_is_low_risk_retry_safe(retry_plan):
+            return plan
+        if _is_no_action(_first_action_from_plan(retry_plan)):
+            return plan
+        return retry_plan
+    except Exception:
+        return plan
 
 
 def _correction_scope_from_request(*, req: dict[str, Any], board_context: dict[str, Any] | None) -> str:
@@ -344,531 +494,6 @@ def _apply_scope_corrections(*, transcript: str, scope_id: str) -> str:
         return txt
 
 
-def _maybe_build_explicit_correction_plan(
-    *,
-    transcript: str,
-    board_context: dict[str, Any] | None,
-    request_time: str,
-    scope_id: str,
-) -> dict[str, Any] | None:
-    correction = _extract_explicit_correction(transcript)
-    if correction is None:
-        return None
-
-    wrong, correct = correction
-    plan = _build_context_rename_plan(
-        board_context=board_context,
-        wrong=wrong,
-        correct=correct,
-        request_time=request_time,
-    )
-    if plan is None:
-        return None
-
-    if str(scope_id or "").strip() and str(scope_id or "").strip() != _CORRECTION_SCOPE_DEFAULT:
-        try:
-            get_correction_kb().upsert(scope_id=scope_id, wrong=wrong, correct=correct)
-        except Exception:
-            pass
-    return plan
-
-
-def _extract_explicit_correction(transcript: str) -> tuple[str, str] | None:
-    txt = str(transcript or "").strip()
-    if not txt:
-        return None
-    patterns = [
-        r"不是(?P<wrong>.+?)[，,。.;；!?？ ]*(?:是|应该是)(?P<correct>.+)$",
-        r"(?P<wrong>.+?)不对[，,。.;；!?？ ]*(?:是|应该是)(?P<correct>.+)$",
-        r"not\s+(?P<wrong>.+?)[,; ]+(?:it(?:'s| is)|is)\s+(?P<correct>.+)$",
-    ]
-    for p in patterns:
-        m = re.search(p, txt, flags=re.IGNORECASE)
-        if not m:
-            continue
-        wrong = _clean_correction_term(m.group("wrong"), pick="first")
-        correct = _clean_correction_term(m.group("correct"), pick="last")
-        if not wrong or not correct:
-            continue
-        if wrong.lower() == correct.lower():
-            continue
-        return wrong, correct
-    return None
-
-
-def _clean_correction_term(value: str, *, pick: str) -> str:
-    txt = str(value or "").strip()
-    if not txt:
-        return ""
-    txt = txt.strip(" \"'“”‘’")
-    parts = [p.strip() for p in re.split(r"[，,。.;；!?？]", txt) if str(p or "").strip()]
-    if not parts:
-        return ""
-    chosen = parts[-1] if pick == "last" else parts[0]
-    chosen = re.sub(r"^(这个|那个|this|that)\s*", "", chosen, flags=re.IGNORECASE).strip()
-    chosen = chosen.strip(" \"'“”‘’")
-    if not chosen:
-        return ""
-    if len(chosen) > 32:
-        chosen = chosen[:32].strip()
-    return chosen
-
-
-def _build_context_rename_plan(
-    *,
-    board_context: dict[str, Any] | None,
-    wrong: str,
-    correct: str,
-    request_time: str,
-) -> dict[str, Any] | None:
-    if not isinstance(board_context, dict):
-        return None
-    day = _default_effective_date(request_time)
-
-    inventory_items = board_context.get("inventory")
-    inventory_rows = inventory_items.get("items") if isinstance(inventory_items, dict) else []
-    if isinstance(inventory_rows, list):
-        for row in inventory_rows:
-            if not isinstance(row, dict):
-                continue
-            title = str(row.get("title") or "").strip()
-            if not title:
-                continue
-            renamed = _replace_case_insensitive_once(title, wrong, correct)
-            if not renamed or renamed == title:
-                continue
-            return {
-                "actions": [
-                    {
-                        "tool": "inventory_log_event",
-                        "args": {
-                            "item_name": title,
-                            "event_type": "finished",
-                            "effective_date": day,
-                        },
-                    },
-                    {
-                        "tool": "inventory_log_event",
-                        "args": {
-                            "item_name": renamed,
-                            "event_type": "added",
-                            "effective_date": day,
-                        },
-                    },
-                ],
-                "response_copy": f"Corrected item name: {title} -> {renamed}",
-            }
-
-    shopping_items = board_context.get("shopping")
-    shopping_rows = shopping_items.get("items") if isinstance(shopping_items, dict) else []
-    if isinstance(shopping_rows, list):
-        for row in shopping_rows:
-            if isinstance(row, dict):
-                title = str(row.get("title") or "").strip()
-            else:
-                title = str(row or "").strip()
-            if not title:
-                continue
-            renamed = _replace_case_insensitive_once(title, wrong, correct)
-            if not renamed or renamed == title:
-                continue
-            return {
-                "actions": [
-                    {"tool": "shopping_remove_item", "args": {"item_name": title}},
-                    {"tool": "shopping_add_item", "args": {"item_name": renamed}},
-                ],
-                "response_copy": f"Corrected shopping item: {title} -> {renamed}",
-            }
-    return None
-
-
-def _replace_case_insensitive_once(text: str, old: str, new: str) -> str:
-    src = str(text or "")
-    needle = str(old or "").strip()
-    target = str(new or "").strip()
-    if not src or not needle or not target:
-        return src
-    idx = src.find(needle)
-    if idx >= 0:
-        return src[:idx] + target + src[idx + len(needle) :]
-    src_low = src.lower()
-    needle_low = needle.lower()
-    idx = src_low.find(needle_low)
-    if idx < 0:
-        return src
-    return src[:idx] + target + src[idx + len(needle) :]
-
-
-def _repair_context_reference_no_action(
-    plan: dict[str, Any],
-    *,
-    transcript: str,
-    board_context: dict[str, Any] | None,
-    request_time: str,
-) -> dict[str, Any]:
-    if not isinstance(plan, dict):
-        return plan
-    actions = plan.get("actions")
-    if not isinstance(actions, list) or not actions:
-        return plan
-    first = actions[0]
-    if not isinstance(first, dict):
-        return plan
-    first_tool = str(first.get("tool") or "").strip()
-    txt = str(transcript or "").strip()
-    if not txt:
-        return plan
-    txt_low = txt.lower()
-    same_for_item = _extract_same_for_item_name(txt)
-
-    if first_tool == "no_action":
-        pass
-    elif first_tool in {"undo_last_action_group", "redo_last_action_group"}:
-        # Minimal local guard: model can over-trigger undo/redo on vague "do that again" style context.
-        if not (
-            _looks_like_remove_last_phrase(txt_low)
-            or _looks_like_repeat_last_phrase(txt_low)
-            or bool(same_for_item)
-        ):
-            if _looks_like_explicit_undo_or_redo_phrase(txt_low):
-                return plan
-            out = dict(plan)
-            out["actions"] = [_no_action("insufficient_context")]
-            out["needs_clarification"] = False
-            out["clarification"] = ""
-            if not str(out.get("response_copy") or "").strip():
-                out["response_copy"] = "I need more detail to know what to change."
-            return out
-    else:
-        return plan
-
-    recent = _recent_action_group_actions(board_context)
-    if not recent:
-        if first_tool in {"undo_last_action_group", "redo_last_action_group"} and (
-            _looks_like_remove_last_phrase(txt_low) or _looks_like_repeat_last_phrase(txt_low) or bool(same_for_item)
-        ):
-            out = dict(plan)
-            out["actions"] = [_no_action("insufficient_context")]
-            out["needs_clarification"] = False
-            out["clarification"] = ""
-            if not str(out.get("response_copy") or "").strip():
-                out["response_copy"] = "I need more context. Say the full command."
-            return out
-        return plan
-
-    if _looks_like_remove_last_phrase(txt_low):
-        removal_actions = _build_remove_last_actions_from_recent(recent=recent, request_time=request_time)
-        if removal_actions:
-            out = dict(plan)
-            out["actions"] = removal_actions[:_MAX_PLAN_ACTIONS]
-            if not str(out.get("response_copy") or "").strip():
-                out["response_copy"] = "Done. Removed the last one."
-            out["needs_clarification"] = False
-            out["clarification"] = ""
-            return out
-
-    if same_for_item:
-        same_actions = _build_same_for_actions_from_recent(
-            recent=recent,
-            item_name=same_for_item,
-            request_time=request_time,
-        )
-        if same_actions:
-            out = dict(plan)
-            out["actions"] = same_actions[:_MAX_PLAN_ACTIONS]
-            if not str(out.get("response_copy") or "").strip():
-                out["response_copy"] = f"Done. Applied the same action for {same_for_item}."
-            out["needs_clarification"] = False
-            out["clarification"] = ""
-            return out
-
-    if _looks_like_repeat_last_phrase(txt_low):
-        drop_timer = _looks_like_repeat_without_timer(txt_low)
-        replay_actions = _build_repeat_actions_from_recent(
-            recent=recent,
-            drop_timer=drop_timer,
-            request_time=request_time,
-        )
-        if replay_actions:
-            out = dict(plan)
-            out["actions"] = replay_actions[:_MAX_PLAN_ACTIONS]
-            if not str(out.get("response_copy") or "").strip():
-                out["response_copy"] = "Done. Repeated your last action."
-            out["needs_clarification"] = False
-            out["clarification"] = ""
-            return out
-
-    return plan
-
-
-def _looks_like_explicit_undo_or_redo_phrase(transcript_lower: str) -> bool:
-    txt = str(transcript_lower or "").strip().lower()
-    if not txt:
-        return False
-    patterns = (
-        "undo",
-        "redo",
-        "revert",
-        "roll back",
-        "cancel last",
-        "撤销",
-        "重做",
-    )
-    return any(p in txt for p in patterns)
-
-
-def _recent_action_group_actions(board_context: dict[str, Any] | None) -> list[dict[str, Any]]:
-    if not isinstance(board_context, dict):
-        return []
-    groups = board_context.get("recent_action_groups")
-    if not isinstance(groups, list):
-        return []
-    for g in groups:
-        if not isinstance(g, dict):
-            continue
-        actions = g.get("actions")
-        if not isinstance(actions, list):
-            continue
-        out: list[dict[str, Any]] = []
-        for row in actions:
-            if not isinstance(row, dict):
-                continue
-            tool = str(row.get("tool") or "").strip()
-            args = row.get("args") if isinstance(row.get("args"), dict) else {}
-            if not tool:
-                continue
-            out.append({"tool": tool, "args": dict(args)})
-        if out:
-            return out
-    return []
-
-
-def _looks_like_repeat_last_phrase(transcript_lower: str) -> bool:
-    txt = str(transcript_lower or "").strip().lower()
-    if not txt:
-        return False
-    patterns = (
-        "do that again",
-        "do it again",
-        "do that one more time",
-        "do that once more",
-        "same again",
-        "same as before",
-        "do that one more",
-        "再来一次",
-        "再来一遍",
-        "再来一回",
-        "跟刚才一样",
-        "照刚才",
-    )
-    return any(p in txt for p in patterns)
-
-
-def _looks_like_repeat_without_timer(transcript_lower: str) -> bool:
-    txt = str(transcript_lower or "").strip().lower()
-    if not txt:
-        return False
-    no_timer_patterns = (
-        "no timer",
-        "without timer",
-        "but no timer",
-        "不要timer",
-        "不要计时",
-        "别设定时",
-        "别设计时器",
-    )
-    return any(p in txt for p in no_timer_patterns)
-
-
-def _looks_like_remove_last_phrase(transcript_lower: str) -> bool:
-    txt = str(transcript_lower or "").strip().lower()
-    if not txt:
-        return False
-    patterns = (
-        "remove the last one",
-        "remove that",
-        "remove that one",
-        "delete that",
-        "delete the last one",
-        "删掉刚才那个",
-        "删掉那个",
-        "把刚才那个删了",
-    )
-    return any(p in txt for p in patterns)
-
-
-def _extract_same_for_item_name(transcript: str) -> str:
-    txt = str(transcript or "").strip()
-    if not txt:
-        return ""
-    patterns = [
-        r"(?:and\s+)?(?:the\s+)?same(?:\s+thing)?\s+for\s+(?P<item>.+)$",
-        r"same\s+for\s+(?P<item>.+)$",
-    ]
-    for p in patterns:
-        m = re.search(p, txt, flags=re.IGNORECASE)
-        if not m:
-            continue
-        candidate = _clean_item_candidate_for_context(m.group("item"))
-        if candidate:
-            return candidate
-    return ""
-
-
-def _clean_item_candidate_for_context(value: str) -> str:
-    txt = str(value or "").strip()
-    if not txt:
-        return ""
-    filler_tail = re.compile(
-        r"(?:[\s,，;；:：-]*(?:\b(?:too|please|thanks|thank you|pls|thx)\b|吧|呀|啊|一下|谢谢|多谢))+$",
-        flags=re.IGNORECASE,
-    )
-    while txt:
-        before = txt
-        txt = re.sub(r"[。．.!?？]+$", "", txt).strip()
-        txt = filler_tail.sub("", txt).strip()
-        txt = txt.strip(" \"'“”‘’")
-        if txt == before:
-            break
-    if not txt:
-        return ""
-    return _canonical_item_name(txt)
-
-
-def _build_repeat_actions_from_recent(
-    *,
-    recent: list[dict[str, Any]],
-    drop_timer: bool,
-    request_time: str,
-) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for row in recent:
-        tool = str(row.get("tool") or "").strip()
-        args = row.get("args") if isinstance(row.get("args"), dict) else {}
-        if not tool:
-            continue
-        if drop_timer and tool == "timer_set":
-            continue
-        rebuilt = _rebuild_context_action(tool=tool, args=args, request_time=request_time)
-        if rebuilt:
-            out.append(rebuilt)
-    return out[:_MAX_PLAN_ACTIONS]
-
-
-def _build_same_for_actions_from_recent(
-    *,
-    recent: list[dict[str, Any]],
-    item_name: str,
-    request_time: str,
-) -> list[dict[str, Any]]:
-    item = _canonical_item_name(item_name)
-    if not item:
-        return []
-    for row in recent:
-        tool = str(row.get("tool") or "").strip()
-        args = row.get("args") if isinstance(row.get("args"), dict) else {}
-        if tool == "shopping_add_item":
-            return [{"tool": "shopping_add_item", "args": {"item_name": item}}]
-        if tool == "shopping_remove_item":
-            return [{"tool": "shopping_remove_item", "args": {"item_name": item}}]
-        if tool == "inventory_set_expiry":
-            expiry_date = str(args.get("expiry_date") or "").strip()
-            if not expiry_date:
-                continue
-            return [{"tool": "inventory_set_expiry", "args": {"item_name": item, "expiry_date": expiry_date}}]
-        if tool == "inventory_log_event":
-            event_type = str(args.get("event_type") or "").strip().lower()
-            if event_type not in _ALLOWED_EVENT_TYPES:
-                event_type = "added"
-            effective_date = str(args.get("effective_date") or "").strip() or _default_effective_date(request_time)
-            return [
-                {
-                    "tool": "inventory_log_event",
-                    "args": {
-                        "item_name": item,
-                        "event_type": event_type,
-                        "effective_date": effective_date,
-                    },
-                }
-            ]
-    return []
-
-
-def _build_remove_last_actions_from_recent(*, recent: list[dict[str, Any]], request_time: str) -> list[dict[str, Any]]:
-    for row in reversed(recent):
-        tool = str(row.get("tool") or "").strip()
-        args = row.get("args") if isinstance(row.get("args"), dict) else {}
-        item = _canonical_item_name(str(args.get("item_name") or "").strip())
-        if tool == "shopping_add_item" and item:
-            return [{"tool": "shopping_remove_item", "args": {"item_name": item}}]
-        if tool == "shopping_remove_item" and item:
-            return [{"tool": "shopping_add_item", "args": {"item_name": item}}]
-        if tool == "inventory_log_event" and item:
-            event_type = str(args.get("event_type") or "").strip().lower()
-            if event_type in {"added", "restocked"}:
-                return [
-                    {
-                        "tool": "inventory_log_event",
-                        "args": {
-                            "item_name": item,
-                            "event_type": "finished",
-                            "effective_date": _default_effective_date(request_time),
-                        },
-                    }
-                ]
-    return []
-
-
-def _rebuild_context_action(*, tool: str, args: dict[str, Any], request_time: str) -> dict[str, Any] | None:
-    t = str(tool or "").strip()
-    a = dict(args or {})
-    if t in {"shopping_add_item", "shopping_remove_item"}:
-        item = _canonical_item_name(str(a.get("item_name") or "").strip())
-        if not item:
-            return None
-        out_args: dict[str, Any] = {"item_name": item}
-        if t == "shopping_add_item" and bool(a.get("inventory_remove_if_generic_match")):
-            out_args["inventory_remove_if_generic_match"] = True
-        return {"tool": t, "args": out_args}
-    if t == "timer_set":
-        secs = _coerce_duration_seconds(a)
-        if secs <= 0:
-            return None
-        return {"tool": "timer_set", "args": {"duration_seconds": secs}}
-    if t == "memo_add":
-        text = str(a.get("text") or "").strip()
-        if not text:
-            return None
-        out_args = {"text": text}
-        author = str(a.get("author") or "").strip()
-        if author:
-            out_args["author"] = author
-        return {"tool": "memo_add", "args": out_args}
-    if t == "inventory_set_expiry":
-        item = _canonical_item_name(str(a.get("item_name") or "").strip())
-        expiry_date = str(a.get("expiry_date") or "").strip()
-        if not item or not expiry_date:
-            return None
-        return {"tool": "inventory_set_expiry", "args": {"item_name": item, "expiry_date": expiry_date}}
-    if t == "inventory_log_event":
-        item = _canonical_item_name(str(a.get("item_name") or "").strip())
-        event_type = str(a.get("event_type") or "").strip().lower()
-        if not item:
-            return None
-        if event_type not in _ALLOWED_EVENT_TYPES:
-            event_type = "added"
-        effective_date = str(a.get("effective_date") or "").strip() or _default_effective_date(request_time)
-        return {
-            "tool": "inventory_log_event",
-            "args": {
-                "item_name": item,
-                "event_type": event_type,
-                "effective_date": effective_date,
-            },
-        }
-    return None
-
-
 def _call_gemini_for_action(
     *,
     api_key: str,
@@ -878,6 +503,8 @@ def _call_gemini_for_action(
     timezone_name: str,
     locale: str,
     board_context: dict[str, Any] | None = None,
+    allowed_tools: set[str] | None = None,
+    retry_mode: str = "",
 ) -> dict[str, Any]:
     from google import genai
     from google.genai import types
@@ -891,14 +518,24 @@ def _call_gemini_for_action(
         f"locale: {locale}",
         "Important: transcript below is already ASR output. Do NOT claim transcript is missing.",
         "Return function calls only (no plain text).",
-        "For multi-intent utterances, return 2-4 function calls in order.",
+        "For multi-intent utterances, return all reasonable function calls in order.",
         "Use undo_last_action_group / redo_last_action_group only when user explicitly says undo/redo/revert.",
         "Phrases like 'do that again', 'same again', 'one more time' usually mean repeat recent_action_groups, not redo.",
         "For vague pronouns (it/that/one/thing) without clear referent in context, prefer no_action(reason='insufficient_context').",
-        "If one sentence lists multiple shopping items, emit one shopping_add_item per item in order (max 4).",
+        "If one sentence lists multiple shopping items, emit one shopping_add_item per item in order.",
+        "Checklist intents (check/tick/cross off items) should map to shopping_remove_item by name or position; use source='reminders' or 'inventory'.",
         "Treat casual leftover-in-fridge phrasing as inventory_log_event(event_type='added').",
+        "Use timer_set for new timer duration; use timer_add/timer_pause/timer_resume/timer_stop for control intents.",
         "Do not infer timer_set from bare numbers unless timer intent is explicit.",
     ]
+    if retry_mode == "no_action_low_risk":
+        context_lines.extend(
+            [
+                "Recovery pass: previous interpretation produced no_action.",
+                "Only use low-risk tools from this call; do not emit clear-all or memo-delete/update actions.",
+                "If still uncertain, call no_action(reason='insufficient_intent').",
+            ]
+        )
     context_lines.append(f"transcript: {transcript}")
     if board_context:
         context_lines.append(_board_context_line(board_context))
@@ -909,7 +546,7 @@ def _call_gemini_for_action(
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=_load_system_prompt(),
-            tools=_tool_declarations(),
+            tools=_tool_declarations(allowed_tools=allowed_tools),
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode="ANY")
             ),
@@ -920,7 +557,7 @@ def _call_gemini_for_action(
     if actions:
         if len(actions) == 1:
             return actions[0]
-        return {"actions": actions[:_MAX_PLAN_ACTIONS]}
+        return {"actions": actions}
 
     # Fallback path: if model returned text JSON instead of a function call.
     text = str(getattr(response, "text", "") or "").strip()
@@ -960,12 +597,14 @@ def _call_gemini_for_action_from_audio(
             _board_context_line(board_context),
             "Transcribe and interpret this audio.",
             "Return function calls only (no plain text).",
-            "For multi-intent utterances, return 2-4 function calls in order.",
+            "For multi-intent utterances, return all reasonable function calls in order.",
             "Use undo_last_action_group / redo_last_action_group only when user explicitly says undo/redo/revert.",
             "Phrases like 'do that again', 'same again', 'one more time' usually mean repeat recent_action_groups, not redo.",
             "For vague pronouns (it/that/one/thing) without clear referent in context, prefer no_action(reason='insufficient_context').",
-            "If one sentence lists multiple shopping items, emit one shopping_add_item per item in order (max 4).",
+            "If one sentence lists multiple shopping items, emit one shopping_add_item per item in order.",
+            "Checklist intents (check/tick/cross off items) should map to shopping_remove_item by name or position; use source='reminders' or 'inventory'.",
             "Treat casual leftover-in-fridge phrasing as inventory_log_event(event_type='added').",
+            "Use timer_set for new timer duration; use timer_add/timer_pause/timer_resume/timer_stop for control intents.",
             "Do not infer timer_set from bare numbers unless timer intent is explicit.",
             "If not actionable, call no_action.",
         ]
@@ -986,7 +625,7 @@ def _call_gemini_for_action_from_audio(
     if actions:
         if len(actions) == 1:
             return actions[0]
-        return {"actions": actions[:_MAX_PLAN_ACTIONS]}
+        return {"actions": actions}
     return _no_action("no_function_call")
 
 
@@ -1055,15 +694,27 @@ def _extract_function_call_actions(response: Any) -> list[dict[str, Any]]:
             if name:
                 out.append({"tool": name, "args": args})
         if out:
-            return out[:_MAX_PLAN_ACTIONS]
+            return out
     return []
 
 
-def _tool_declarations() -> list[dict[str, Any]]:
-    return [
+def _tool_declarations(*, allowed_tools: set[str] | None = None) -> list[dict[str, Any]]:
+    declarations: list[dict[str, Any]] = [
         {
-            "functionDeclarations": [
-                {
+            "name": "open_app",
+            "description": "Open or route to an app/screen",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "app": {
+                        "type": "STRING",
+                        "enum": ["home", "weather", "calendar", "timer", "memo", "reminders", "inventory", "settings"],
+                    },
+                },
+                "required": ["app"],
+            },
+        },
+        {
                     "name": "inventory_log_event",
                     "description": "Log an inventory event from voice",
                     "parameters": {
@@ -1075,8 +726,8 @@ def _tool_declarations() -> list[dict[str, Any]]:
                         },
                         "required": ["item_name", "event_type"],
                     },
-                },
-                {
+        },
+        {
                     "name": "inventory_set_expiry",
                     "description": "Set or update expiry date for an existing inventory item",
                     "parameters": {
@@ -1087,8 +738,8 @@ def _tool_declarations() -> list[dict[str, Any]]:
                         },
                         "required": ["item_name", "expiry_date"],
                     },
-                },
-                {
+        },
+        {
                     "name": "inventory_clear_all",
                     "description": "Request clearing the whole inventory section (requires physical confirmation on device)",
                     "parameters": {
@@ -1097,8 +748,8 @@ def _tool_declarations() -> list[dict[str, Any]]:
                             "confirm_token": {"type": "STRING"},
                         },
                     },
-                },
-                {
+        },
+        {
                     "name": "shopping_add_item",
                     "description": "Add one shopping item from voice",
                     "parameters": {
@@ -1108,19 +759,22 @@ def _tool_declarations() -> list[dict[str, Any]]:
                         },
                         "required": ["item_name"],
                     },
-                },
-                {
+        },
+        {
                     "name": "shopping_remove_item",
-                    "description": "Remove one item from shopping list",
+                    "description": "Remove shopping/reminder items by name or by position",
                     "parameters": {
                         "type": "OBJECT",
                         "properties": {
                             "item_name": {"type": "STRING"},
+                            "source": {"type": "STRING", "enum": ["reminders", "inventory"]},
+                            "position_mode": {"type": "STRING", "enum": ["first", "last", "index"]},
+                            "index": {"type": "INTEGER", "minimum": 1},
+                            "count": {"type": "INTEGER", "minimum": 1},
                         },
-                        "required": ["item_name"],
                     },
-                },
-                {
+        },
+        {
                     "name": "shopping_clear_all",
                     "description": "Request clearing the whole shopping list (requires physical confirmation on device)",
                     "parameters": {
@@ -1129,8 +783,8 @@ def _tool_declarations() -> list[dict[str, Any]]:
                             "confirm_token": {"type": "STRING"},
                         },
                     },
-                },
-                {
+        },
+        {
                     "name": "timer_set",
                     "description": "Set the kitchen timer using a duration in seconds",
                     "parameters": {
@@ -1140,8 +794,43 @@ def _tool_declarations() -> list[dict[str, Any]]:
                         },
                         "required": ["duration_seconds"],
                     },
-                },
-                {
+        },
+        {
+                    "name": "timer_add",
+                    "description": "Add seconds to the current timer",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "delta_seconds": {"type": "INTEGER", "minimum": 1},
+                        },
+                        "required": ["delta_seconds"],
+                    },
+        },
+        {
+                    "name": "timer_pause",
+                    "description": "Pause the current timer",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {},
+                    },
+        },
+        {
+                    "name": "timer_resume",
+                    "description": "Resume the paused timer",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {},
+                    },
+        },
+        {
+                    "name": "timer_stop",
+                    "description": "Stop and clear the timer",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {},
+                    },
+        },
+        {
                     "name": "memo_add",
                     "description": "Add a message to the family board/memo panel",
                     "parameters": {
@@ -1152,24 +841,60 @@ def _tool_declarations() -> list[dict[str, Any]]:
                         },
                         "required": ["text"],
                     },
-                },
-                {
+        },
+        {
+                    "name": "memo_delete",
+                    "description": "Delete memo by latest, ordinal position, or author",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "target": {"type": "STRING", "enum": ["latest", "index", "author"]},
+                            "index": {"type": "INTEGER", "minimum": 1},
+                            "author": {"type": "STRING"},
+                        },
+                    },
+        },
+        {
+                    "name": "memo_update",
+                    "description": "Update memo text by latest, ordinal position, or author",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "target": {"type": "STRING", "enum": ["latest", "index", "author"]},
+                            "index": {"type": "INTEGER", "minimum": 1},
+                            "author": {"type": "STRING"},
+                            "text": {"type": "STRING"},
+                        },
+                        "required": ["text"],
+                    },
+        },
+        {
+                    "name": "memo_clear_all",
+                    "description": "Request clearing all family board messages (requires physical confirmation on device)",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "confirm_token": {"type": "STRING"},
+                        },
+                    },
+        },
+        {
                     "name": "undo_last_action_group",
                     "description": "Undo the most recent committed voice action group",
                     "parameters": {
                         "type": "OBJECT",
                         "properties": {},
                     },
-                },
-                {
+        },
+        {
                     "name": "redo_last_action_group",
                     "description": "Redo the most recently undone voice action group",
                     "parameters": {
                         "type": "OBJECT",
                         "properties": {},
                     },
-                },
-                {
+        },
+        {
                     "name": "no_action",
                     "description": "No actionable intent in voice input",
                     "parameters": {
@@ -1179,10 +904,12 @@ def _tool_declarations() -> list[dict[str, Any]]:
                         },
                         "required": ["reason"],
                     },
-                },
-            ]
-        }
+        },
     ]
+    if allowed_tools is not None:
+        allowed = {str(t or "").strip() for t in allowed_tools if str(t or "").strip()}
+        declarations = [row for row in declarations if str(row.get("name") or "").strip() in allowed]
+    return [{"functionDeclarations": declarations}]
 
 
 def _decode_audio_base64_to_temp(audio_base64: str) -> str:
@@ -1204,6 +931,85 @@ def _board_context_line(board_context: dict[str, Any] | None) -> str:
     if len(txt) > 1200:
         txt = txt[:1197] + "..."
     return f"board_context: {txt}"
+
+
+def _canonical_open_app_name(raw: str) -> str:
+    txt = " ".join(str(raw or "").strip().lower().split())
+    if txt in _OPEN_APP_NAMES:
+        return txt
+    return ""
+
+
+def _coerce_positive_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        try:
+            return int(value)
+        except Exception:
+            return 0
+    txt = str(value or "").strip()
+    if not txt or not txt.isdigit():
+        return 0
+    try:
+        return int(txt)
+    except Exception:
+        return 0
+
+
+def _normalize_remove_source(args: dict[str, Any], *, default: str = "reminders") -> str | None:
+    raw = str(args.get("source") or "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"reminders", "inventory"}:
+        return raw
+    return None
+
+
+def _normalize_positional_remove_args(args: dict[str, Any]) -> dict[str, Any] | None:
+    source = _normalize_remove_source(args)
+    if source is None:
+        return None
+
+    position = str(args.get("position_mode") or "").strip().lower()
+    index = _coerce_positive_int(args.get("index"))
+    if not position:
+        if index > 0:
+            position = "index"
+        else:
+            return None
+    if position not in {"first", "last", "index"}:
+        return None
+    if position == "index" and index <= 0:
+        return None
+
+    count = _coerce_positive_int(args.get("count") or 1)
+    if count <= 0:
+        count = 1
+
+    out: dict[str, Any] = {"source": source, "position_mode": position, "count": count}
+    if position == "index":
+        out["index"] = index
+    return out
+
+
+def _normalize_memo_target(args: dict[str, Any]) -> dict[str, Any] | None:
+    target = str(args.get("target") or "").strip().lower()
+    index = _coerce_positive_int(args.get("index"))
+    author = str(args.get("author") or args.get("memo_author") or args.get("from_author") or "").strip()
+    if not target:
+        if index > 0:
+            return {"target": "index", "index": index}
+        if author:
+            return {"target": "author", "author": author[:24]}
+        return {"target": "latest"}
+    if target == "latest":
+        return {"target": "latest"}
+    if target == "index" and index > 0:
+        return {"target": "index", "index": index}
+    if target == "author" and author:
+        return {"target": "author", "author": author[:24]}
+    return None
 
 
 def _coerce_duration_seconds(args: dict[str, Any]) -> int:
@@ -1239,6 +1045,16 @@ def _coerce_duration_seconds(args: dict[str, Any]) -> int:
     secs = int(m.group(3) or 0)
     total = h * 3600 + mins * 60 + secs
     return max(0, min(total, 24 * 3600))
+
+
+def _coerce_timer_delta_seconds(args: dict[str, Any]) -> int:
+    proxy = dict(args or {})
+    if "duration_seconds" not in proxy:
+        for key in ("delta_seconds", "add_seconds", "seconds", "duration"):
+            if key in proxy:
+                proxy["duration_seconds"] = proxy.get(key)
+                break
+    return _coerce_duration_seconds(proxy)
 
 
 def _canonical_item_name(item_name: str) -> str:
@@ -1302,7 +1118,7 @@ def _validate_plan_against_schema(plan: dict[str, Any]) -> bool:
     actions = plan.get("actions")
     if not isinstance(actions, list) or not actions:
         return False
-    for row in actions[: _MAX_PLAN_ACTIONS]:
+    for row in actions:
         if not isinstance(row, dict):
             return False
         if not _validate_against_schema(row):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import unittest
 
-from app.core.state import AppState, DashboardModel, Reminder, WidgetMode
+from app.core.state import AppState, DashboardModel, Reminder, Screen, WidgetMode
 from app.core.reducer import Back, reduce
 from app.voice.actions import (
     VoiceAction,
@@ -69,9 +69,16 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(action.tool, "shopping_clear_all")
 
     def test_parse_shopping_remove_action(self) -> None:
-        payload = {"tool": "shopping_remove_item", "args": {"item_name": "milk"}}
+        payload = {"tool": "shopping_remove_item", "args": {"item_name": "milk", "source": "inventory"}}
         action = parse_voice_action(payload)
         self.assertEqual(action.tool, "shopping_remove_item")
+        self.assertEqual(action.args.get("source"), "inventory")
+
+    def test_parse_shopping_remove_action_rejects_invalid_source(self) -> None:
+        payload = {"tool": "shopping_remove_item", "args": {"item_name": "milk", "source": "shopping"}}
+        action = parse_voice_action(payload)
+        self.assertEqual(action.tool, "no_action")
+        self.assertEqual(action.args.get("reason"), "invalid_remove_source")
 
     def test_parse_expiry_action(self) -> None:
         payload = {"tool": "inventory_set_expiry", "args": {"item_name": "milk", "expiry_date": "2026-03-27"}}
@@ -80,9 +87,39 @@ class VoiceActionTests(unittest.TestCase):
 
     def test_parse_timer_and_memo_actions(self) -> None:
         timer = parse_voice_action({"tool": "timer_set", "args": {"duration_seconds": 1200}})
+        timer_add = parse_voice_action({"tool": "timer_add", "args": {"delta_seconds": 60}})
+        timer_pause = parse_voice_action({"tool": "timer_pause", "args": {"unexpected": True}})
+        timer_resume = parse_voice_action({"tool": "timer_resume", "args": {"unexpected": True}})
+        timer_stop = parse_voice_action({"tool": "timer_stop", "args": {"unexpected": True}})
         memo = parse_voice_action({"tool": "memo_add", "args": {"text": "晚点回家"}})
+        memo_clear = parse_voice_action({"tool": "memo_clear_all", "args": {"confirm_token": "ignored"}})
         self.assertEqual(timer.tool, "timer_set")
+        self.assertEqual(timer_add.tool, "timer_add")
+        self.assertEqual(timer_add.args.get("delta_seconds"), 60)
+        self.assertEqual(timer_pause.tool, "timer_pause")
+        self.assertEqual(timer_pause.args, {})
+        self.assertEqual(timer_resume.tool, "timer_resume")
+        self.assertEqual(timer_resume.args, {})
+        self.assertEqual(timer_stop.tool, "timer_stop")
+        self.assertEqual(timer_stop.args, {})
         self.assertEqual(memo.tool, "memo_add")
+        self.assertEqual(memo_clear.tool, "memo_clear_all")
+        self.assertEqual(memo_clear.args, {})
+
+    def test_parse_open_app_and_memo_crud_actions(self) -> None:
+        open_app = parse_voice_action({"tool": "open_app", "args": {"app": "timer"}})
+        memo_delete = parse_voice_action({"tool": "memo_delete", "args": {"target": "index", "index": 2}})
+        memo_update = parse_voice_action({"tool": "memo_update", "args": {"target": "latest", "text": "new"}})
+        memo_delete_author = parse_voice_action({"tool": "memo_delete", "args": {"target": "author", "author": "Dad"}})
+        memo_update_author = parse_voice_action({"tool": "memo_update", "args": {"target": "author", "author": "Dad", "text": "new"}})
+        self.assertEqual(open_app.tool, "open_app")
+        self.assertEqual(open_app.args.get("app"), "timer")
+        self.assertEqual(memo_delete.tool, "memo_delete")
+        self.assertEqual(memo_update.tool, "memo_update")
+        self.assertEqual(memo_delete_author.args.get("target"), "author")
+        self.assertEqual(memo_delete_author.args.get("author"), "Dad")
+        self.assertEqual(memo_update_author.args.get("target"), "author")
+        self.assertEqual(memo_update_author.args.get("author"), "Dad")
 
     def test_parse_undo_redo_actions(self) -> None:
         undo = parse_voice_action({"tool": "undo_last_action_group", "args": {"unexpected": True}})
@@ -108,8 +145,7 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(plan.actions[1].args["item_name"], "cookies")
         self.assertEqual(plan.response_copy, "Done.")
 
-    def test_apply_inventory_used_removes_existing_item(self) -> None:
-        before_fridge = len([r for r in self.state.model.reminders if r.category == "fridge"])
+    def test_apply_inventory_used_marks_existing_item_completed(self) -> None:
         action = VoiceAction(
             tool="inventory_log_event",
             args={"item_name": "milk", "event_type": "consumed", "effective_date": "2026-02-18"},
@@ -117,13 +153,13 @@ class VoiceActionTests(unittest.TestCase):
         result = apply_voice_action(self.state, action)
         self.assertTrue(result.changed)
         self.assertEqual(result.status, "done")
-        self.assertIn("removed from inventory", result.message.lower())
-        fridge_titles = [r.title.lower() for r in self.state.model.reminders if r.category == "fridge"]
-        self.assertNotIn("fresh milk", fridge_titles)
-        after_fridge = len([r for r in self.state.model.reminders if r.category == "fridge"])
-        self.assertEqual(after_fridge, before_fridge - 1)
+        self.assertIn("marked done in inventory", result.message.lower())
+        milk_rows = [r for r in self.state.model.reminders if r.category == "fridge" and "milk" in r.title.lower()]
+        self.assertEqual(len(milk_rows), 1)
+        self.assertTrue(bool(milk_rows[0].completed))
+        self.assertTrue(self.state.ui.pending_reorder)
 
-    def test_apply_inventory_finished_removes_item(self) -> None:
+    def test_apply_inventory_finished_marks_item_completed(self) -> None:
         action = VoiceAction(
             tool="inventory_log_event",
             args={"item_name": "pizza", "event_type": "finished", "effective_date": "2026-02-18"},
@@ -131,8 +167,9 @@ class VoiceActionTests(unittest.TestCase):
         result = apply_voice_action(self.state, action)
         self.assertTrue(result.changed)
         self.assertEqual(result.status, "done")
-        titles = [r.title.lower() for r in self.state.model.reminders if r.category == "fridge"]
-        self.assertNotIn("leftover pizza", titles)
+        pizza_rows = [r for r in self.state.model.reminders if r.category == "fridge" and "pizza" in r.title.lower()]
+        self.assertEqual(len(pizza_rows), 1)
+        self.assertTrue(bool(pizza_rows[0].completed))
 
     def test_apply_inventory_used_matches_marinated_chicken_from_casual_name(self) -> None:
         action = VoiceAction(
@@ -141,9 +178,10 @@ class VoiceActionTests(unittest.TestCase):
         )
         result = apply_voice_action(self.state, action)
         self.assertTrue(result.changed)
-        self.assertIn("removed from inventory", result.message.lower())
-        titles = [r.title.lower() for r in self.state.model.reminders if r.category == "fridge"]
-        self.assertNotIn("marinated chicken", titles)
+        self.assertIn("marked done in inventory", result.message.lower())
+        rows = [r for r in self.state.model.reminders if r.category == "fridge" and "chicken" in r.title.lower()]
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(bool(rows[0].completed))
 
     def test_apply_inventory_set_expiry_updates_existing_item(self) -> None:
         action = VoiceAction(
@@ -175,17 +213,17 @@ class VoiceActionTests(unittest.TestCase):
         shopping_titles = [r.title.lower() for r in self.state.model.reminders if r.category == "shopping"]
         self.assertEqual(shopping_titles.count("eggs"), 1)
 
-    def test_strong_shortage_shopping_add_removes_generic_inventory_match(self) -> None:
+    def test_strong_shortage_shopping_add_does_not_remove_non_exact_inventory_match(self) -> None:
         action = VoiceAction(
             tool="shopping_add_item",
             args={"item_name": "milk", "inventory_remove_if_generic_match": True},
         )
         result = apply_voice_action(self.state, action)
-        self.assertTrue(result.changed)
+        self.assertFalse(result.changed)
         self.assertIn("already in shopping", result.message.lower())
-        self.assertIn("removed from inventory", result.message.lower())
+        self.assertNotIn("removed from inventory", result.message.lower())
         fridge_titles = [r.title.lower() for r in self.state.model.reminders if r.category == "fridge"]
-        self.assertNotIn("fresh milk", fridge_titles)
+        self.assertIn("fresh milk", fridge_titles)
 
     def test_strong_shortage_shopping_add_keeps_specific_inventory_match(self) -> None:
         action = VoiceAction(
@@ -220,9 +258,84 @@ class VoiceActionTests(unittest.TestCase):
     def test_apply_shopping_remove_item(self) -> None:
         result = apply_voice_action(self.state, VoiceAction(tool="shopping_remove_item", args={"item_name": "milk"}))
         self.assertTrue(result.changed)
-        self.assertIn("removed from shopping", result.message.lower())
-        titles = [r.title.lower() for r in self.state.model.reminders]
-        self.assertNotIn("buy milk", titles)
+        self.assertIn("marked done", result.message.lower())
+        rows = [r for r in self.state.model.reminders if r.title.lower() == "buy milk"]
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(bool(rows[0].completed))
+
+    def test_apply_shopping_remove_item_inventory_source_marks_inventory(self) -> None:
+        result = apply_voice_action(
+            self.state,
+            VoiceAction(tool="shopping_remove_item", args={"item_name": "milk", "source": "inventory"}),
+        )
+        self.assertTrue(result.changed)
+        self.assertIn("marked done in inventory", result.message.lower())
+        fridge_rows = [r for r in self.state.model.reminders if r.title.lower() == "fresh milk"]
+        self.assertEqual(len(fridge_rows), 1)
+        self.assertTrue(bool(fridge_rows[0].completed))
+        shopping_rows = [r for r in self.state.model.reminders if r.title.lower() == "buy milk"]
+        self.assertEqual(len(shopping_rows), 1)
+        self.assertFalse(bool(shopping_rows[0].completed))
+
+    def test_apply_shopping_remove_positional_first_two(self) -> None:
+        self.state.model.reminders.append(Reminder(rid="g2", title="Buy Bread", right="", category="general", created_at=1771616001.0))
+        result = apply_voice_action(
+            self.state,
+            VoiceAction(
+                tool="shopping_remove_item",
+                args={"source": "reminders", "position_mode": "first", "count": 2},
+            ),
+        )
+        self.assertTrue(result.changed)
+        right_rows = [r for r in self.state.model.reminders if r.category != "fridge"]
+        self.assertTrue(all(bool(r.completed) for r in right_rows[:2]))
+
+    def test_apply_shopping_remove_positional_count_overflow_is_partial_success(self) -> None:
+        result = apply_voice_action(
+            self.state,
+            VoiceAction(
+                tool="shopping_remove_item",
+                args={"source": "reminders", "position_mode": "first", "count": 10},
+            ),
+        )
+        self.assertTrue(result.changed)
+        self.assertIn("2/10", result.message.lower())
+        right_rows = [r for r in self.state.model.reminders if r.category != "fridge"]
+        self.assertTrue(all(bool(r.completed) for r in right_rows))
+
+    def test_apply_open_app_inventory_routes_to_list_screen(self) -> None:
+        self.state.ui.screen = Screen.HOME
+        result = apply_voice_action(self.state, VoiceAction(tool="open_app", args={"app": "inventory"}))
+        self.assertTrue(result.changed)
+        self.assertEqual(self.state.ui.screen, Screen.REMINDERS)
+        self.assertEqual(self.state.ui.list_focused_index, 0)
+
+    def test_apply_memo_delete_and_update(self) -> None:
+        self.state.model.memos = []
+        apply_voice_action(self.state, VoiceAction(tool="memo_add", args={"text": "first memo"}))
+        apply_voice_action(self.state, VoiceAction(tool="memo_add", args={"text": "second memo"}))
+        upd = apply_voice_action(self.state, VoiceAction(tool="memo_update", args={"target": "index", "index": 2, "text": "edited"}))
+        self.assertTrue(upd.changed)
+        self.assertEqual(self.state.model.memos[1].text, "edited")
+        dele = apply_voice_action(self.state, VoiceAction(tool="memo_delete", args={"target": "latest"}))
+        self.assertTrue(dele.changed)
+
+    def test_apply_memo_update_and_delete_by_author(self) -> None:
+        self.state.model.memos = []
+        apply_voice_action(self.state, VoiceAction(tool="memo_add", args={"text": "call Alex", "author": "Dad"}))
+        apply_voice_action(self.state, VoiceAction(tool="memo_add", args={"text": "pick up milk", "author": "Mom"}))
+        upd = apply_voice_action(
+            self.state,
+            VoiceAction(tool="memo_update", args={"target": "author", "author": "Dad", "text": "call Alex tonight"}),
+        )
+        self.assertTrue(upd.changed)
+        self.assertTrue(any(m.author == "Dad" and m.text == "call Alex tonight" for m in self.state.model.memos))
+        dele = apply_voice_action(
+            self.state,
+            VoiceAction(tool="memo_delete", args={"target": "author", "author": "Mom"}),
+        )
+        self.assertTrue(dele.changed)
+        self.assertFalse(any(m.author == "Mom" for m in self.state.model.memos))
 
     def test_restocked_inventory_removes_matching_buy_item(self) -> None:
         action = VoiceAction(
@@ -322,12 +435,41 @@ class VoiceActionTests(unittest.TestCase):
         t = apply_voice_action(self.state, VoiceAction(tool="timer_set", args={"duration_seconds": 1200}))
         self.assertTrue(t.changed)
         self.assertEqual(self.state.ui.widget_mode, WidgetMode.TIMER)
+        self.assertEqual(self.state.ui.screen, Screen.TIMER)
         self.assertEqual(self.state.ui.timer_seconds, 1200)
         before = len(self.state.model.memos)
         m = apply_voice_action(self.state, VoiceAction(tool="memo_add", args={"text": "晚点回家", "author": "Voice"}))
         self.assertTrue(m.changed)
         self.assertEqual(len(self.state.model.memos), before + 1)
         self.assertEqual(self.state.model.memos[0].text, "晚点回家")
+
+    def test_timer_control_actions(self) -> None:
+        apply_voice_action(self.state, VoiceAction(tool="timer_set", args={"duration_seconds": 120}))
+        pause = apply_voice_action(self.state, VoiceAction(tool="timer_pause", args={}))
+        self.assertTrue(pause.changed)
+        self.assertFalse(self.state.ui.timer_running)
+        add = apply_voice_action(self.state, VoiceAction(tool="timer_add", args={"delta_seconds": 60}))
+        self.assertTrue(add.changed)
+        self.assertEqual(self.state.ui.timer_seconds, 180)
+        resume = apply_voice_action(self.state, VoiceAction(tool="timer_resume", args={}))
+        self.assertTrue(resume.changed)
+        self.assertTrue(self.state.ui.timer_running)
+        stop = apply_voice_action(self.state, VoiceAction(tool="timer_stop", args={}))
+        self.assertTrue(stop.changed)
+        self.assertFalse(self.state.ui.timer_running)
+        self.assertEqual(self.state.ui.timer_seconds, 0)
+
+    def test_clear_memo_requires_confirm_and_then_clears(self) -> None:
+        self.state.model.memos = []
+        apply_voice_action(self.state, VoiceAction(tool="memo_add", args={"text": "first"}))
+        apply_voice_action(self.state, VoiceAction(tool="memo_add", args={"text": "second"}))
+        first = apply_voice_action(self.state, VoiceAction(tool="memo_clear_all", args={}))
+        self.assertFalse(first.changed)
+        self.assertEqual(first.status, "confirm")
+        confirmed = confirm_pending_voice_action(self.state)
+        self.assertIsNotNone(confirmed)
+        self.assertTrue(bool(confirmed and confirmed.changed))
+        self.assertEqual(len(self.state.model.memos), 0)
 
     def test_apply_no_action_changes_nothing(self) -> None:
         action = VoiceAction(tool="no_action", args={"reason": "insufficient_intent"})
@@ -384,6 +526,28 @@ class VoiceActionTests(unittest.TestCase):
         top = dict(groups[0] or {})
         self.assertIn("actions", top)
         self.assertEqual(str(top.get("transcript") or ""), "add bread and leave memo")
+
+    def test_apply_voice_plan_records_colloquial_multilingual_transcripts(self) -> None:
+        utterances = [
+            "Hey, can you add olive oil to the shopping list for me?",
+            "Oye, agrega huevos y aceite a la lista de compras.",
+            "Ajoute des oeufs et du lait a la liste, s'il te plait.",
+        ]
+        for i, transcript in enumerate(utterances):
+            with self.subTest(transcript=transcript):
+                plan = parse_voice_plan(
+                    {
+                        "plan": {
+                            "actions": [
+                                {"tool": "shopping_add_item", "args": {"item_name": f"item-{i}"}},
+                            ]
+                        }
+                    }
+                )
+                result = apply_voice_plan(self.state, plan, transcript=transcript)
+                self.assertEqual(result.status, "done")
+                top = dict((self.state.ui.voice_recent_action_groups or [])[0] or {})
+                self.assertEqual(str(top.get("transcript") or ""), transcript)
 
     def test_no_action_does_not_use_action_like_response_copy(self) -> None:
         plan = parse_voice_plan(
@@ -510,6 +674,10 @@ class VoiceActionTests(unittest.TestCase):
         self.assertNotEqual(m1.request_id, m2.request_id)
         self.assertTrue(m1.request_id.startswith("voice-"))
         self.assertRegex(m1.request_id, r"^voice-[0-9a-f]{32}$")
+
+    def test_build_request_meta_defaults_locale_to_en_us(self) -> None:
+        meta = build_request_meta(tz_name="UTC")
+        self.assertEqual(meta.locale, "en-US")
 
     def test_reducer_back_cancels_pending_voice_confirmation(self) -> None:
         self.state.ui.voice_active = True

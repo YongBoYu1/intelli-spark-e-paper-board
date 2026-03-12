@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from dataclasses import replace
@@ -10,11 +11,12 @@ import time
 import uuid
 from zoneinfo import ZoneInfo
 
-from app.core.state import AppState, MemoItem, Reminder, WidgetMode
+from app.core.state import AppState, MemoItem, Reminder, Screen, WidgetMode
 from app.voice.policy import decide_voice_policy
 
 
 ALLOWED_TOOLS = {
+    "open_app",
     "inventory_log_event",
     "inventory_set_expiry",
     "inventory_clear_all",
@@ -22,7 +24,14 @@ ALLOWED_TOOLS = {
     "shopping_remove_item",
     "shopping_clear_all",
     "timer_set",
+    "timer_add",
+    "timer_pause",
+    "timer_resume",
+    "timer_stop",
     "memo_add",
+    "memo_delete",
+    "memo_update",
+    "memo_clear_all",
     "undo_last_action_group",
     "redo_last_action_group",
     "no_action",
@@ -31,43 +40,7 @@ ALLOWED_EVENT_TYPES = {"consumed", "used", "added", "restocked", "finished"}
 CONFIRM_WINDOW_S = 4.0
 VOICE_HISTORY_MAX_GROUPS = 8
 
-_ITEM_CANONICAL = {
-    "milk": "milk",
-    "fresh milk": "milk",
-    "牛奶": "milk",
-    "pizza": "pizza",
-    "leftover pizza": "pizza",
-    "披萨": "pizza",
-    "chicken": "chicken",
-    "marinated chicken": "chicken",
-    "鸡肉": "chicken",
-    "salad": "salad",
-    "沙拉": "salad",
-    "curry": "leftover curry",
-    "leftover curry": "leftover curry",
-    "咖喱": "leftover curry",
-    "剩咖喱": "leftover curry",
-    "eggs": "eggs",
-    "egg": "eggs",
-    "鸡蛋": "eggs",
-    "bread": "bread",
-    "面包": "bread",
-    "yoghurt": "yoghurt",
-    "yogurt": "yoghurt",
-    "酸奶": "yoghurt",
-}
-_NOISE_WORDS = {"fresh", "leftover", "the", "a", "an", "from", "fridge", "my"}
-_GENERIC_INVENTORY_MODIFIERS = {"fresh", "the", "a", "an", "my"}
-_SPECIFIC_INVENTORY_MARKERS = {
-    "leftover",
-    "marinated",
-    "cooked",
-    "grilled",
-    "roasted",
-    "fried",
-    "baked",
-    "seasoned",
-}
+_OPEN_APP_NAMES = {"home", "weather", "calendar", "timer", "memo", "reminders", "inventory", "settings"}
 
 
 @dataclass(frozen=True)
@@ -121,6 +94,9 @@ class VoiceRequestMeta:
 def describe_voice_action(action: VoiceAction) -> str:
     tool = str(action.tool or "").strip() or "no_action"
     args = dict(action.args or {})
+    if tool == "open_app":
+        app = str(args.get("app") or "").strip() or "?"
+        return f"open_app(app={app})"
     if tool == "inventory_log_event":
         item = str(args.get("item_name") or "").strip() or "?"
         evt = str(args.get("event_type") or "").strip() or "?"
@@ -135,18 +111,58 @@ def describe_voice_action(action: VoiceAction) -> str:
         item = str(args.get("item_name") or "").strip() or "?"
         return f"shopping_add_item(item={item})"
     if tool == "shopping_remove_item":
-        item = str(args.get("item_name") or "").strip() or "?"
-        return f"shopping_remove_item(item={item})"
+        item = str(args.get("item_name") or "").strip()
+        src = str(args.get("source") or "reminders").strip() or "reminders"
+        if item:
+            return f"shopping_remove_item(source={src}, item={item})"
+        mode = str(args.get("position_mode") or "first").strip() or "first"
+        count = int(args.get("count") or 1)
+        if mode == "index":
+            idx = int(args.get("index") or 0)
+            return f"shopping_remove_item(source={src}, index={idx}, count={count})"
+        return f"shopping_remove_item(source={src}, mode={mode}, count={count})"
     if tool == "shopping_clear_all":
         return "shopping_clear_all"
     if tool == "timer_set":
         secs = str(args.get("duration_seconds") or "?").strip() or "?"
         return f"timer_set(duration_seconds={secs})"
+    if tool == "timer_add":
+        secs = str(args.get("delta_seconds") or "?").strip() or "?"
+        return f"timer_add(delta_seconds={secs})"
+    if tool == "timer_pause":
+        return "timer_pause"
+    if tool == "timer_resume":
+        return "timer_resume"
+    if tool == "timer_stop":
+        return "timer_stop"
     if tool == "memo_add":
         txt = str(args.get("text") or "").strip()
         if len(txt) > 18:
             txt = txt[:15] + "..."
         return f"memo_add(text={txt or '?'})"
+    if tool == "memo_delete":
+        target = str(args.get("target") or "latest").strip() or "latest"
+        if target == "index":
+            idx = int(args.get("index") or 0)
+            return f"memo_delete(index={idx})"
+        if target == "author":
+            author = str(args.get("author") or "").strip() or "?"
+            return f"memo_delete(author={author})"
+        return "memo_delete(latest)"
+    if tool == "memo_update":
+        target = str(args.get("target") or "latest").strip() or "latest"
+        txt = str(args.get("text") or "").strip()
+        if len(txt) > 18:
+            txt = txt[:15] + "..."
+        if target == "index":
+            idx = int(args.get("index") or 0)
+            return f"memo_update(index={idx}, text={txt or '?'})"
+        if target == "author":
+            author = str(args.get("author") or "").strip() or "?"
+            return f"memo_update(author={author}, text={txt or '?'})"
+        return f"memo_update(latest, text={txt or '?'})"
+    if tool == "memo_clear_all":
+        return "memo_clear_all"
     if tool == "undo_last_action_group":
         return "undo_last_action_group"
     if tool == "redo_last_action_group":
@@ -217,6 +233,20 @@ def _parse_single_voice_action(action: dict[str, Any] | None) -> VoiceAction:
     if tool not in ALLOWED_TOOLS:
         return VoiceAction("no_action", {"reason": "unsupported_tool"})
 
+    if tool == "open_app":
+        app_name = _canonical_open_app_name(
+            str(
+                args.get("app")
+                or args.get("app_name")
+                or args.get("screen")
+                or args.get("target")
+                or ""
+            )
+        )
+        if not app_name:
+            return VoiceAction("no_action", {"reason": "invalid_app_name"})
+        return VoiceAction("open_app", {"app": app_name})
+
     if tool == "inventory_log_event":
         item_name = str(args.get("item_name") or "").strip()
         event_type = str(args.get("event_type") or "").strip().lower()
@@ -232,8 +262,18 @@ def _parse_single_voice_action(action: dict[str, Any] | None) -> VoiceAction:
 
     if tool == "shopping_remove_item":
         item_name = str(args.get("item_name") or "").strip()
-        if not item_name:
-            return VoiceAction("no_action", {"reason": "missing_item_name"})
+        source = _parse_remove_source(args)
+        if source is None:
+            return VoiceAction("no_action", {"reason": "invalid_remove_source"})
+        if item_name:
+            args = {"item_name": item_name}
+            if source != "reminders":
+                args["source"] = source
+        else:
+            positional = _parse_positional_remove_args(args)
+            if positional is None:
+                return VoiceAction("no_action", {"reason": "missing_item_or_position"})
+            args = positional
 
     if tool == "inventory_set_expiry":
         item_name = str(args.get("item_name") or "").strip()
@@ -257,6 +297,27 @@ def _parse_single_voice_action(action: dict[str, Any] | None) -> VoiceAction:
         args = dict(args)
         args["duration_seconds"] = secs
 
+    if tool == "timer_add":
+        raw = (
+            args.get("delta_seconds")
+            if "delta_seconds" in args
+            else args.get("add_seconds")
+            if "add_seconds" in args
+            else args.get("duration_seconds")
+            if "duration_seconds" in args
+            else args.get("seconds")
+        )
+        try:
+            secs = int(raw)
+        except Exception:
+            return VoiceAction("no_action", {"reason": "invalid_duration_seconds"})
+        if secs <= 0:
+            return VoiceAction("no_action", {"reason": "invalid_duration_seconds"})
+        args = {"delta_seconds": secs}
+
+    if tool in {"timer_pause", "timer_resume", "timer_stop"}:
+        args = {}
+
     if tool == "memo_add":
         text = str(args.get("text") or "").strip()
         if not text:
@@ -264,7 +325,26 @@ def _parse_single_voice_action(action: dict[str, Any] | None) -> VoiceAction:
         args = dict(args)
         args["text"] = text
 
+    if tool == "memo_delete":
+        target = _parse_memo_target(args)
+        if target is None:
+            return VoiceAction("no_action", {"reason": "missing_memo_target"})
+        args = target
+
+    if tool == "memo_update":
+        text = str(args.get("text") or args.get("new_text") or args.get("content") or "").strip()
+        if not text:
+            return VoiceAction("no_action", {"reason": "missing_memo_text"})
+        target = _parse_memo_target(args)
+        if target is None:
+            return VoiceAction("no_action", {"reason": "missing_memo_target"})
+        args = dict(target)
+        args["text"] = text
+
     if tool in {"undo_last_action_group", "redo_last_action_group"}:
+        args = {}
+
+    if tool == "memo_clear_all":
         args = {}
 
     if tool == "no_action":
@@ -274,7 +354,7 @@ def _parse_single_voice_action(action: dict[str, Any] | None) -> VoiceAction:
 
     return VoiceAction(tool=tool, args=args)
 
-def build_request_meta(*, locale: str = "zh-CN", tz_name: str = "UTC") -> VoiceRequestMeta:
+def build_request_meta(*, locale: str = "en-US", tz_name: str = "UTC") -> VoiceRequestMeta:
     tz_text = str(tz_name or "UTC").strip() or "UTC"
     tz_label = tz_text
     tz_obj = timezone.utc
@@ -294,7 +374,7 @@ def build_request_meta(*, locale: str = "zh-CN", tz_name: str = "UTC") -> VoiceR
         request_id=f"voice-{uuid.uuid4().hex}",
         request_time=now.isoformat(),
         timezone=tz_label,
-        locale=str(locale or "zh-CN"),
+        locale=str(locale or "en-US"),
     )
 
 
@@ -399,6 +479,43 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
         _clear_pending_voice_confirmation(state)
         return _redo_last_action_group(state)
 
+    if action.tool == "open_app":
+        _clear_pending_voice_confirmation(state)
+        app_name = _canonical_open_app_name(str(action.args.get("app") or ""))
+        if not app_name:
+            return VoiceApplyResult(changed=False, status="error", message="Invalid app target")
+
+        prev_screen = state.ui.screen
+        if app_name == "home":
+            state.ui.screen = Screen.HOME
+        elif app_name == "weather":
+            state.ui.screen = Screen.WEATHER
+            state.ui.weather_day_index = 0
+        elif app_name == "calendar":
+            state.ui.screen = Screen.CALENDAR
+            state.ui.calendar_offset_days = 0
+            state.ui.calendar_mode = "date"
+            state.ui.calendar_selected_index = 0
+        elif app_name == "timer":
+            state.ui.widget_mode = WidgetMode.TIMER
+            state.ui.screen = Screen.TIMER
+            state.ui.timer_last_tick_at = time.time()
+        elif app_name == "memo":
+            state.ui.screen = Screen.MEMO
+            count = len(state.model.memos)
+            state.ui.memo_index = (int(state.ui.memo_index or 0) % max(1, count)) if count > 0 else 0
+            state.ui.memo_expanded = False
+        elif app_name == "reminders":
+            state.ui.screen = Screen.REMINDERS
+            _set_list_focus_for_source(state, "reminders")
+        elif app_name == "inventory":
+            state.ui.screen = Screen.REMINDERS
+            _set_list_focus_for_source(state, "inventory")
+        elif app_name == "settings":
+            state.ui.screen = Screen.SETTINGS
+        changed = bool(state.ui.screen != prev_screen)
+        return VoiceApplyResult(changed=changed, status="done", message=f"Opened {app_name}")
+
     if action.tool == "shopping_add_item":
         _clear_pending_voice_confirmation(state)
         title = _norm_item_name(str(action.args.get("item_name") or ""))
@@ -456,13 +573,67 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
     if action.tool == "shopping_remove_item":
         _clear_pending_voice_confirmation(state)
         title = _norm_item_name(str(action.args.get("item_name") or ""))
-        if not title:
-            return VoiceApplyResult(changed=False, status="error", message="Invalid shopping item")
-        removed = _remove_first_shopping_item(state, item_key=_canonical_item_key(title))
-        if removed is None:
-            return VoiceApplyResult(changed=False, status="done", message=f"Skipped: no matching shopping item for {title}")
-        state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
-        return VoiceApplyResult(changed=True, status="done", message=f"Removed from shopping: {removed.title}")
+        source = str(action.args.get("source") or "reminders").strip().lower() or "reminders"
+        if source not in {"reminders", "inventory"}:
+            return VoiceApplyResult(changed=False, status="error", message="Invalid remove source")
+        if title:
+            key = _canonical_item_key(title)
+            if source == "inventory":
+                idx = _find_reminder_index(state, category="fridge", item_key=key)
+                if idx < 0:
+                    return VoiceApplyResult(changed=False, status="done", message=f"Skipped: no matching inventory item for {title}")
+                changed = _mark_voice_completed(state, idx, now_ts=time.time())
+                if not changed:
+                    return VoiceApplyResult(changed=False, status="done", message=f"Skipped: inventory item already completed: {state.model.reminders[idx].title}")
+                return VoiceApplyResult(changed=True, status="done", message=f"Marked done in inventory: {state.model.reminders[idx].title}")
+
+            idx = _find_shopping_item_index(state, item_key=key)
+            if idx < 0:
+                return VoiceApplyResult(changed=False, status="done", message=f"Skipped: no matching shopping item for {title}")
+            changed = _mark_voice_completed(state, idx, now_ts=time.time())
+            if not changed:
+                return VoiceApplyResult(changed=False, status="done", message=f"Skipped: item already completed: {state.model.reminders[idx].title}")
+            return VoiceApplyResult(changed=True, status="done", message=f"Marked done in reminders: {state.model.reminders[idx].title}")
+
+        position_mode = str(action.args.get("position_mode") or "").strip().lower()
+        count = int(action.args.get("count") or 1)
+        index = int(action.args.get("index") or 0)
+        if source not in {"reminders", "inventory"} or position_mode not in {"first", "last", "index"}:
+            return VoiceApplyResult(changed=False, status="error", message="Invalid positional remove arguments")
+        if count <= 0:
+            return VoiceApplyResult(changed=False, status="error", message="Invalid positional count")
+        if position_mode == "index" and index <= 0:
+            return VoiceApplyResult(changed=False, status="error", message="Invalid positional index")
+
+        candidates = _reminder_indices_for_source(state, source)
+        selected = _select_indices_by_position(
+            candidates,
+            position_mode=position_mode,
+            count=count,
+            index=index,
+        )
+        if not selected:
+            return VoiceApplyResult(changed=False, status="done", message="Skipped: no matching positional items")
+        changed_count = 0
+        titles: list[str] = []
+        for model_idx in selected:
+            row = state.model.reminders[model_idx]
+            if _mark_voice_completed(state, model_idx, now_ts=time.time()):
+                changed_count += 1
+                titles.append(str(row.title or ""))
+        if changed_count <= 0:
+            return VoiceApplyResult(changed=False, status="done", message="Skipped: selected items already completed")
+        if changed_count < count:
+            return VoiceApplyResult(
+                changed=True,
+                status="done",
+                message=f"Marked done ({changed_count}/{count} requested): {', '.join(titles[:3])}",
+            )
+        return VoiceApplyResult(
+            changed=True,
+            status="done",
+            message=f"Marked done ({changed_count}): {', '.join(titles[:3])}",
+        )
 
     if action.tool == "shopping_clear_all":
         policy = decide_voice_policy(action.tool, action.args).rule
@@ -498,16 +669,18 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
         if event_type in ("finished",):
             if policy.require_inventory_match and idx < 0:
                 return VoiceApplyResult(changed=False, status="done", message=f"Skipped: no matching inventory item for {title}")
-            removed = state.model.reminders.pop(idx)
-            state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
-            return VoiceApplyResult(changed=True, status="done", message=f"Removed from inventory: {removed.title}")
+            changed = _mark_voice_completed(state, idx, now_ts=time.time())
+            if not changed:
+                return VoiceApplyResult(changed=False, status="done", message=f"Skipped: inventory item already completed: {state.model.reminders[idx].title}")
+            return VoiceApplyResult(changed=True, status="done", message=f"Marked done in inventory: {state.model.reminders[idx].title}")
 
         if event_type in ("used", "consumed"):
             if policy.require_inventory_match and idx < 0:
                 return VoiceApplyResult(changed=False, status="done", message=f"Skipped: no matching inventory item for {title}")
-            removed = state.model.reminders.pop(idx)
-            state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
-            return VoiceApplyResult(changed=True, status="done", message=f"Removed from inventory: {removed.title}")
+            changed = _mark_voice_completed(state, idx, now_ts=time.time())
+            if not changed:
+                return VoiceApplyResult(changed=False, status="done", message=f"Skipped: inventory item already completed: {state.model.reminders[idx].title}")
+            return VoiceApplyResult(changed=True, status="done", message=f"Marked done in inventory: {state.model.reminders[idx].title}")
 
         # added/restocked: update existing row if present, otherwise create a new fridge row.
         if idx >= 0:
@@ -598,10 +771,77 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
         if secs <= 0:
             return VoiceApplyResult(changed=False, status="error", message="Invalid timer duration")
         state.ui.widget_mode = WidgetMode.TIMER
+        state.ui.screen = Screen.TIMER
         state.ui.timer_seconds = secs
         state.ui.timer_running = True
         state.ui.timer_last_tick_at = time.time()
         return VoiceApplyResult(changed=True, status="done", message=f"Timer set: {secs}s")
+
+    if action.tool == "timer_add":
+        _clear_pending_voice_confirmation(state)
+        delta = int(action.args.get("delta_seconds") or 0)
+        if delta <= 0:
+            return VoiceApplyResult(changed=False, status="error", message="Invalid timer duration")
+        now_ts = time.time()
+        cur = max(0, int(state.ui.timer_seconds or 0))
+        next_secs = min(24 * 3600, cur + delta)
+        if next_secs <= 0:
+            return VoiceApplyResult(changed=False, status="done", message="Timer has no remaining time")
+        prev_target = int(state.ui.timer_target_seconds or 0)
+        if prev_target > 0:
+            next_target = min(24 * 3600, prev_target + delta)
+        else:
+            next_target = next_secs
+        state.ui.widget_mode = WidgetMode.TIMER
+        state.ui.screen = Screen.TIMER
+        state.ui.timer_seconds = next_secs
+        state.ui.timer_target_seconds = next_target
+        state.ui.timer_last_tick_at = now_ts
+        return VoiceApplyResult(changed=True, status="done", message=f"Timer +{delta}s")
+
+    if action.tool == "timer_pause":
+        _clear_pending_voice_confirmation(state)
+        now_ts = time.time()
+        state.ui.widget_mode = WidgetMode.TIMER
+        state.ui.screen = Screen.TIMER
+        state.ui.timer_last_tick_at = now_ts
+        if not bool(state.ui.timer_running):
+            return VoiceApplyResult(changed=False, status="done", message="Timer already paused")
+        state.ui.timer_running = False
+        return VoiceApplyResult(changed=True, status="done", message="Timer paused")
+
+    if action.tool == "timer_resume":
+        _clear_pending_voice_confirmation(state)
+        now_ts = time.time()
+        state.ui.widget_mode = WidgetMode.TIMER
+        state.ui.screen = Screen.TIMER
+        secs = max(0, int(state.ui.timer_seconds or 0))
+        if secs <= 0:
+            state.ui.timer_running = False
+            state.ui.timer_last_tick_at = now_ts
+            return VoiceApplyResult(changed=False, status="done", message="Timer has no remaining time")
+        if bool(state.ui.timer_running):
+            state.ui.timer_last_tick_at = now_ts
+            return VoiceApplyResult(changed=False, status="done", message="Timer already running")
+        state.ui.timer_running = True
+        if int(state.ui.timer_target_seconds or 0) <= 0:
+            state.ui.timer_target_seconds = secs
+        state.ui.timer_last_tick_at = now_ts
+        return VoiceApplyResult(changed=True, status="done", message="Timer resumed")
+
+    if action.tool == "timer_stop":
+        _clear_pending_voice_confirmation(state)
+        now_ts = time.time()
+        prev_secs = max(0, int(state.ui.timer_seconds or 0))
+        was_running = bool(state.ui.timer_running)
+        state.ui.widget_mode = WidgetMode.TIMER
+        state.ui.screen = Screen.TIMER
+        state.ui.timer_seconds = 0
+        state.ui.timer_target_seconds = 0
+        state.ui.timer_running = False
+        state.ui.timer_last_tick_at = now_ts
+        changed = was_running or prev_secs > 0
+        return VoiceApplyResult(changed=changed, status="done", message="Timer stopped")
 
     if action.tool == "memo_add":
         _clear_pending_voice_confirmation(state)
@@ -621,6 +861,65 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
         state.ui.memo_last_rotated_at = time.time()
         return VoiceApplyResult(changed=True, status="done", message="Added memo")
 
+    if action.tool == "memo_delete":
+        _clear_pending_voice_confirmation(state)
+        target = str(action.args.get("target") or "latest").strip().lower()
+        author = str(action.args.get("author") or "").strip()
+        memos = list(state.model.memos or [])
+        if not memos:
+            return VoiceApplyResult(changed=False, status="done", message="Skipped: no memos")
+        idx = _resolve_memo_index(
+            memos=memos,
+            target=target,
+            index=int(action.args.get("index") or 0),
+            author=author,
+        )
+        if idx < 0 or idx >= len(memos):
+            if target == "author":
+                return VoiceApplyResult(changed=False, status="done", message=f"Skipped: no memo from {author or 'that author'}")
+            return VoiceApplyResult(changed=False, status="done", message="Skipped: memo target out of range")
+        removed = state.model.memos.pop(idx)
+        if state.model.memos:
+            state.ui.memo_index = min(int(state.ui.memo_index or 0), len(state.model.memos) - 1)
+        else:
+            state.ui.memo_index = 0
+        state.ui.memo_last_rotated_at = time.time()
+        return VoiceApplyResult(changed=True, status="done", message=f"Deleted memo: {str(removed.text or '')[:24]}")
+
+    if action.tool == "memo_update":
+        _clear_pending_voice_confirmation(state)
+        target = str(action.args.get("target") or "latest").strip().lower()
+        author = str(action.args.get("author") or "").strip()
+        text = str(action.args.get("text") or "").strip()
+        if not text:
+            return VoiceApplyResult(changed=False, status="error", message="Missing memo text")
+        memos = list(state.model.memos or [])
+        if not memos:
+            return VoiceApplyResult(changed=False, status="done", message="Skipped: no memos")
+        idx = _resolve_memo_index(
+            memos=memos,
+            target=target,
+            index=int(action.args.get("index") or 0),
+            author=author,
+        )
+        if idx < 0 or idx >= len(memos):
+            if target == "author":
+                return VoiceApplyResult(changed=False, status="done", message=f"Skipped: no memo from {author or 'that author'}")
+            return VoiceApplyResult(changed=False, status="done", message="Skipped: memo target out of range")
+        cur = state.model.memos[idx]
+        state.model.memos[idx] = replace(cur, text=text[:240], timestamp=time.time())
+        state.ui.memo_index = idx
+        state.ui.memo_last_rotated_at = time.time()
+        return VoiceApplyResult(changed=True, status="done", message="Updated memo")
+
+    if action.tool == "memo_clear_all":
+        policy = decide_voice_policy(action.tool, action.args).rule
+        if policy.require_confirm:
+            _set_pending_voice_confirmation(state, action)
+            return VoiceApplyResult(changed=False, status="confirm", message="Press click once within 4s to confirm clear family board")
+        removed = _clear_memo_items(state)
+        return VoiceApplyResult(changed=removed > 0, status="done", message=f"Cleared family board ({removed})")
+
     return VoiceApplyResult(changed=False, status="error", message="Unsupported voice action")
 
 
@@ -635,12 +934,22 @@ def _format_no_action_feedback(reason: str) -> tuple[str, str]:
         return "done", "I did not catch that. Hold to talk and try again."
     if key in {"insufficient_context", "ambiguous_reference"}:
         return "done", "I need more context. Say the full command."
+    if key in {"invalid_app_name"}:
+        return "done", "Please say which app to open."
     if key in {"missing_item_name"}:
         return "done", "Please include the item name."
+    if key in {"missing_item_or_position"}:
+        return "done", "Please specify an item or positional target."
     if key in {"missing_expiry_date"}:
         return "done", "Please include the expiry date."
+    if key in {"missing_memo_target"}:
+        return "done", "Please specify which memo to edit."
     if key in {"invalid_duration_seconds"}:
         return "done", "Please include a timer duration, like 10 minutes."
+    if key in {"no_tool_to_stop_timer", "no_tool_to_pause_timer", "no_tool_to_resume_timer"}:
+        return "done", "Timer action is not available yet."
+    if key in {"no_tool_to_clear_all_memos"}:
+        return "done", "Clearing the family board is not available yet."
     if key in {"no_function_call", "schema_validation_failed", "invalid_response_shape"}:
         return "done", "I could not interpret that. Please rephrase."
     if key in {"invalid_payload", "invalid_plan", "missing_action", "unsupported_tool"}:
@@ -659,6 +968,7 @@ def _capture_undo_snapshot(state: AppState) -> dict[str, Any]:
             "memos": memos,
         },
         "ui": {
+            "screen": str(getattr(getattr(state.ui, "screen", None), "value", getattr(state.ui, "screen", Screen.HOME.value))),
             "widget_mode": str(getattr(state.ui, "widget_mode", WidgetMode.CLOCK) or WidgetMode.CLOCK.value),
             "timer_seconds": int(getattr(state.ui, "timer_seconds", 0) or 0),
             "timer_running": bool(getattr(state.ui, "timer_running", False)),
@@ -685,6 +995,12 @@ def _restore_undo_snapshot(state: AppState, snap: dict[str, Any] | None) -> bool
 
     state.model.reminders = [replace(r) for r in reminders_raw if isinstance(r, Reminder)]
     state.model.memos = [replace(m) for m in memos_raw if isinstance(m, MemoItem)]
+
+    screen_raw = str(ui.get("screen") or Screen.HOME.value).strip().lower()
+    try:
+        state.ui.screen = Screen(screen_raw)
+    except Exception:
+        state.ui.screen = Screen.HOME
 
     mode_raw = str(ui.get("widget_mode") or WidgetMode.CLOCK.value).strip().lower()
     if mode_raw == WidgetMode.TIMER.value:
@@ -958,8 +1274,191 @@ def confirm_pending_voice_action(state: AppState, now: float | None = None) -> V
             message=msg,
         )
         return VoiceApplyResult(changed=True, status="done", message=msg)
+    if tool == "memo_clear_all":
+        removed = _clear_memo_items(state)
+        _clear_pending_voice_confirmation(state)
+        if removed <= 0:
+            return VoiceApplyResult(changed=False, status="done", message="Family board already empty")
+        msg = f"Cleared family board ({removed})"
+        _push_undo_history_from_confirm(
+            state,
+            action=VoiceAction(tool="memo_clear_all", args=payload_args),
+            before_snapshot=before_snapshot,
+            message=msg,
+        )
+        return VoiceApplyResult(changed=True, status="done", message=msg)
     _clear_pending_voice_confirmation(state)
     return VoiceApplyResult(changed=False, status="error", message="Unsupported pending confirmation")
+
+
+def _canonical_open_app_name(raw: str) -> str:
+    txt = " ".join(str(raw or "").strip().lower().split())
+    if txt in _OPEN_APP_NAMES:
+        return txt
+    return ""
+
+
+def _coerce_positive_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        try:
+            return int(value)
+        except Exception:
+            return 0
+    txt = str(value or "").strip()
+    if not txt or not txt.isdigit():
+        return 0
+    try:
+        return int(txt)
+    except Exception:
+        return 0
+
+
+def _parse_positional_remove_args(args: dict[str, Any]) -> dict[str, Any] | None:
+    source = _parse_remove_source(args)
+    if source is None:
+        return None
+
+    position_mode = str(args.get("position_mode") or "").strip().lower()
+    index = _coerce_positive_int(args.get("index"))
+    if not position_mode:
+        if index > 0:
+            position_mode = "index"
+        else:
+            return None
+    if position_mode not in {"first", "last", "index"}:
+        return None
+    if position_mode == "index" and index <= 0:
+        return None
+
+    count = _coerce_positive_int(args.get("count") or 1)
+    if count <= 0:
+        count = 1
+
+    out = {"source": source, "position_mode": position_mode, "count": count}
+    if position_mode == "index":
+        out["index"] = index
+    return out
+
+
+def _parse_remove_source(args: dict[str, Any], *, default: str = "reminders") -> str | None:
+    raw = str(args.get("source") or "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"reminders", "inventory"}:
+        return raw
+    return None
+
+
+def _parse_memo_target(args: dict[str, Any]) -> dict[str, Any] | None:
+    target = str(args.get("target") or "").strip().lower()
+    index = _coerce_positive_int(args.get("index"))
+    author = str(args.get("author") or args.get("memo_author") or args.get("from_author") or "").strip()
+    if not target:
+        if index > 0:
+            return {"target": "index", "index": index}
+        if author:
+            return {"target": "author", "author": author[:24]}
+        return {"target": "latest"}
+    if target == "latest":
+        return {"target": "latest"}
+    if target == "index" and index > 0:
+        return {"target": "index", "index": index}
+    if target == "author" and author:
+        return {"target": "author", "author": author[:24]}
+    return None
+
+
+def _normalize_author_key(value: str) -> str:
+    txt = str(value or "").strip().lower()
+    if not txt:
+        return ""
+    txt = unicodedata.normalize("NFKC", txt)
+    txt = re.sub(r"[\W_]+", "", txt, flags=re.UNICODE)
+    return txt
+
+
+def _resolve_memo_index(*, memos: list[MemoItem], target: str, index: int, author: str) -> int:
+    mode = str(target or "latest").strip().lower() or "latest"
+    if mode == "latest":
+        return 0
+    if mode == "index":
+        return max(1, int(index or 0)) - 1
+    if mode == "author":
+        needle = _normalize_author_key(author)
+        if not needle:
+            return -1
+        for i, memo in enumerate(memos):
+            memo_author = _normalize_author_key(str(getattr(memo, "author", "") or ""))
+            if memo_author == needle:
+                return i
+        return -1
+    return -1
+
+
+def _reminder_indices_for_source(state: AppState, source: str) -> list[int]:
+    src = str(source or "").strip().lower()
+    out: list[int] = []
+    for i, r in enumerate(state.model.reminders):
+        is_inventory = str(r.category or "") == "fridge"
+        if src == "inventory" and is_inventory:
+            out.append(i)
+        if src == "reminders" and not is_inventory:
+            out.append(i)
+    return out
+
+
+def _select_indices_by_position(
+    indices: list[int],
+    *,
+    position_mode: str,
+    count: int,
+    index: int = 0,
+) -> list[int]:
+    if not indices:
+        return []
+    c = max(1, int(count or 1))
+    mode = str(position_mode or "").strip().lower()
+    if mode == "first":
+        return list(indices[:c])
+    if mode == "last":
+        selected = list(indices[-c:])
+        return selected
+    if mode == "index":
+        start = max(0, int(index or 1) - 1)
+        if start >= len(indices):
+            return []
+        return list(indices[start : start + c])
+    return []
+
+
+def _mark_voice_completed(state: AppState, model_idx: int, *, now_ts: float | None = None) -> bool:
+    if model_idx < 0 or model_idx >= len(state.model.reminders):
+        return False
+    row = state.model.reminders[model_idx]
+    if bool(row.completed):
+        return False
+
+    now_v = float(now_ts if now_ts is not None else time.time())
+    state.model.reminders[model_idx] = replace(row, completed=True)
+    state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
+    state.ui.pending_reorder = True
+    state.ui.reorder_due_at = max(float(state.ui.reorder_due_at or 0.0), now_v + 2.0)
+    return True
+
+
+def _set_list_focus_for_source(state: AppState, source: str) -> None:
+    src = str(source or "").strip().lower()
+    if src == "inventory":
+        state.ui.list_focused_index = 0
+        return
+    inventory_count = len([r for r in state.model.reminders if str(r.category or "") == "fridge"])
+    reminder_count = len([r for r in state.model.reminders if str(r.category or "") != "fridge"])
+    if reminder_count <= 0:
+        state.ui.list_focused_index = 0
+    else:
+        state.ui.list_focused_index = max(0, inventory_count)
 
 
 def _norm_item_name(value: str) -> str:
@@ -973,31 +1472,34 @@ def _canonical_item_key(value: str) -> str:
     txt = str(value or "").strip().lower()
     if not txt:
         return ""
-    if txt in _ITEM_CANONICAL:
-        return _ITEM_CANONICAL[txt]
-    txt = re.sub(r"[^a-z0-9\u4e00-\u9fff\s]+", " ", txt)
+    txt = unicodedata.normalize("NFKC", txt)
+    txt = re.sub(r"[^\w\s]+", " ", txt, flags=re.UNICODE)
     txt = " ".join(txt.split())
-    if txt in _ITEM_CANONICAL:
-        return _ITEM_CANONICAL[txt]
-    txt_tokens = [p for p in txt.split(" ") if p]
-    if txt_tokens:
-        for raw, canonical in _ITEM_CANONICAL.items():
-            raw_norm = str(raw or "").strip().lower()
-            if not raw_norm:
-                continue
-            raw_tokens = [p for p in raw_norm.split(" ") if p]
-            if not raw_tokens or len(raw_tokens) > len(txt_tokens):
-                continue
-            for i in range(0, len(txt_tokens) - len(raw_tokens) + 1):
-                if txt_tokens[i : i + len(raw_tokens)] == raw_tokens:
-                    return canonical
-    parts = [p for p in txt.split(" ") if p and p not in _NOISE_WORDS]
-    if not parts:
-        return txt
-    merged = " ".join(parts)
-    if merged in _ITEM_CANONICAL:
-        return _ITEM_CANONICAL[merged]
-    return merged
+    return txt
+
+
+def _item_tokens(value: str) -> list[str]:
+    key = _canonical_item_key(value)
+    if not key:
+        return []
+    return [p for p in key.split(" ") if p]
+
+
+def _is_item_key_match(*, candidate_key: str, needle_key: str) -> bool:
+    cand = _canonical_item_key(candidate_key)
+    needle = _canonical_item_key(needle_key)
+    if not cand or not needle:
+        return False
+    if cand == needle:
+        return True
+    cand_tokens = [p for p in cand.split(" ") if p]
+    needle_tokens = [p for p in needle.split(" ") if p]
+    if cand_tokens and needle_tokens and len(needle_tokens) <= len(cand_tokens):
+        span = len(needle_tokens)
+        for i in range(0, len(cand_tokens) - span + 1):
+            if cand_tokens[i : i + span] == needle_tokens:
+                return True
+    return False
 
 
 def _find_reminder_index(state: AppState, *, category: str, item_key: str) -> int:
@@ -1007,7 +1509,7 @@ def _find_reminder_index(state: AppState, *, category: str, item_key: str) -> in
     for i, r in enumerate(state.model.reminders):
         if str(r.category or "") != category:
             continue
-        if _canonical_item_key(r.title) == needle:
+        if _is_item_key_match(candidate_key=r.title, needle_key=needle):
             return i
     return -1
 
@@ -1019,7 +1521,7 @@ def _find_shopping_item_index(state: AppState, *, item_key: str) -> int:
     for i, r in enumerate(state.model.reminders):
         if not _is_shopping_list_item(r):
             continue
-        if _canonical_item_key(r.title) == needle:
+        if _is_item_key_match(candidate_key=r.title, needle_key=needle):
             return i
     return -1
 
@@ -1053,6 +1555,16 @@ def _clear_inventory_items(state: AppState) -> int:
     removed = before - len(state.model.reminders)
     if removed > 0:
         state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
+    return removed
+
+
+def _clear_memo_items(state: AppState) -> int:
+    removed = len(list(state.model.memos or []))
+    if removed <= 0:
+        return 0
+    state.model.memos = []
+    state.ui.memo_index = 0
+    state.ui.memo_last_rotated_at = time.time()
     return removed
 
 
@@ -1095,7 +1607,7 @@ def _remove_matching_shopping_items(state: AppState, *, item_key: str) -> list[s
         if not _is_shopping_list_item(r):
             kept.append(r)
             continue
-        if _canonical_item_key(r.title) == needle:
+        if _is_item_key_match(candidate_key=r.title, needle_key=needle):
             removed_titles.append(r.title)
             continue
         kept.append(r)
@@ -1111,7 +1623,7 @@ def _remove_first_shopping_item(state: AppState, *, item_key: str) -> Reminder |
     for i, r in enumerate(state.model.reminders):
         if not _is_shopping_list_item(r):
             continue
-        if _canonical_item_key(r.title) != needle:
+        if not _is_item_key_match(candidate_key=r.title, needle_key=needle):
             continue
         return state.model.reminders.pop(i)
     return None
@@ -1124,7 +1636,7 @@ def _remove_matching_inventory_if_generic(state: AppState, *, item_key: str) -> 
     for idx, row in enumerate(state.model.reminders):
         if str(row.category or "") != "fridge":
             continue
-        if _canonical_item_key(row.title) != needle:
+        if not _is_item_key_match(candidate_key=row.title, needle_key=needle):
             continue
         if not _is_generic_inventory_row_for_key(row.title, needle):
             continue
@@ -1133,29 +1645,16 @@ def _remove_matching_inventory_if_generic(state: AppState, *, item_key: str) -> 
 
 
 def _is_generic_inventory_row_for_key(title: str, item_key: str) -> bool:
-    raw_title = str(title or "").strip().lower()
+    raw_title = _canonical_item_key(title)
     base = _canonical_item_key(item_key)
     if not raw_title or not base:
         return False
-    if _canonical_item_key(raw_title) != base:
-        return False
-
-    # Treat rows with clearly specific/prepared markers as non-generic, even if they share the same base item.
-    title_tokens = _tokenize_inventory_title(raw_title)
-    base_tokens = _tokenize_inventory_title(base)
-    extra_tokens = [t for t in title_tokens if t not in base_tokens]
-    if any(t in _SPECIFIC_INVENTORY_MARKERS for t in extra_tokens):
-        return False
-    meaningful_extras = [t for t in extra_tokens if t not in _GENERIC_INVENTORY_MODIFIERS]
-    return len(meaningful_extras) == 0
+    # AI should resolve semantic aliases in planning. Executor only applies exact-row removal.
+    return raw_title == base
 
 
 def _tokenize_inventory_title(value: str) -> list[str]:
-    txt = str(value or "").strip().lower()
-    if not txt:
-        return []
-    txt = re.sub(r"[^a-z0-9\u4e00-\u9fff\s]+", " ", txt)
-    return [p for p in txt.split() if p]
+    return _item_tokens(value)
 
 
 def _is_shopping_list_item(r: Reminder) -> bool:
