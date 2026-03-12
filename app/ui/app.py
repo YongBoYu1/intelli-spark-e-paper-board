@@ -183,6 +183,8 @@ def _resolve_voice_mic_style(theme: dict, *, phase_label: str, active: bool) -> 
 
 def _voice_action_prompt(tool_name: str) -> str:
     tool = str(tool_name or "").strip().lower()
+    if tool == "open_app":
+        return "Open app"
     if tool == "shopping_add_item":
         return "Add to shopping list"
     if tool == "shopping_remove_item":
@@ -199,6 +201,10 @@ def _voice_action_prompt(tool_name: str) -> str:
         return "Set timer"
     if tool == "memo_add":
         return "Add memo"
+    if tool == "memo_delete":
+        return "Delete memo"
+    if tool == "memo_update":
+        return "Update memo"
     if tool == "no_action":
         return "No action"
     return "Do this"

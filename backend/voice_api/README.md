@@ -8,6 +8,7 @@ It uses Gemini function calling and returns:
 - optional `plan.actions[]` (multi-action execution)
 
 Available action tools:
+- `open_app`
 - `inventory_log_event`
 - `inventory_set_expiry`
 - `inventory_clear_all`
@@ -15,7 +16,14 @@ Available action tools:
 - `shopping_remove_item`
 - `shopping_clear_all`
 - `timer_set`
+- `timer_add`
+- `timer_pause`
+- `timer_resume`
+- `timer_stop`
 - `memo_add`
+- `memo_delete`
+- `memo_update`
+- `memo_clear_all`
 - `undo_last_action_group`
 - `redo_last_action_group`
 - `no_action`
@@ -57,8 +65,8 @@ curl -X POST http://127.0.0.1:8000/voice/interpret \
     "request_id":"demo-1",
     "request_time":"2026-02-20T10:00:00+08:00",
     "timezone":"Asia/Shanghai",
-    "locale":"zh-CN",
-    "transcript":"我要买鸡蛋了"
+    "locale":"en-US",
+    "transcript":"Please add eggs to shopping."
   }'
 ```
 

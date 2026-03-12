@@ -129,6 +129,15 @@ class VoiceApiAppCacheTests(unittest.TestCase):
 
         self.assertNotIn("voice-stuck-1", voice_app._inflight_requests)
 
+    def test_request_model_default_locale_is_en_us(self) -> None:
+        req = voice_app.VoiceInterpretRequest(
+            request_id="voice-locale-default",
+            request_time="2026-02-24T12:00:00+00:00",
+            timezone="UTC",
+            transcript="hello",
+        )
+        self.assertEqual(req.locale, "en-US")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,25 @@
       "type": "object",
       "required": ["tool", "args"],
       "properties": {
+        "tool": { "const": "open_app" },
+        "args": {
+          "type": "object",
+          "required": ["app"],
+          "properties": {
+            "app": {
+              "type": "string",
+              "enum": ["home", "weather", "calendar", "timer", "memo", "reminders", "inventory", "settings"]
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["tool", "args"],
+      "properties": {
         "tool": { "const": "inventory_log_event" },
         "args": {
           "type": "object",
@@ -77,10 +96,35 @@
         "tool": { "const": "shopping_remove_item" },
         "args": {
           "type": "object",
-          "required": ["item_name"],
-          "properties": {
-            "item_name": { "type": "string", "minLength": 1 }
-          },
+          "anyOf": [
+            {
+              "required": ["item_name"],
+              "properties": {
+                "item_name": { "type": "string", "minLength": 1 }
+              }
+            },
+            {
+              "required": ["source", "position_mode", "count"],
+              "properties": {
+                "source": { "type": "string", "enum": ["reminders", "inventory"] },
+                "position_mode": { "type": "string", "enum": ["first", "last", "index"] },
+                "count": { "type": "integer", "minimum": 1 },
+                "index": { "type": "integer", "minimum": 1 }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "position_mode": { "const": "index" }
+                    }
+                  },
+                  "then": {
+                    "required": ["index"]
+                  }
+                }
+              ]
+            }
+          ],
           "additionalProperties": true
         }
       },
@@ -121,6 +165,58 @@
       "type": "object",
       "required": ["tool", "args"],
       "properties": {
+        "tool": { "const": "timer_add" },
+        "args": {
+          "type": "object",
+          "required": ["delta_seconds"],
+          "properties": {
+            "delta_seconds": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["tool", "args"],
+      "properties": {
+        "tool": { "const": "timer_pause" },
+        "args": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["tool", "args"],
+      "properties": {
+        "tool": { "const": "timer_resume" },
+        "args": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["tool", "args"],
+      "properties": {
+        "tool": { "const": "timer_stop" },
+        "args": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["tool", "args"],
+      "properties": {
         "tool": { "const": "memo_add" },
         "args": {
           "type": "object",
@@ -128,6 +224,101 @@
           "properties": {
             "text": { "type": "string", "minLength": 1 },
             "author": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["tool", "args"],
+      "properties": {
+        "tool": { "const": "memo_delete" },
+        "args": {
+          "type": "object",
+          "properties": {
+            "target": { "type": "string", "enum": ["latest", "index", "author"] },
+            "index": { "type": "integer", "minimum": 1 },
+            "author": { "type": "string", "minLength": 1 }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "target": { "const": "index" }
+                }
+              },
+              "then": {
+                "required": ["index"]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "target": { "const": "author" }
+                }
+              },
+              "then": {
+                "required": ["author"]
+              }
+            }
+          ],
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["tool", "args"],
+      "properties": {
+        "tool": { "const": "memo_update" },
+        "args": {
+          "type": "object",
+          "required": ["text"],
+          "properties": {
+            "target": { "type": "string", "enum": ["latest", "index", "author"] },
+            "index": { "type": "integer", "minimum": 1 },
+            "author": { "type": "string", "minLength": 1 },
+            "text": { "type": "string", "minLength": 1 }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "target": { "const": "index" }
+                }
+              },
+              "then": {
+                "required": ["index"]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "target": { "const": "author" }
+                }
+              },
+              "then": {
+                "required": ["author"]
+              }
+            }
+          ],
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["tool", "args"],
+      "properties": {
+        "tool": { "const": "memo_clear_all" },
+        "args": {
+          "type": "object",
+          "properties": {
+            "confirm_token": { "type": "string" }
           },
           "additionalProperties": true
         }
