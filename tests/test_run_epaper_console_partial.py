@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import unittest
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from PIL import Image
 
@@ -317,6 +318,13 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         now = datetime.datetime(2026, 1, 15, 7, 0, 0).timestamp()
         nxt = rec._next_weather_refresh_at(now, 6.0)
         self.assertAlmostEqual(nxt, now + 6 * 3600, delta=0.1)
+
+    def test_next_weather_refresh_at_12h_aligns_with_explicit_timezone(self) -> None:
+        tz = ZoneInfo("America/Toronto")
+        now = datetime.datetime(2026, 1, 15, 23, 59, 30, tzinfo=tz).timestamp()
+        nxt = rec._next_weather_refresh_at(now, 12.0, tz_name="America/Toronto")
+        expected = datetime.datetime(2026, 1, 16, 0, 0, 0, tzinfo=tz).timestamp()
+        self.assertAlmostEqual(nxt, expected, delta=1.0)
 
     def test_weather_days_from_rows_preserves_zero_metric_values(self) -> None:
         rows = [

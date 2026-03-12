@@ -24,6 +24,7 @@ import termios
 import tempfile
 import time
 import tty
+from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageChops
 
@@ -295,7 +296,7 @@ def _refresh_live_weather(state: AppState) -> bool:
     return (state.model.location != prev_location) or (next_digest != prev_digest)
 
 
-def _next_weather_refresh_at(now_ts: float, refresh_hours: float) -> float:
+def _next_weather_refresh_at(now_ts: float, refresh_hours: float, *, tz_name: str = "") -> float:
     hours = max(0.0, float(refresh_hours or 0.0))
     if hours <= 0:
         return 0.0
@@ -303,7 +304,14 @@ def _next_weather_refresh_at(now_ts: float, refresh_hours: float) -> float:
     # For the default 12h schedule, align to local wall-clock boundaries:
     # noon and midnight (00:00 / 12:00), instead of startup+12h drift.
     if abs(hours - 12.0) < 1e-6:
-        now_local = datetime.datetime.fromtimestamp(now_ts)
+        tz = None
+        tz_key = str(tz_name or "").strip()
+        if tz_key:
+            try:
+                tz = ZoneInfo(tz_key)
+            except Exception:
+                tz = None
+        now_local = datetime.datetime.fromtimestamp(now_ts, tz=tz) if tz is not None else datetime.datetime.fromtimestamp(now_ts)
         today_noon = now_local.replace(hour=12, minute=0, second=0, microsecond=0)
         if now_local < today_noon:
             return today_noon.timestamp()
@@ -1555,9 +1563,13 @@ def main() -> int:
     try:
         print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice (or voice-demo in guide), R rotate screen (+90°), S settings, G voice guide, W weather, B/Esc back, Q quit")
         next_tick = time.time()
-        next_weather_refresh_at = _next_weather_refresh_at(next_tick, weather_refresh_hours)
+        weather_refresh_tz = str(state.ui.device_timezone or "")
+        next_weather_refresh_at = _next_weather_refresh_at(next_tick, weather_refresh_hours, tz_name=weather_refresh_tz)
         if weather_refresh_s > 0:
-            print(f"[weather] periodic refresh enabled: every {weather_refresh_hours:g}h")
+            print(
+                f"[weather] periodic refresh enabled: every {weather_refresh_hours:g}h"
+                + (f" timezone={weather_refresh_tz}" if weather_refresh_tz else "")
+            )
         while True:
             now = time.time()
             expire_pending_voice_confirmation(state, now=now)
@@ -1571,7 +1583,8 @@ def main() -> int:
                         )
                 except Exception as e:
                     print(f"[warn] periodic weather refresh failed: {e}")
-                next_weather_refresh_at = _next_weather_refresh_at(now, weather_refresh_hours)
+                weather_refresh_tz = str(state.ui.device_timezone or "")
+                next_weather_refresh_at = _next_weather_refresh_at(now, weather_refresh_hours, tz_name=weather_refresh_tz)
             key = _read_key_nonblocking()
 
             ev = None
