@@ -32,6 +32,10 @@ def _gray_like(value: int, ref):
     return g
 
 
+def _open_item_count(items) -> int:
+    return sum(1 for row in items if not bool(getattr(row, "completed", False)))
+
+
 def _format_memo_posted(timestamp, theme: dict) -> str:
     """Format memo timestamp safely; invalid inputs should not break rendering."""
     if timestamp is None:
@@ -920,7 +924,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     inv_title_spacing = int(t.get("b_inventory_title_spacing", 1))
     draw_text_spaced(draw, "INVENTORY", inner_x0, inv_y, f_inv_title, spacing=inv_title_spacing, fill=ink)
 
-    fridge_due = sum(1 for r in fridge if not r.completed)
+    fridge_due = _open_item_count(fridge)
     if fridge_due > 0:
         cnt = str(fridge_due)
         cw = text_width_spaced(draw, cnt, f_inv_title, spacing=inv_title_spacing)
@@ -1170,7 +1174,8 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     shop_title_x = inner_x0
     draw_text_spaced(draw, shop_label, shop_title_x, shop_title_y, f_shop_title, spacing=shop_title_spacing, fill=ink)
 
-    shop_cnt = str(len(shop))
+    shop_due = _open_item_count(shop)
+    shop_cnt = str(shop_due)
     shop_cnt_spacing = max(0, shop_title_spacing - 1)
     shop_cnt_w = text_width_spaced(draw, shop_cnt, f_shop_title, spacing=shop_cnt_spacing)
     shop_cnt_x = inner_x1 - shop_cnt_w
