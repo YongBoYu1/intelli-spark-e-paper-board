@@ -1645,6 +1645,8 @@ def main() -> int:
     rotate_prev = None
     rotate_btn_last_press_at = 0.0
     space_last_trigger_at = 0.0
+    keyboard_voice_hold_active = False
+    keyboard_voice_last_seen_at = 0.0
     voice_capture_proc: Any | None = None
     voice_capture_path = ""
     voice_capture_started_at = 0.0
@@ -1669,6 +1671,7 @@ def main() -> int:
     encoder_key_long_press_s = max(0.1, float(args.encoder_key_long_press_ms) / 1000.0)
     rotate_debounce_s = max(0.0, float(args.rotate_debounce_ms) / 1000.0)
     voice_space_cooldown_s = max(0.2, float(theme.get("voice_space_cooldown_s", 1.2) or 1.2))
+    keyboard_voice_release_gap_s = max(0.2, float(theme.get("voice_keyboard_release_gap_s", 0.8) or 0.8))
     voice_encoder_hold_s = max(0.2, float(theme.get("voice_encoder_hold_s", 0.3) or 0.3))
     _, _, voice_error_hold_s = _voice_overlay_holds(theme)
     voice_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice-worker")
@@ -1726,7 +1729,7 @@ def main() -> int:
             rotate_btn_ready = False
 
     try:
-        print("Controls: Left/Right rotate, Enter click, Hold encoder=voice on HOME (release to send) / long press elsewhere, Space start/stop voice, R rotate screen (+90°), S settings, G voice guide, W weather, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, Hold encoder=voice on HOME (release to send) / long press elsewhere, Hold V=voice (release to send), Space start/stop voice, R rotate screen (+90°), S settings, G voice guide, W weather, B/Esc back, Q quit")
         next_tick = time.time()
         weather_refresh_tz = str(state.ui.device_timezone or "")
         next_weather_refresh_at = _next_weather_refresh_at(next_tick, weather_refresh_hours, tz_name=weather_refresh_tz)
@@ -1769,6 +1772,7 @@ def main() -> int:
                 voice_capture_proc = None
                 voice_capture_path = ""
                 voice_capture_started_at = 0.0
+                keyboard_voice_hold_active = False
                 if not audio:
                     _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
                 else:
@@ -1782,6 +1786,44 @@ def main() -> int:
                     voice_job_audio_path = audio
                     voice_job_demo_only = bool(voice_capture_demo_only)
                     voice_job_source = str(voice_capture_source or "")
+                    voice_capture_demo_only = False
+                    voice_capture_source = ""
+                    voice_job_future = voice_executor.submit(
+                        _voice_interpret_job,
+                        api_url=str(args.voice_api_url or ""),
+                        audio_path=audio,
+                        voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
+                        voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),
+                        voice_timeout_s=float(args.voice_timeout),
+                        board_context=build_board_context(state),
+                    )
+
+            if (
+                keyboard_voice_hold_active
+                and voice_capture_proc is not None
+                and voice_job_future is None
+                and str(voice_capture_source or "") == "keyboard_hold"
+                and (now - float(keyboard_voice_last_seen_at or now)) >= keyboard_voice_release_gap_s
+            ):
+                capture_started_at = float(voice_capture_started_at or now)
+                audio = _stop_audio_capture(proc=voice_capture_proc, audio_path=voice_capture_path)
+                voice_capture_proc = None
+                voice_capture_path = ""
+                voice_capture_started_at = 0.0
+                keyboard_voice_hold_active = False
+                if not audio:
+                    _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
+                else:
+                    voice_job_capture_s = max(0.0, now - capture_started_at)
+                    try:
+                        voice_job_audio_bytes = int(os.path.getsize(audio))
+                    except Exception:
+                        voice_job_audio_bytes = 0
+                    voice_job_enqueued_at = time.time()
+                    _set_voice_overlay(state, "processing", "Interpreting command")
+                    voice_job_audio_path = audio
+                    voice_job_demo_only = bool(voice_capture_demo_only)
+                    voice_job_source = str(voice_capture_source or "keyboard_hold")
                     voice_capture_demo_only = False
                     voice_capture_source = ""
                     voice_job_future = voice_executor.submit(
@@ -1917,6 +1959,7 @@ def main() -> int:
                                 voice_capture_proc = None
                                 voice_capture_path = ""
                                 voice_capture_started_at = 0.0
+                                keyboard_voice_hold_active = False
                                 if not audio:
                                     _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
                                 else:
@@ -2008,6 +2051,51 @@ def main() -> int:
                 ev = Rotate(-1)
             elif key in ("\x1b[C", "l"):  # right
                 ev = Rotate(+1)
+            elif key in ("v", "V"):
+                if voice_block_message:
+                    msg = voice_block_message
+                    if state.ui.screen == Screen.LANDING:
+                        state.ui.landing_status = msg
+                    elif state.ui.screen == Screen.ONBOARDING:
+                        state.ui.onboarding_status = msg
+                    ev = None
+                elif voice_job_future is not None:
+                    ev = None
+                    if refresh_debug:
+                        print("[voice] ignore V trigger reason=voice_processing")
+                elif voice_capture_proc is not None and str(voice_capture_source or "") == "keyboard_hold":
+                    keyboard_voice_hold_active = True
+                    keyboard_voice_last_seen_at = now
+                    ev = None
+                elif (
+                    state.ui.voice_active
+                    or (now - float(space_last_trigger_at)) < voice_space_cooldown_s
+                ):
+                    ev = None
+                    if refresh_debug:
+                        why = "voice_active" if state.ui.voice_active else "space_cooldown"
+                        print(f"[voice] ignore V trigger reason={why}")
+                else:
+                    proc, path = _start_audio_capture(
+                        audio_device=str(args.voice_audio_device or "default"),
+                        audio_rate=max(8000, int(args.voice_audio_rate)),
+                        audio_channels=max(1, int(args.voice_audio_channels)),
+                    )
+                    if proc is None or not path:
+                        _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
+                    else:
+                        voice_capture_proc = proc
+                        voice_capture_path = path
+                        voice_capture_started_at = now
+                        voice_capture_demo_only = bool(in_voice_guide_demo)
+                        voice_capture_source = "keyboard_hold"
+                        keyboard_voice_hold_active = True
+                        keyboard_voice_last_seen_at = now
+                        space_last_trigger_at = now
+                        _set_voice_overlay(state, "recording", "Listening... release V to send")
+                        if refresh_debug:
+                            print("[voice] start source=keyboard_hold")
+                    ev = None
             elif key == "\x03":  # Ctrl+C in raw mode
                 return 0
             elif key in ("\r", "\n"):  # enter
@@ -2033,6 +2121,7 @@ def main() -> int:
                     voice_capture_proc = None
                     voice_capture_path = ""
                     voice_capture_started_at = 0.0
+                    keyboard_voice_hold_active = False
                     if not audio:
                         _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
                     else:
@@ -2094,6 +2183,7 @@ def main() -> int:
                         voice_capture_started_at = now
                         voice_capture_demo_only = bool(in_voice_guide_demo)
                         voice_capture_source = "space"
+                        keyboard_voice_hold_active = False
                         space_last_trigger_at = now
                         _set_voice_overlay(state, "recording", "Listening... press Space again to send")
                         if refresh_debug:
@@ -2110,6 +2200,7 @@ def main() -> int:
                     voice_capture_proc = None
                     voice_capture_path = ""
                     voice_capture_started_at = 0.0
+                    keyboard_voice_hold_active = False
                     voice_capture_demo_only = False
                     voice_capture_source = ""
                     _set_voice_overlay(state, "idle")
@@ -2474,6 +2565,7 @@ def main() -> int:
     finally:
         if voice_capture_proc is not None:
             _stop_audio_capture(proc=voice_capture_proc, audio_path=voice_capture_path)
+            keyboard_voice_hold_active = False
         if voice_job_audio_path:
             try:
                 os.remove(voice_job_audio_path)
