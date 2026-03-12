@@ -96,25 +96,19 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
         return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": transcript}
 
     model = str(os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash").strip()
+    audio_model = str(os.environ.get("GEMINI_AUDIO_MODEL") or model).strip() or model
+    include_audio_transcript = _env_flag("VOICE_INCLUDE_AUDIO_TRANSCRIPT")
 
     temp_audio_path = ""
     try:
         if audio_base64:
             temp_audio_path = _decode_audio_base64_to_temp(audio_base64)
-        if not transcript and temp_audio_path:
-            transcript = _transcribe_audio_via_gemini(
-                api_key=api_key,
-                model=model,
-                audio_path=temp_audio_path,
-                locale=locale,
-            )
-        transcript_raw = transcript
-        transcript = _apply_scope_corrections(transcript=transcript, scope_id=correction_scope_id)
-        if not transcript:
-            # Fallback: let Gemini infer directly from audio when text transcription is empty.
+
+        # Audio-first path: when audio is available, interpret directly from audio.
+        if temp_audio_path:
             raw_plan = _call_gemini_for_action_from_audio(
                 api_key=api_key,
-                model=model,
+                model=audio_model,
                 request_time=request_time,
                 timezone_name=timezone_name,
                 locale=locale,
@@ -122,10 +116,36 @@ def interpret_request_with_debug(payload: dict[str, Any]) -> dict[str, Any]:
                 board_context=board_context,
             )
             plan = normalize_plan(raw_plan, request_time=request_time)
+            plan = _maybe_retry_low_risk_no_action_from_audio(
+                plan=plan,
+                api_key=api_key,
+                model=audio_model,
+                request_time=request_time,
+                timezone_name=timezone_name,
+                locale=locale,
+                audio_path=temp_audio_path,
+                board_context=board_context,
+            )
+            if include_audio_transcript and not transcript_raw:
+                try:
+                    transcript_raw = _transcribe_audio_via_gemini(
+                        api_key=api_key,
+                        model=audio_model,
+                        audio_path=temp_audio_path,
+                        locale=locale,
+                    )
+                except Exception:
+                    transcript_raw = ""
             if not _validate_plan_against_schema(plan):
                 no_plan = _single_action_plan(_no_action("schema_validation_failed"))
-                return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": ""}
-            return {"plan": plan, "action": _first_action_from_plan(plan), "transcript": ""}
+                return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": transcript_raw}
+            return {"plan": plan, "action": _first_action_from_plan(plan), "transcript": transcript_raw}
+
+        transcript_raw = transcript
+        transcript = _apply_scope_corrections(transcript=transcript, scope_id=correction_scope_id)
+        if not transcript:
+            no_plan = _single_action_plan(_no_action("missing_audio_or_transcript"))
+            return {"plan": no_plan, "action": _first_action_from_plan(no_plan), "transcript": transcript_raw}
 
         raw_plan = _call_gemini_for_action(
             api_key=api_key,
@@ -432,6 +452,13 @@ def _plan_is_low_risk_retry_safe(plan: dict[str, Any]) -> bool:
     return True
 
 
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = str(os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return bool(default)
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _maybe_retry_low_risk_no_action(
     *,
     plan: dict[str, Any],
@@ -456,6 +483,43 @@ def _maybe_retry_low_risk_no_action(
             request_time=request_time,
             timezone_name=timezone_name,
             locale=locale,
+            board_context=board_context,
+            allowed_tools=_LOW_RISK_RETRY_TOOLS,
+            retry_mode="no_action_low_risk",
+        )
+        retry_plan = normalize_plan(retry_raw, request_time=request_time)
+        if not _plan_is_low_risk_retry_safe(retry_plan):
+            return plan
+        if _is_no_action(_first_action_from_plan(retry_plan)):
+            return plan
+        return retry_plan
+    except Exception:
+        return plan
+
+
+def _maybe_retry_low_risk_no_action_from_audio(
+    *,
+    plan: dict[str, Any],
+    api_key: str,
+    model: str,
+    request_time: str,
+    timezone_name: str,
+    locale: str,
+    audio_path: str,
+    board_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not _should_retry_no_action(plan):
+        return plan
+    if not str(audio_path or "").strip():
+        return plan
+    try:
+        retry_raw = _call_gemini_for_action_from_audio(
+            api_key=api_key,
+            model=model,
+            request_time=request_time,
+            timezone_name=timezone_name,
+            locale=locale,
+            audio_path=audio_path,
             board_context=board_context,
             allowed_tools=_LOW_RISK_RETRY_TOOLS,
             retry_mode="no_action_low_risk",
@@ -516,6 +580,7 @@ def _call_gemini_for_action(
         f"request_time: {request_time}",
         f"timezone: {timezone_name}",
         f"locale: {locale}",
+        "Locale is a strong hint, but user may mix languages in one utterance.",
         "Important: transcript below is already ASR output. Do NOT claim transcript is missing.",
         "Return function calls only (no plain text).",
         "For multi-intent utterances, return all reasonable function calls in order.",
@@ -581,6 +646,8 @@ def _call_gemini_for_action_from_audio(
     locale: str,
     audio_path: str,
     board_context: dict[str, Any] | None = None,
+    allowed_tools: set[str] | None = None,
+    retry_mode: str = "",
 ) -> dict[str, Any]:
     from google import genai
     from google.genai import types
@@ -594,6 +661,7 @@ def _call_gemini_for_action_from_audio(
             f"request_time: {request_time}",
             f"timezone: {timezone_name}",
             f"locale: {locale}",
+            "Locale is a strong hint, but user may mix languages in one utterance.",
             _board_context_line(board_context),
             "Transcribe and interpret this audio.",
             "Return function calls only (no plain text).",
@@ -609,13 +677,22 @@ def _call_gemini_for_action_from_audio(
             "If not actionable, call no_action.",
         ]
     )
+    if retry_mode == "no_action_low_risk":
+        prompt = "\n".join(
+            [
+                prompt,
+                "Recovery pass: previous interpretation produced no_action.",
+                "Only use low-risk tools from this call; do not emit clear-all or memo-delete/update actions.",
+                "If still uncertain, call no_action(reason='insufficient_intent').",
+            ]
+        )
 
     response = client.models.generate_content(
         model=model,
         contents=[prompt, uploaded_file],
         config=types.GenerateContentConfig(
             system_instruction=_load_system_prompt(),
-            tools=_tool_declarations(),
+            tools=_tool_declarations(allowed_tools=allowed_tools),
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode="ANY")
             ),
@@ -639,6 +716,7 @@ def _transcribe_audio_via_gemini(*, api_key: str, model: str, audio_path: str, l
     prompt = (
         "Transcribe this audio into plain text. "
         f"Primary locale hint: {locale}. "
+        "Keep mixed-language words as spoken and do not translate. "
         "Output transcript only. If unclear, output the best-effort short transcript."
     )
     response = client.models.generate_content(

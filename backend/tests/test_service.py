@@ -382,61 +382,70 @@ class VoiceServiceColloquialFlowTests(unittest.TestCase):
             self.assertEqual(logged[0], row["transcript"])
             self.assertEqual(logged[1], row["locale"])
 
-    def test_interpret_audio_path_uses_locale_for_transcribe_then_action(self) -> None:
+    def test_interpret_audio_path_uses_audio_interpreter_first(self) -> None:
         captured: dict[str, str] = {}
 
-        def fake_transcribe(*, locale: str, **_: object) -> str:
-            captured["transcribe_locale"] = locale
-            return "Oye, quita los dos primeros del inventario."
-
-        def fake_call(*, transcript: str, locale: str, **_: object) -> dict[str, object]:
-            captured["action_locale"] = locale
-            captured["transcript"] = transcript
+        def fake_audio_call(*, locale: str, retry_mode: str = "", allowed_tools: set[str] | None = None, **_: object) -> dict[str, object]:
+            captured["audio_locale"] = locale
+            captured["retry_mode"] = retry_mode
+            captured["has_allowed_tools"] = "yes" if allowed_tools is not None else "no"
             return {"tool": "shopping_remove_item", "args": {"source": "inventory", "position_mode": "first", "count": 2}}
 
         with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key", "GEMINI_MODEL": "test-model"}, clear=False):
             with patch.object(voice_service, "_decode_audio_base64_to_temp", return_value="/tmp/voice-audio-locale.wav"):
-                with patch.object(voice_service, "_transcribe_audio_via_gemini", side_effect=fake_transcribe):
-                    with patch.object(voice_service, "_call_gemini_for_action", side_effect=fake_call):
-                        with patch.object(voice_service, "_apply_scope_corrections", side_effect=lambda *, transcript, scope_id: transcript):
-                            got = interpret_request_with_debug(
-                                {
-                                    "request_id": "voice-audio-locale-1",
-                                    "request_time": "2026-03-12T10:00:00-05:00",
-                                    "timezone": "America/Toronto",
-                                    "locale": "es-ES",
-                                    "audio_base64": "ZmFrZQ==",
-                                }
-                            )
-
-        self.assertEqual(captured.get("transcribe_locale"), "es-ES")
-        self.assertEqual(captured.get("action_locale"), "es-ES")
-        self.assertIn("inventario", str(captured.get("transcript") or "").lower())
-        self.assertEqual(got["action"]["tool"], "shopping_remove_item")
-
-    def test_interpret_audio_fallback_without_transcript_uses_audio_interpreter_with_locale(self) -> None:
-        captured: dict[str, str] = {}
-
-        def fake_audio_call(*, locale: str, **_: object) -> dict[str, object]:
-            captured["audio_locale"] = locale
-            return {"tool": "timer_pause", "args": {}}
-
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key", "GEMINI_MODEL": "test-model"}, clear=False):
-            with patch.object(voice_service, "_decode_audio_base64_to_temp", return_value="/tmp/voice-audio-fallback.wav"):
-                with patch.object(voice_service, "_transcribe_audio_via_gemini", return_value=""):
+                with patch.object(voice_service, "_transcribe_audio_via_gemini") as transcribe_mock:
                     with patch.object(voice_service, "_call_gemini_for_action_from_audio", side_effect=fake_audio_call):
                         got = interpret_request_with_debug(
                             {
-                                "request_id": "voice-audio-locale-2",
+                                "request_id": "voice-audio-locale-1",
                                 "request_time": "2026-03-12T10:00:00-05:00",
                                 "timezone": "America/Toronto",
-                                "locale": "fr-CA",
+                                "locale": "es-ES",
                                 "audio_base64": "ZmFrZQ==",
                             }
                         )
 
-        self.assertEqual(captured.get("audio_locale"), "fr-CA")
-        self.assertEqual(got["action"]["tool"], "timer_pause")
+        self.assertEqual(captured.get("audio_locale"), "es-ES")
+        self.assertEqual(captured.get("retry_mode"), "")
+        self.assertEqual(captured.get("has_allowed_tools"), "no")
+        self.assertEqual(got["action"]["tool"], "shopping_remove_item")
+        transcribe_mock.assert_not_called()
+
+    def test_interpret_audio_no_action_triggers_low_risk_audio_retry(self) -> None:
+        captured: dict[str, object] = {"calls": []}
+
+        def fake_audio_call(*, locale: str, retry_mode: str = "", allowed_tools: set[str] | None = None, **_: object) -> dict[str, object]:
+            calls = captured["calls"]
+            if isinstance(calls, list):
+                calls.append((locale, retry_mode, None if allowed_tools is None else sorted(allowed_tools)))
+                if len(calls) == 1:
+                    return {"tool": "no_action", "args": {"reason": "insufficient_intent"}}
+            return {"tool": "shopping_remove_item", "args": {"source": "reminders", "position_mode": "first", "count": 2}}
+
+        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key", "GEMINI_MODEL": "test-model"}, clear=False):
+            with patch.object(voice_service, "_decode_audio_base64_to_temp", return_value="/tmp/voice-audio-fallback.wav"):
+                with patch.object(voice_service, "_call_gemini_for_action_from_audio", side_effect=fake_audio_call):
+                    got = interpret_request_with_debug(
+                        {
+                            "request_id": "voice-audio-locale-2",
+                            "request_time": "2026-03-12T10:00:00-05:00",
+                            "timezone": "America/Toronto",
+                            "locale": "fr-CA",
+                            "audio_base64": "ZmFrZQ==",
+                        }
+                    )
+
+        calls = list(captured.get("calls") or [])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0], "fr-CA")
+        self.assertEqual(calls[0][1], "")
+        self.assertIsNone(calls[0][2])
+        self.assertEqual(calls[1][0], "fr-CA")
+        self.assertEqual(calls[1][1], "no_action_low_risk")
+        self.assertTrue(isinstance(calls[1][2], list))
+        self.assertIn("shopping_remove_item", calls[1][2])
+        self.assertNotIn("shopping_clear_all", calls[1][2])
+        self.assertEqual(got["action"]["tool"], "shopping_remove_item")
 
 
 if __name__ == "__main__":
