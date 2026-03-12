@@ -7,6 +7,8 @@ from typing import Any, Optional
 
 
 class Screen(str, Enum):
+    LANDING = "landing"
+    ONBOARDING = "onboarding"
     HOME = "home"
     MENU = "menu"
     MEMO = "memo"
@@ -85,6 +87,36 @@ class DashboardModel:
 
 @dataclass
 class UiState:
+    # Boot / first-run onboarding flow.
+    boot_started_at: float = field(default_factory=lambda: time.time())
+    boot_min_show_s: float = 0.0
+    landing_rotate_seen: bool = False
+    landing_confirm_seen: bool = False
+    landing_voice_demo_index: int = 0
+    landing_voice_demo_cycles: int = 0
+    landing_last_demo_at: float = field(default_factory=lambda: time.time())
+    landing_status: str = ""
+    setup_completed: bool = False
+    onboarding_step: str = "start"  # start | pair_qr | prefs | voice_guide | done
+    onboarding_focus_index: int = 0
+    onboarding_qr_focus_index: int = 0
+    onboarding_prefs_focus_index: int = 0
+    onboarding_pair_token: str = ""
+    onboarding_pair_expires_at: float = 0.0
+    onboarding_status: str = ""
+    onboarding_wifi_ssid: str = ""
+    onboarding_voice_guide_focus_index: int = 0  # single CTA on voice guide
+    onboarding_voice_demo_heard: str = ""
+    onboarding_voice_demo_attempted: bool = False
+    onboarding_voice_demo_case_index: int = 0
+    onboarding_voice_demo_pass_mask: int = 0
+    onboarding_voice_demo_action: str = ""
+    onboarding_voice_sample_text: str = "Add milk to inventory"
+    onboarding_voice_expected_action: str = "Add inventory"
+    device_language: str = "en-US"
+    device_timezone: str = "UTC"
+    voice_locale: str = "en-US"
+
     screen: Screen = Screen.HOME
     # HOME focus queue: [CLOCK, WEATHER, TASK_0..TASK_N-1]
     focused_index: int = 2  # TSX starts focused on the first task (when present)

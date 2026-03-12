@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, datetime, timedelta
+import secrets
 import time
 from typing import Optional
 
@@ -16,7 +17,8 @@ from app.core.kitchen_queue import (
     kitchen_visible_task_indices,
 )
 from app.core.settings_schema import SettingsItem, SETTINGS_ORDER
-from app.core.state import AppState, Screen, Reminder, MenuItemId, WidgetMode
+from app.core.state import AppState, Screen, Reminder, MenuItemId, WeatherDay, WidgetMode
+from app.data.weather_api import resolve_weather_data
 
 
 class Event:
@@ -116,6 +118,114 @@ def _find_reminder_index_by_rid(state: AppState, rid: str) -> int:
         if str(r.rid or "") == key:
             return i
     return -1
+
+
+def _coerce_float(raw) -> float | None:
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    txt = str(raw).strip()
+    if not txt:
+        return None
+    cleaned: list[str] = []
+    for ch in txt:
+        if ch.isdigit() or ch in (".", "-"):
+            cleaned.append(ch)
+        else:
+            cleaned.append(" ")
+    token = "".join(cleaned).split()
+    if not token:
+        return None
+    try:
+        return float(token[0])
+    except Exception:
+        return None
+
+
+def _coerce_int(raw, *, default: int = 0) -> int:
+    val = _coerce_float(raw)
+    if val is None:
+        return int(default)
+    return int(round(val))
+
+
+def _coerce_int_opt(raw) -> int | None:
+    val = _coerce_float(raw)
+    if val is None:
+        return None
+    return int(round(val))
+
+
+def _weather_fallback_rows(state: AppState) -> list[dict]:
+    rows: list[dict] = []
+    for w in list(state.model.weather or []):
+        rows.append(
+            {
+                "dow": str(getattr(w, "dow", "") or ""),
+                "icon": str(getattr(w, "icon", "") or "cloud"),
+                "hi": getattr(w, "hi", 0),
+                "lo": getattr(w, "lo", 0),
+                "humidity": getattr(w, "humidity", None),
+                "feels_like": getattr(w, "feels_like", None),
+                "wind_kmh": getattr(w, "wind_kmh", None),
+                "uv_index": getattr(w, "uv_index", None),
+            }
+        )
+    return rows
+
+
+def _weather_rows_to_model(rows: object) -> list[WeatherDay]:
+    if not isinstance(rows, list):
+        return []
+    out: list[WeatherDay] = []
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        dow = str(row.get("dow") or f"D{i + 1}").strip() or f"D{i + 1}"
+        icon = str(row.get("icon") or "cloud").strip() or "cloud"
+        out.append(
+            WeatherDay(
+                dow=dow,
+                icon=icon,
+                hi=_coerce_int(row.get("hi"), default=0),
+                lo=_coerce_int(row.get("lo"), default=0),
+                humidity=_coerce_int_opt(row.get("humidity")),
+                feels_like=_coerce_float(row.get("feels_like")),
+                wind_kmh=_coerce_float(row.get("wind_kmh")),
+                uv_index=_coerce_float(row.get("uv_index")),
+            )
+        )
+    return out
+
+
+def _refresh_weather_now(state: AppState, now: float) -> bool:
+    fallback_rows = _weather_fallback_rows(state)
+    try:
+        location, rows = resolve_weather_data(state.model.location, fallback_rows)
+    except Exception:
+        state.ui.last_sync_at = float(now)
+        state.ui.sync_state = "fail"
+        return False
+
+    changed = False
+    next_location = str(location or "").strip()
+    if next_location and next_location != str(state.model.location or ""):
+        state.model.location = next_location
+        changed = True
+
+    next_weather = _weather_rows_to_model(rows)
+    if next_weather and next_weather != list(state.model.weather or []):
+        state.model.weather = next_weather
+        changed = True
+
+    if state.model.weather:
+        state.ui.weather_day_index = max(0, min(int(state.ui.weather_day_index or 0), len(state.model.weather) - 1))
+    else:
+        state.ui.weather_day_index = 0
+    state.ui.last_sync_at = float(now)
+    state.ui.sync_state = "ok"
+    return changed
 
 
 def _focused_kitchen_task_index(state: AppState, theme: Optional[dict] = None) -> int:
@@ -227,9 +337,9 @@ def _activate_kitchen_left_target(state: AppState, target_kind: str, now: float,
 
 def _home_hide_grace_s(theme: dict) -> float:
     try:
-        value = float(theme.get("home_completed_hide_grace_s", 45.0) or 45.0)
+        value = float(theme.get("home_completed_hide_grace_s", 15.0) or 15.0)
     except Exception:
-        value = 45.0
+        value = 15.0
     return max(5.0, value)
 
 
@@ -510,6 +620,431 @@ def _toggle_rotation(state: AppState) -> None:
     state.ui.rotation_deg = (cur + 90) % 360
 
 
+def _onboarding_qr_ttl_s(theme: dict) -> float:
+    try:
+        value = float(theme.get("onboarding_qr_ttl_s", 5 * 60) or (5 * 60))
+    except Exception:
+        value = 5 * 60
+    return max(30.0, value)
+
+
+def _new_pair_token() -> str:
+    return secrets.token_hex(4).upper()
+
+
+def _onboarding_voice_cases() -> list[tuple[str, str]]:
+    # Demo-only script shown during first-boot guide.
+    return [
+        ("Add milk to inventory", "Add inventory"),
+        ("Remind me to check fridge tonight", "Add reminder"),
+        ("Set a timer for 10 minutes", "Set timer"),
+    ]
+
+
+def _onboarding_voice_total() -> int:
+    return len(_onboarding_voice_cases())
+
+
+def _onboarding_voice_case(index: int) -> tuple[str, str]:
+    cases = _onboarding_voice_cases()
+    total = max(1, len(cases))
+    idx = max(0, min(total - 1, int(index)))
+    return cases[idx]
+
+
+def _onboarding_voice_current_index(state: AppState) -> int:
+    return max(0, int(state.ui.onboarding_voice_demo_case_index or 0))
+
+
+def _onboarding_voice_complete(state: AppState) -> bool:
+    return _onboarding_voice_current_index(state) >= _onboarding_voice_total()
+
+
+def _sync_onboarding_voice_case_fields(state: AppState) -> None:
+    total = _onboarding_voice_total()
+    idx = max(0, min(total - 1, _onboarding_voice_current_index(state)))
+    sample, action = _onboarding_voice_case(idx)
+    state.ui.onboarding_voice_sample_text = sample
+    state.ui.onboarding_voice_expected_action = action
+
+
+def _advance_onboarding_voice_case(state: AppState) -> None:
+    state.ui.onboarding_voice_demo_case_index = _onboarding_voice_current_index(state) + 1
+    if not _onboarding_voice_complete(state):
+        _sync_onboarding_voice_case_fields(state)
+
+
+def _set_onboarding_voice_prompt(state: AppState) -> None:
+    total = _onboarding_voice_total()
+    if _onboarding_voice_complete(state):
+        state.ui.onboarding_status = "All 3 voice samples completed. Press click to continue."
+        return
+    _sync_onboarding_voice_case_fields(state)
+    idx = _onboarding_voice_current_index(state)
+    sample = str(state.ui.onboarding_voice_sample_text or "").strip()
+    state.ui.onboarding_status = f"Sample {idx + 1}/{total}: Hold voice key and say: {sample}."
+
+
+def apply_onboarding_voice_demo_result(state: AppState, transcript: str) -> None:
+    if str(state.ui.onboarding_step or "").strip().lower() != "voice_guide":
+        return
+
+    if _onboarding_voice_complete(state):
+        state.ui.onboarding_status = "All 3 voice samples completed. Press click to continue."
+        state.ui.onboarding_voice_guide_focus_index = 0
+        return
+
+    total = _onboarding_voice_total()
+    state.ui.onboarding_voice_demo_attempted = True
+    heard = str(transcript or "").strip()
+    idx = _onboarding_voice_current_index(state)
+    sample, action = _onboarding_voice_case(idx)
+    state.ui.onboarding_voice_sample_text = sample
+    state.ui.onboarding_voice_expected_action = action
+
+    if not heard:
+        state.ui.onboarding_voice_demo_heard = "(no speech detected)"
+        state.ui.onboarding_voice_demo_action = ""
+        state.ui.onboarding_status = f"No speech detected. Retry sample {idx + 1}/{total}."
+        state.ui.onboarding_voice_guide_focus_index = 0
+        return
+
+    state.ui.onboarding_voice_demo_heard = heard
+    state.ui.onboarding_voice_demo_action = action
+    mask = int(state.ui.onboarding_voice_demo_pass_mask or 0)
+    mask |= (1 << idx)
+    state.ui.onboarding_voice_demo_pass_mask = mask
+    _advance_onboarding_voice_case(state)
+
+    if _onboarding_voice_complete(state):
+        state.ui.onboarding_status = "All 3 voice samples completed. Press click to continue."
+        state.ui.onboarding_voice_guide_focus_index = 0
+        _sync_onboarding_voice_case_fields(state)
+        return
+
+    nxt = _onboarding_voice_current_index(state)
+    nxt_sample = str(state.ui.onboarding_voice_sample_text or "").strip()
+    state.ui.onboarding_status = f"Sample {idx + 1}/{total} complete. Next {nxt + 1}/{total}: {nxt_sample}"
+    state.ui.onboarding_voice_guide_focus_index = 0
+
+
+def apply_onboarding_voice_demo_error(state: AppState, reason: str) -> None:
+    if str(state.ui.onboarding_step or "").strip().lower() != "voice_guide":
+        return
+    state.ui.onboarding_voice_demo_attempted = True
+    state.ui.onboarding_voice_demo_heard = ""
+    state.ui.onboarding_voice_demo_action = ""
+    idx = min(_onboarding_voice_current_index(state), max(0, _onboarding_voice_total() - 1))
+    total = _onboarding_voice_total()
+    msg = str(reason or "").strip()
+    if msg:
+        state.ui.onboarding_status = f"Voice demo failed: {msg}. Retry sample {idx + 1}/{total}."
+    else:
+        state.ui.onboarding_status = f"Voice demo failed. Retry sample {idx + 1}/{total}."
+    state.ui.onboarding_voice_guide_focus_index = 0
+
+
+def _enter_onboarding_start(state: AppState) -> None:
+    state.ui.screen = Screen.ONBOARDING
+    state.ui.onboarding_step = "start"
+    state.ui.onboarding_focus_index = max(0, min(1, int(state.ui.onboarding_focus_index or 0)))
+    state.ui.onboarding_status = ""
+    state.ui.onboarding_voice_guide_focus_index = 0
+    state.ui.onboarding_voice_demo_heard = ""
+    state.ui.onboarding_voice_demo_attempted = False
+    state.ui.onboarding_voice_demo_case_index = 0
+    state.ui.onboarding_voice_demo_pass_mask = 0
+    state.ui.onboarding_voice_demo_action = ""
+    sample, action = _onboarding_voice_case(0)
+    state.ui.onboarding_voice_sample_text = sample
+    state.ui.onboarding_voice_expected_action = action
+    state.ui.landing_status = ""
+
+
+def _enter_onboarding_pair_qr(state: AppState, now: float, *, theme: dict) -> None:
+    state.ui.screen = Screen.ONBOARDING
+    state.ui.onboarding_step = "pair_qr"
+    state.ui.onboarding_qr_focus_index = max(0, min(2, int(state.ui.onboarding_qr_focus_index or 0)))
+    state.ui.onboarding_pair_token = _new_pair_token()
+    state.ui.onboarding_pair_expires_at = float(now) + _onboarding_qr_ttl_s(theme)
+    state.ui.onboarding_status = "Waiting for phone callback..."
+    state.ui.onboarding_voice_guide_focus_index = 0
+
+
+def _onboarding_timezone_choices(current: str) -> list[str]:
+    base = [
+        "America/Toronto",
+        "America/New_York",
+        "America/Los_Angeles",
+        "UTC",
+    ]
+    cur = str(current or "").strip()
+    if cur and cur not in base:
+        return [cur] + base
+    return base
+
+
+def _onboarding_device_language_choices(_current: str) -> list[str]:
+    # V1 placeholder options only. UI copy/i18n translation is not wired yet.
+    return ["en-US", "es-ES", "fr-FR"]
+
+
+def _sync_single_language(state: AppState) -> None:
+    choices = _onboarding_device_language_choices(str(state.ui.device_language or "en-US"))
+    dev = str(state.ui.device_language or "").strip()
+    voc = str(state.ui.voice_locale or "").strip()
+    if dev in choices:
+        chosen = dev
+    elif voc in choices:
+        chosen = voc
+    else:
+        chosen = "en-US"
+    state.ui.device_language = chosen
+    state.ui.voice_locale = chosen
+
+
+def _enter_onboarding_prefs(state: AppState, *, wifi_connected: bool) -> None:
+    state.ui.screen = Screen.ONBOARDING
+    state.ui.onboarding_step = "prefs"
+    state.ui.onboarding_prefs_focus_index = max(0, min(3, int(state.ui.onboarding_prefs_focus_index or 0)))
+    if wifi_connected:
+        if not str(state.ui.onboarding_wifi_ssid or "").strip():
+            state.ui.onboarding_wifi_ssid = "Home_2.4G"
+        state.ui.wifi_enabled = True
+    _sync_single_language(state)
+    state.ui.onboarding_status = ""
+    state.ui.onboarding_voice_guide_focus_index = 0
+
+
+def _enter_onboarding_done(state: AppState) -> None:
+    state.ui.screen = Screen.ONBOARDING
+    state.ui.onboarding_step = "done"
+    state.ui.onboarding_status = ""
+    state.ui.onboarding_voice_guide_focus_index = 0
+
+
+def _enter_onboarding_voice_guide(state: AppState) -> None:
+    state.ui.screen = Screen.ONBOARDING
+    state.ui.onboarding_step = "voice_guide"
+    _sync_onboarding_voice_case_fields(state)
+    state.ui.onboarding_voice_guide_focus_index = 0
+    if not bool(state.ui.onboarding_voice_demo_attempted):
+        _set_onboarding_voice_prompt(state)
+
+
+def open_onboarding_voice_guide(state: AppState) -> None:
+    # Debug/test entrypoint: jump straight into the voice guide without replaying first boot.
+    state.ui.screen = Screen.ONBOARDING
+    state.ui.onboarding_step = "voice_guide"
+    state.ui.onboarding_focus_index = 0
+    state.ui.onboarding_qr_focus_index = 0
+    state.ui.onboarding_prefs_focus_index = 0
+    state.ui.onboarding_voice_guide_focus_index = 0
+    state.ui.onboarding_pair_token = ""
+    state.ui.onboarding_pair_expires_at = 0.0
+    state.ui.onboarding_voice_demo_heard = ""
+    state.ui.onboarding_voice_demo_attempted = False
+    state.ui.onboarding_voice_demo_case_index = 0
+    state.ui.onboarding_voice_demo_pass_mask = 0
+    state.ui.onboarding_voice_demo_action = ""
+    state.ui.onboarding_voice_sample_text = "Add milk to inventory"
+    state.ui.onboarding_voice_expected_action = "Add inventory"
+    _set_onboarding_voice_prompt(state)
+
+
+def _enter_home_after_boot(state: AppState, *, variant: str, theme: dict, items_per_page: int) -> None:
+    state.ui.screen = Screen.HOME
+    state.ui.menu_overlay_active = False
+    state.ui.landing_status = ""
+    if _is_kitchen_variant(variant):
+        _clamp_focus_kitchen(state, theme)
+    else:
+        _clamp_focus_home(state, items_per_page)
+
+
+def _landing_ready_for_onboarding(state: AppState, now: float) -> bool:
+    _ = now
+    if not bool(state.ui.landing_rotate_seen):
+        return False
+    if not bool(state.ui.landing_confirm_seen):
+        return False
+    return True
+
+
+def _handle_landing_tick(state: AppState, now: float, *, theme: dict, variant: str, items_per_page: int) -> None:
+    _ = now
+    _landing_sync_voice_locale(state)
+    if bool(state.ui.setup_completed):
+        _enter_home_after_boot(state, variant=variant, theme=theme, items_per_page=items_per_page)
+        return
+    if not bool(state.ui.landing_rotate_seen):
+        state.ui.landing_status = "Rotate knob to choose language."
+    elif not bool(state.ui.landing_confirm_seen):
+        lang = _voice_locale_label(state.ui.device_language)
+        state.ui.landing_status = f"Language: {lang}. Press click to confirm."
+    else:
+        lang = _voice_locale_label(state.ui.device_language)
+        state.ui.landing_status = f"Language: {lang}. Press click to start first setup."
+
+
+def _handle_onboarding_tick(state: AppState, now: float, *, theme: dict) -> None:
+    if str(state.ui.onboarding_step or "") != "pair_qr":
+        return
+    expire_at = float(state.ui.onboarding_pair_expires_at or 0.0)
+    if expire_at <= 0.0 or now < expire_at:
+        return
+    state.ui.onboarding_pair_token = _new_pair_token()
+    state.ui.onboarding_pair_expires_at = now + _onboarding_qr_ttl_s(theme)
+    state.ui.onboarding_status = "QR refreshed automatically (token expired)."
+
+
+def _voice_locale_label(locale: str) -> str:
+    key = str(locale or "").strip()
+    if key == "es-ES":
+        return "Spanish"
+    if key == "fr-FR":
+        return "French"
+    return "English"
+
+
+def _landing_voice_locale_choices() -> list[str]:
+    return ["en-US", "es-ES", "fr-FR"]
+
+
+def _landing_sync_voice_locale(state: AppState) -> None:
+    choices = _landing_voice_locale_choices()
+    cur = str(state.ui.device_language or state.ui.voice_locale or "en-US")
+    try:
+        idx = choices.index(cur)
+    except ValueError:
+        idx = 0
+        cur = choices[idx]
+    state.ui.voice_locale = cur
+    state.ui.device_language = cur
+    state.ui.landing_voice_demo_index = idx
+
+
+def _landing_rotate_select_voice(state: AppState, delta: int) -> None:
+    choices = _landing_voice_locale_choices()
+    cur_idx = int(state.ui.landing_voice_demo_index or 0)
+    if cur_idx < 0 or cur_idx >= len(choices):
+        _landing_sync_voice_locale(state)
+        cur_idx = int(state.ui.landing_voice_demo_index or 0)
+    nxt = (cur_idx + (1 if delta >= 0 else -1)) % len(choices)
+    state.ui.landing_voice_demo_index = nxt
+    chosen = str(choices[nxt])
+    state.ui.voice_locale = chosen
+    state.ui.device_language = chosen
+
+
+def _handle_onboarding_rotate(state: AppState, delta: int) -> None:
+    step = str(state.ui.onboarding_step or "start").strip().lower()
+    d = 1 if delta >= 0 else -1
+    if step == "start":
+        idx = int(state.ui.onboarding_focus_index or 0)
+        state.ui.onboarding_focus_index = max(0, min(1, idx + d))
+        return
+    if step == "pair_qr":
+        idx = int(state.ui.onboarding_qr_focus_index or 0)
+        state.ui.onboarding_qr_focus_index = max(0, min(2, idx + d))
+        return
+    if step == "prefs":
+        idx = int(state.ui.onboarding_prefs_focus_index or 0)
+        state.ui.onboarding_prefs_focus_index = max(0, min(3, idx + d))
+        return
+    if step == "voice_guide":
+        return
+
+
+def _handle_onboarding_click(state: AppState, now: float, *, theme: dict, variant: str, items_per_page: int) -> None:
+    step = str(state.ui.onboarding_step or "start").strip().lower()
+    if step == "start":
+        if int(state.ui.onboarding_focus_index or 0) == 0:
+            _enter_onboarding_pair_qr(state, now, theme=theme)
+        else:
+            _enter_onboarding_prefs(state, wifi_connected=False)
+        return
+
+    if step == "pair_qr":
+        idx = int(state.ui.onboarding_qr_focus_index or 0)
+        if idx == 0:
+            state.ui.onboarding_pair_token = _new_pair_token()
+            state.ui.onboarding_pair_expires_at = now + _onboarding_qr_ttl_s(theme)
+            state.ui.onboarding_status = "QR refreshed."
+        elif idx == 1:
+            _enter_onboarding_prefs(state, wifi_connected=True)
+        else:
+            _enter_onboarding_prefs(state, wifi_connected=False)
+        return
+
+    if step == "prefs":
+        idx = int(state.ui.onboarding_prefs_focus_index or 0)
+        if idx == 0:
+            choices = _onboarding_device_language_choices(str(state.ui.device_language or "en-US"))
+            cur = str(state.ui.device_language or "en-US")
+            try:
+                pos = choices.index(cur)
+            except ValueError:
+                pos = 0
+            chosen = str(choices[(pos + 1) % len(choices)])
+            state.ui.device_language = chosen
+            state.ui.voice_locale = chosen
+            return
+        if idx == 1:
+            choices = _onboarding_timezone_choices(str(state.ui.device_timezone or "UTC"))
+            cur = str(state.ui.device_timezone or "UTC")
+            try:
+                pos = choices.index(cur)
+            except ValueError:
+                pos = 0
+            state.ui.device_timezone = str(choices[(pos + 1) % len(choices)])
+            return
+        if idx == 2:
+            state.ui.auto_sync_enabled = not bool(state.ui.auto_sync_enabled)
+            return
+        _enter_onboarding_voice_guide(state)
+        return
+
+    if step == "voice_guide":
+        if not _onboarding_voice_complete(state):
+            idx = _onboarding_voice_current_index(state)
+            total = _onboarding_voice_total()
+            _advance_onboarding_voice_case(state)
+            state.ui.onboarding_voice_demo_heard = ""
+            state.ui.onboarding_voice_demo_action = ""
+            if _onboarding_voice_complete(state):
+                state.ui.onboarding_status = "All 3 voice samples completed. Press click to continue."
+            else:
+                nxt = _onboarding_voice_current_index(state)
+                nxt_sample = str(state.ui.onboarding_voice_sample_text or "").strip()
+                state.ui.onboarding_status = f"Sample {idx + 1}/{total} skipped. Next {nxt + 1}/{total}: {nxt_sample}"
+            state.ui.onboarding_voice_guide_focus_index = 0
+            return
+        _enter_onboarding_done(state)
+        return
+
+    # done
+    state.ui.setup_completed = True
+    _enter_home_after_boot(state, variant=variant, theme=theme, items_per_page=items_per_page)
+
+
+def _handle_onboarding_back(state: AppState) -> None:
+    step = str(state.ui.onboarding_step or "start").strip().lower()
+    if step == "pair_qr":
+        _enter_onboarding_start(state)
+        return
+    if step == "prefs":
+        _enter_onboarding_start(state)
+        return
+    if step == "voice_guide":
+        state.ui.onboarding_step = "prefs"
+        state.ui.onboarding_prefs_focus_index = max(0, min(3, int(state.ui.onboarding_prefs_focus_index or 0)))
+        return
+    if step == "done":
+        state.ui.onboarding_step = "prefs"
+        state.ui.onboarding_prefs_focus_index = max(0, min(3, int(state.ui.onboarding_prefs_focus_index or 0)))
+
+
 def _activate_menu_pick(state: AppState, picked: MenuItemId, now: float, *, theme: dict, items_per_page: int, variant: str) -> None:
     state.ui.active_menu = picked
     state.ui.menu_overlay_active = False
@@ -690,6 +1225,14 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         if minute_changed:
             state.ui.clock_minute_bucket = now_minute_bucket
 
+        if state.ui.screen == Screen.LANDING:
+            _handle_landing_tick(state, now, theme=theme, variant=variant, items_per_page=items_per_page)
+            return state
+        if state.ui.screen == Screen.ONBOARDING:
+            _handle_onboarding_tick(state, now, theme=theme)
+            state.ui.idle = False
+            return state
+
         # Idle: hide focus ring after inactivity. Match TSX: timer running disables idle.
         idle_timeout_s = float(theme.get("idle_timeout_s", 30.0) or 30.0)
         if not state.ui.voice_active and not state.ui.timer_running:
@@ -754,19 +1297,71 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             state.ui.settings_notice = ""
             state.ui.settings_notice_due_at = 0.0
 
-        if state.ui.screen == Screen.HOME and _is_kitchen_variant(variant) and minute_changed:
+        if state.ui.screen == Screen.HOME and _is_kitchen_variant(variant):
             if _maybe_promote_home_pending_hide(state, now, theme=theme):
                 _clamp_focus_kitchen(state, theme)
 
         return state
 
-    if state.ui.screen == Screen.HOME and _is_kitchen_variant(variant) and not isinstance(event, Click):
-        if _maybe_promote_home_pending_hide(state, now, theme=theme):
-            _clamp_focus_kitchen(state, theme)
-
     # Any non-tick event wakes the UI
     state.ui.idle = False
     state.ui.last_interaction_at = now
+
+    if state.ui.screen == Screen.LANDING:
+        if isinstance(event, Rotate):
+            state.ui.landing_rotate_seen = True
+            _landing_rotate_select_voice(state, event.delta)
+            # If language changes after confirm, require one more confirm click.
+            if bool(state.ui.landing_confirm_seen):
+                state.ui.landing_confirm_seen = False
+            if bool(state.ui.setup_completed):
+                return state
+            if _landing_ready_for_onboarding(state, now):
+                # Keep landing on-screen; setup starts only on explicit click.
+                pass
+            lang = _voice_locale_label(state.ui.device_language)
+            state.ui.landing_status = f"Language set to {lang}. Press click to confirm."
+            return state
+        if isinstance(event, Click):
+            if bool(state.ui.setup_completed):
+                _enter_home_after_boot(state, variant=variant, theme=theme, items_per_page=items_per_page)
+            else:
+                if not bool(state.ui.landing_rotate_seen):
+                    state.ui.landing_status = "Rotate to choose language first, then press click."
+                elif not bool(state.ui.landing_confirm_seen):
+                    state.ui.landing_confirm_seen = True
+                    lang = _voice_locale_label(state.ui.device_language)
+                    state.ui.landing_status = f"Language confirmed: {lang}. Press click again to start setup."
+                elif _landing_ready_for_onboarding(state, now):
+                    _enter_onboarding_start(state)
+                else:
+                    state.ui.landing_status = "Press click again to start setup."
+            return state
+        if isinstance(event, RotateButton):
+            _toggle_rotation(state)
+            return state
+        return state
+
+    if state.ui.screen == Screen.ONBOARDING:
+        if isinstance(event, Rotate):
+            _handle_onboarding_rotate(state, event.delta)
+            return state
+        if isinstance(event, Click):
+            _handle_onboarding_click(
+                state,
+                now,
+                theme=theme,
+                variant=variant,
+                items_per_page=items_per_page,
+            )
+            return state
+        if isinstance(event, Back) or isinstance(event, LongPress):
+            _handle_onboarding_back(state)
+            return state
+        if isinstance(event, RotateButton):
+            _toggle_rotation(state)
+            return state
+        return state
 
     if isinstance(event, Rotate):
         if state.ui.screen == Screen.MENU or (state.ui.screen == Screen.HOME and state.ui.menu_overlay_active):
@@ -899,6 +1494,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                     state.ui.calendar_selected_index = 0
         elif state.ui.screen == Screen.TIMER:
             _handle_timer_click(state, now, theme=theme)
+        elif state.ui.screen == Screen.WEATHER:
+            _refresh_weather_now(state, now)
         elif state.ui.screen == Screen.MEMO:
             if state.model.memos:
                 state.ui.memo_expanded = not bool(state.ui.memo_expanded)
@@ -931,7 +1528,6 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         state.ui.screen = Screen.HOME
         state.ui.menu_overlay_active = False
         state.ui.kitchen_focus_rid_override = ""
-        _maybe_promote_home_pending_hide(state, now, theme=theme)
         if _is_kitchen_variant(variant):
             _clamp_focus_kitchen(state, theme)
         else:
@@ -979,7 +1575,6 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             state.ui.screen = Screen.HOME
             state.ui.menu_overlay_active = False
             state.ui.kitchen_focus_rid_override = ""
-            _maybe_promote_home_pending_hide(state, now, theme=theme)
             if _is_kitchen_variant(variant):
                 _clamp_focus_kitchen(state, theme)
             else:

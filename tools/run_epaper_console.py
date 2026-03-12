@@ -24,6 +24,7 @@ import termios
 import tempfile
 import time
 import tty
+from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageChops
 
@@ -32,9 +33,26 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from app.core.reducer import reduce, Rotate, Click, LongPress, RotateButton, Back, Tick
+from app.core.reducer import (
+    reduce,
+    Rotate,
+    Click,
+    LongPress,
+    RotateButton,
+    Back,
+    Tick,
+    apply_onboarding_voice_demo_result,
+    apply_onboarding_voice_demo_error,
+    open_onboarding_voice_guide,
+)
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
 from app.data.location import resolve_dashboard_location
+from app.data.device_config import (
+    detect_local_timezone,
+    load_device_config,
+    sanitize_device_config,
+    save_device_config,
+)
 from app.data.weather_api import resolve_weather_data
 from app.render.epd import init_epd
 from app.render.panel import build_panel_theme, quantize_for_panel
@@ -278,7 +296,7 @@ def _refresh_live_weather(state: AppState) -> bool:
     return (state.model.location != prev_location) or (next_digest != prev_digest)
 
 
-def _next_weather_refresh_at(now_ts: float, refresh_hours: float) -> float:
+def _next_weather_refresh_at(now_ts: float, refresh_hours: float, *, tz_name: str = "") -> float:
     hours = max(0.0, float(refresh_hours or 0.0))
     if hours <= 0:
         return 0.0
@@ -286,7 +304,14 @@ def _next_weather_refresh_at(now_ts: float, refresh_hours: float) -> float:
     # For the default 12h schedule, align to local wall-clock boundaries:
     # noon and midnight (00:00 / 12:00), instead of startup+12h drift.
     if abs(hours - 12.0) < 1e-6:
-        now_local = datetime.datetime.fromtimestamp(now_ts)
+        tz = None
+        tz_key = str(tz_name or "").strip()
+        if tz_key:
+            try:
+                tz = ZoneInfo(tz_key)
+            except Exception:
+                tz = None
+        now_local = datetime.datetime.fromtimestamp(now_ts, tz=tz) if tz is not None else datetime.datetime.fromtimestamp(now_ts)
         today_noon = now_local.replace(hour=12, minute=0, second=0, microsecond=0)
         if now_local < today_noon:
             return today_noon.timestamp()
@@ -478,6 +503,33 @@ def _warn_missing_fonts(fonts: FontBook) -> None:
         print(f"  - {key}: {path}")
 
 
+def _device_config_from_state(state: AppState) -> dict:
+    return sanitize_device_config(
+        {
+            "setup_completed": bool(state.ui.setup_completed),
+            "language": str(state.ui.device_language or "en-US"),
+            "voice_locale": str(state.ui.voice_locale or "en-US"),
+            "timezone": str(state.ui.device_timezone or "UTC"),
+            "auto_sync_enabled": bool(state.ui.auto_sync_enabled),
+            "wifi_enabled": bool(state.ui.wifi_enabled),
+            "bluetooth_enabled": bool(state.ui.bluetooth_enabled),
+            "wifi_ssid": str(state.ui.onboarding_wifi_ssid or ""),
+        }
+    )
+
+
+def _apply_device_config_to_state(state: AppState, config: dict) -> None:
+    cfg = sanitize_device_config(config)
+    state.ui.setup_completed = bool(cfg.get("setup_completed", False))
+    state.ui.device_language = str(cfg.get("language") or "en-US")
+    state.ui.voice_locale = str(cfg.get("voice_locale") or "en-US")
+    state.ui.device_timezone = str(cfg.get("timezone") or detect_local_timezone())
+    state.ui.auto_sync_enabled = bool(cfg.get("auto_sync_enabled", True))
+    state.ui.wifi_enabled = bool(cfg.get("wifi_enabled", False))
+    state.ui.bluetooth_enabled = bool(cfg.get("bluetooth_enabled", False))
+    state.ui.onboarding_wifi_ssid = str(cfg.get("wifi_ssid") or "")
+
+
 def _render_frame(
     epd,
     state: AppState,
@@ -494,13 +546,39 @@ def _render_frame(
     t = build_panel_theme(theme, muted_gray=panel_muted)
     rgb = Image.new("RGB", (epd.width, epd.height), t.get("bg", (255, 255, 255)))
     render_app(rgb, state, fonts, t)
-    return quantize_for_panel(rgb, threshold=panel_threshold, gamma=panel_gamma, dither=panel_dither)
+    out = quantize_for_panel(
+        rgb,
+        threshold=int(panel_threshold),
+        gamma=float(panel_gamma),
+        dither=panel_dither,
+    )
+    return out
 
 
 def _state_render_sig(state: AppState):
     return (
         state.model.location,
         state.ui.screen,
+        state.ui.setup_completed,
+        state.ui.landing_rotate_seen,
+        state.ui.landing_confirm_seen,
+        state.ui.landing_voice_demo_index,
+        state.ui.landing_voice_demo_cycles,
+        state.ui.landing_status,
+        state.ui.onboarding_step,
+        state.ui.onboarding_focus_index,
+        state.ui.onboarding_qr_focus_index,
+        state.ui.onboarding_prefs_focus_index,
+        state.ui.onboarding_voice_guide_focus_index,
+        state.ui.onboarding_pair_token,
+        int(state.ui.onboarding_pair_expires_at or 0),
+        state.ui.onboarding_status,
+        state.ui.onboarding_voice_demo_heard,
+        state.ui.onboarding_voice_demo_attempted,
+        state.ui.onboarding_wifi_ssid,
+        state.ui.device_language,
+        state.ui.device_timezone,
+        state.ui.voice_locale,
         state.ui.focused_index,
         state.ui.kitchen_focus_rid_override,
         tuple(str(rid) for rid in getattr(state.ui, "home_hidden_rids", []) if str(rid or "").strip()),
@@ -563,6 +641,16 @@ def _blit_full(epd, image: Image.Image, current_mode: str, *, fast: bool) -> str
     current_mode = _ensure_epd_mode(epd, current_mode, target_mode)
     epd.display(epd.getbuffer(image))
     return current_mode
+
+
+def _blit_full_clean(epd, image: Image.Image) -> str:
+    # Force a clean full refresh cycle regardless of current driver mode.
+    epd.init()
+    clear_fn = getattr(epd, "Clear", None)
+    if callable(clear_fn):
+        clear_fn()
+    epd.display(epd.getbuffer(image))
+    return "full"
 
 
 def _timer_partial_full_every(theme: dict) -> int:
@@ -631,14 +719,15 @@ def _fast_full_enabled(theme: dict) -> bool:
 
 
 def _partial_budget_enabled_with_theme(theme: dict) -> bool:
-    return bool(theme.get("refresh_partial_budget_enabled", True))
+    return bool(theme.get("refresh_partial_budget_enabled", False))
 
 
 def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     if bool(theme.get("refresh_partial_enable_all", False)):
         return True
 
-    default_screens = "settings,timer,memo,calendar,inventory,reminders"
+    # Keep first-boot flows on partial-first path (same as other interactive screens).
+    default_screens = "settings,timer,home,menu,landing,onboarding"
     default_names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
     raw = theme.get("refresh_partial_screens", default_screens)
     if isinstance(raw, str):
@@ -657,11 +746,37 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
     return screen_name in set(names)
 
 
+def _screen_force_full_clean_with_theme(screen: Screen, theme: dict) -> bool:
+    # Full-clean should be opt-in only. For onboarding/landing we prefer normal
+    # full refresh path unless explicitly configured, to avoid repeated Clear().
+    default_screens = ""
+    raw = theme.get("refresh_force_full_clean_screens", default_screens)
+    if isinstance(raw, str):
+        names = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, (list, tuple)):
+        names = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
+    screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
+    return screen_name in set(names)
+
+
+def _partial_gate_area_ratio(
+    rects: list[tuple[int, int, int, int]],
+    *,
+    width: int,
+    height: int,
+) -> float:
+    if not rects:
+        return 1.0
+    return min(1.0, sum(rect_area_ratio(r, width, height) for r in rects))
+
+
 def _screen_change_partial_enabled_with_theme(prev_screen: Screen, curr_screen: Screen, theme: dict) -> bool:
     if bool(theme.get("refresh_force_full_on_screen_change", False)):
         return False
 
-    default_screens = "memo,calendar,inventory,reminders"
+    default_screens = "settings,timer,memo,calendar,inventory,reminders,landing,onboarding"
     raw = theme.get("refresh_partial_screen_change_screens", default_screens)
     if isinstance(raw, str):
         names = [x.strip().lower() for x in raw.split(",") if x.strip()]
@@ -678,6 +793,26 @@ def _screen_change_partial_enabled_with_theme(prev_screen: Screen, curr_screen: 
     return _screen_partial_enabled_with_theme(curr_screen, theme)
 
 
+def _screen_change_force_partial_with_theme(screen: Screen, theme: dict) -> bool:
+    if not bool(theme.get("refresh_force_partial_on_screen_change", True)):
+        return False
+
+    default_screens = "settings,timer,memo,calendar,inventory,reminders"
+    raw = theme.get("refresh_force_partial_on_screen_change_screens", default_screens)
+    if isinstance(raw, str):
+        names = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, (list, tuple)):
+        names = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
+    screen_name = str(screen.value if isinstance(screen, Screen) else screen).strip().lower()
+    return screen_name in set(names)
+
+
+def _calendar_force_partial_with_theme(theme: dict) -> bool:
+    return bool(theme.get("refresh_calendar_force_partial", True))
+
+
 def _prepare_partial_rects(
     rects: list[tuple[int, int, int, int]],
     *,
@@ -685,6 +820,7 @@ def _prepare_partial_rects(
     height: int,
     pad: int,
     max_rects: int,
+    merge_overflow: bool = True,
 ) -> list[tuple[int, int, int, int]]:
     aligned: list[tuple[int, int, int, int]] = []
     for rect in rects:
@@ -707,6 +843,9 @@ def _prepare_partial_rects(
     if len(aligned) <= max_n:
         return aligned
 
+    if not bool(merge_overflow):
+        return aligned[:max_n]
+
     merged = merge_rects(aligned, width, height)
     return [merged] if merged is not None else []
 
@@ -724,7 +863,13 @@ def _diff_bbox_and_ratio(prev_frame: Image.Image, curr_frame: Image.Image) -> tu
 
 
 def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
-    if screen != Screen.HOME or not reasons:
+    if not reasons:
+        return False
+    if screen == Screen.ONBOARDING:
+        # For compact onboarding interactions, always keep latest target state and
+        # drop queued intermediates to avoid accumulated large dirty unions.
+        return any(r.startswith("onboarding.prefs_") or r.startswith("onboarding.voice_") for r in reasons)
+    if screen != Screen.HOME:
         return False
     allowed = {
         "home.focus_move_row",
@@ -738,6 +883,13 @@ def _should_collapse_to_latest(screen: Screen, reasons: list[str]) -> bool:
     }
     has_focus_reason = any(r.startswith("home.focus_") or r == "home.menu_overlay_focus" for r in reasons)
     return has_focus_reason and all(r in allowed for r in reasons)
+
+
+def _is_onboarding_compact_step(snapshot) -> bool:
+    if snapshot.screen != Screen.ONBOARDING:
+        return False
+    step = str(snapshot.onboarding_step or "").strip().lower()
+    return step == "voice_guide"
 
 
 def _prioritize_home_focus_dirty(
@@ -963,6 +1115,7 @@ def _run_voice_flow(
     current_mode: str,
     supports_partial: bool,
     refresh_debug: bool,
+    demo_only: bool = False,
 ) -> tuple[str, bool]:
     state.ui.idle = False
     state.ui.last_interaction_at = time.time()
@@ -1041,22 +1194,26 @@ def _run_voice_flow(
         transcript = ""
         if isinstance(payload, dict):
             transcript = str(payload.get("transcript") or "").strip()
-        plan = parse_voice_plan(payload)
-        plan_result = apply_voice_plan(state, plan, transcript=transcript)
-        action_desc = ", ".join([describe_voice_action(a) for a in list(plan.actions or [])[:4]])
-        if not action_desc:
-            action_desc = describe_voice_action(parse_voice_action(payload))
-        heard = transcript if transcript else "-"
-        shown = (
-            f"Heard: {heard}\n"
-            f"Action: {action_desc}\n"
-            f"Result: {plan_result.message}"
-        )
-        hold_s = 2.2
-        if str(plan_result.status or "") == "confirm":
-            remaining_confirm_s = max(0.0, float(state.ui.voice_confirm_due_at or 0.0) - time.time())
-            hold_s = max(hold_s, remaining_confirm_s + 0.2)
-        _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
+        if demo_only:
+            apply_onboarding_voice_demo_result(state, transcript)
+            _set_voice_overlay(state, "idle")
+        else:
+            plan = parse_voice_plan(payload)
+            plan_result = apply_voice_plan(state, plan, transcript=transcript)
+            action_desc = ", ".join([describe_voice_action(a) for a in list(plan.actions or [])[:4]])
+            if not action_desc:
+                action_desc = describe_voice_action(parse_voice_action(payload))
+            heard = transcript if transcript else "-"
+            shown = (
+                f"Heard: {heard}\n"
+                f"Action: {action_desc}\n"
+                f"Result: {plan_result.message}"
+            )
+            hold_s = 2.2
+            if str(plan_result.status or "") == "confirm":
+                remaining_confirm_s = max(0.0, float(state.ui.voice_confirm_due_at or 0.0) - time.time())
+                hold_s = max(hold_s, remaining_confirm_s + 0.2)
+            _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
         driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
@@ -1072,7 +1229,11 @@ def _run_voice_flow(
         )
         did_render_step = True
     except VoiceClientError as e:
-        _set_voice_overlay(state, "error", str(e), hold_s=2.5)
+        if demo_only:
+            apply_onboarding_voice_demo_error(state, str(e))
+            _set_voice_overlay(state, "idle")
+        else:
+            _set_voice_overlay(state, "error", str(e), hold_s=2.5)
         driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
@@ -1088,7 +1249,11 @@ def _run_voice_flow(
         )
         did_render_step = True
     except Exception as e:
-        _set_voice_overlay(state, "error", f"Voice failed: {e}", hold_s=2.5)
+        if demo_only:
+            apply_onboarding_voice_demo_error(state, str(e))
+            _set_voice_overlay(state, "idle")
+        else:
+            _set_voice_overlay(state, "error", f"Voice failed: {e}", hold_s=2.5)
         driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
@@ -1209,7 +1374,7 @@ def main() -> int:
         help="Live weather refresh interval in hours (default: 12; at 12h it aligns to local 00:00/12:00; <=0 disables periodic refresh)",
     )
     parser.add_argument("--voice-api-url", default=os.environ.get("VOICE_API_URL", ""), help="Backend URL for POST /voice/interpret")
-    parser.add_argument("--voice-locale", default=os.environ.get("VOICE_LOCALE", "zh-CN"), help="Locale sent to backend")
+    parser.add_argument("--voice-locale", default=os.environ.get("VOICE_LOCALE", "en-US"), help="Locale sent to backend")
     parser.add_argument("--voice-timezone", default=os.environ.get("VOICE_TIMEZONE", "UTC"), help="Timezone sent to backend")
     parser.add_argument("--voice-timeout", type=float, default=float(os.environ.get("VOICE_TIMEOUT_S", "20")), help="Backend timeout seconds")
     parser.add_argument("--voice-max-sec", type=int, default=int(os.environ.get("VOICE_MAX_SEC", "6")), help="Recording duration in seconds")
@@ -1255,6 +1420,40 @@ def main() -> int:
     fonts = _build_fonts(repo_root)
     _warn_missing_fonts(fonts)
     state = AppState(model=_load_model(repo_root))
+    device_config = load_device_config(repo_root)
+    _apply_device_config_to_state(state, device_config)
+    state.ui.boot_started_at = time.time()
+    state.ui.boot_min_show_s = 0.0
+    state.ui.landing_rotate_seen = False
+    state.ui.landing_confirm_seen = False
+    state.ui.landing_voice_demo_index = (
+        1 if str(state.ui.voice_locale or "en-US") == "es-ES"
+        else (2 if str(state.ui.voice_locale or "en-US") == "fr-FR" else 0)
+    )
+    state.ui.landing_voice_demo_cycles = 0
+    state.ui.landing_last_demo_at = time.time()
+    state.ui.landing_status = ""
+    state.ui.onboarding_focus_index = 0
+    state.ui.onboarding_qr_focus_index = 0
+    state.ui.onboarding_prefs_focus_index = 0
+    state.ui.onboarding_voice_guide_focus_index = 0
+    state.ui.onboarding_voice_demo_heard = ""
+    state.ui.onboarding_voice_demo_attempted = False
+    state.ui.onboarding_voice_demo_case_index = 0
+    state.ui.onboarding_voice_demo_pass_mask = 0
+    state.ui.onboarding_voice_demo_action = ""
+    state.ui.onboarding_voice_sample_text = "Add milk to inventory"
+    state.ui.onboarding_voice_expected_action = "Add inventory"
+    if bool(state.ui.setup_completed):
+        state.ui.screen = Screen.HOME
+    elif bool(theme.get("boot_landing_enabled", True)):
+        # Landing is first-boot only.
+        state.ui.screen = Screen.LANDING
+    else:
+        state.ui.screen = Screen.ONBOARDING
+        state.ui.onboarding_step = "start"
+    persisted_device_config = _device_config_from_state(state)
+    save_device_config(repo_root, persisted_device_config)
     if not str(args.voice_api_url or "").strip():
         print("[warn] VOICE_API_URL not set. Voice flow will show network error until configured.")
 
@@ -1362,11 +1561,15 @@ def main() -> int:
             rotate_btn_ready = False
 
     try:
-        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice, R rotate screen (+90°), S settings, W weather, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice (or voice-demo in guide), R rotate screen (+90°), S settings, G voice guide, W weather, B/Esc back, Q quit")
         next_tick = time.time()
-        next_weather_refresh_at = _next_weather_refresh_at(next_tick, weather_refresh_hours)
+        weather_refresh_tz = str(state.ui.device_timezone or "")
+        next_weather_refresh_at = _next_weather_refresh_at(next_tick, weather_refresh_hours, tz_name=weather_refresh_tz)
         if weather_refresh_s > 0:
-            print(f"[weather] periodic refresh enabled: every {weather_refresh_hours:g}h")
+            print(
+                f"[weather] periodic refresh enabled: every {weather_refresh_hours:g}h"
+                + (f" timezone={weather_refresh_tz}" if weather_refresh_tz else "")
+            )
         while True:
             now = time.time()
             expire_pending_voice_confirmation(state, now=now)
@@ -1380,36 +1583,52 @@ def main() -> int:
                         )
                 except Exception as e:
                     print(f"[warn] periodic weather refresh failed: {e}")
-                next_weather_refresh_at = _next_weather_refresh_at(now, weather_refresh_hours)
+                weather_refresh_tz = str(state.ui.device_timezone or "")
+                next_weather_refresh_at = _next_weather_refresh_at(now, weather_refresh_hours, tz_name=weather_refresh_tz)
             key = _read_key_nonblocking()
 
             ev = None
             voice_flow_ran = False
+            voice_flow_demo_only = False
+            key_phys_down = bool(key_is_down)
+            if encoder_key_pin is not None:
+                try:
+                    curr_key_sample = GPIO.input(int(encoder_key_pin))
+                    active_low = str(args.encoder_key_active).lower() == "low"
+                    key_phys_down = bool((curr_key_sample == GPIO.LOW) if active_low else (curr_key_sample == GPIO.HIGH))
+                except Exception:
+                    key_phys_down = bool(key_is_down)
+
             if encoder_ready:
                 try:
                     curr_ab = (GPIO.input(int(encoder_pin_s1)) << 1) | GPIO.input(int(encoder_pin_s2))
                     if curr_ab != prev_ab:
-                        edge = (prev_ab, curr_ab)
-                        if edge in CW_SEQ:
-                            encoder_accum += 1
-                        elif edge in CCW_SEQ:
-                            encoder_accum -= 1
+                        # Ignore quadrature jitter while KEY is held down. Pressing the knob can
+                        # produce tiny AB edges that otherwise swallow/shift the click target.
+                        if key_phys_down:
+                            encoder_accum = 0
+                        else:
+                            edge = (prev_ab, curr_ab)
+                            if edge in CW_SEQ:
+                                encoder_accum += 1
+                            elif edge in CCW_SEQ:
+                                encoder_accum -= 1
 
-                        step_n = max(1, int(args.encoder_steps_per_detent))
-                        flip = bool(args.encoder_flip_direction)
-                        if encoder_accum >= step_n:
-                            logical_cw = not flip
-                            ev = Rotate(+1 if logical_cw else -1)
-                            encoder_accum = 0
-                        elif encoder_accum <= -step_n:
-                            logical_cw = flip
-                            ev = Rotate(+1 if logical_cw else -1)
-                            encoder_accum = 0
+                            step_n = max(1, int(args.encoder_steps_per_detent))
+                            flip = bool(args.encoder_flip_direction)
+                            if encoder_accum >= step_n:
+                                logical_cw = not flip
+                                ev = Rotate(+1 if logical_cw else -1)
+                                encoder_accum = 0
+                            elif encoder_accum <= -step_n:
+                                logical_cw = flip
+                                ev = Rotate(+1 if logical_cw else -1)
+                                encoder_accum = 0
                         prev_ab = curr_ab
                 except Exception:
                     pass
 
-            if encoder_key_pin is not None and ev is None:
+            if encoder_key_pin is not None:
                 try:
                     curr_key = GPIO.input(int(encoder_key_pin))
                     active_low = str(args.encoder_key_active).lower() == "low"
@@ -1436,7 +1655,6 @@ def main() -> int:
                             key_is_down = False
                             key_down_at = 0.0
                             key_long_sent = False
-                            key_last_edge_at = now
                     prev_key = curr_key
                 except Exception:
                     pass
@@ -1484,7 +1702,20 @@ def main() -> int:
                 else:
                     ev = Click()
             elif key == " ":
-                if (
+                in_voice_guide_demo = (
+                    state.ui.screen == Screen.ONBOARDING
+                    and str(state.ui.onboarding_step or "").strip().lower() == "voice_guide"
+                )
+                if ((not bool(state.ui.setup_completed)) or state.ui.screen in (Screen.LANDING, Screen.ONBOARDING)) and (not in_voice_guide_demo):
+                    msg = "Voice is available after first setup."
+                    if state.ui.screen == Screen.LANDING:
+                        state.ui.landing_status = msg
+                    elif state.ui.screen == Screen.ONBOARDING:
+                        state.ui.onboarding_status = msg
+                    if refresh_debug:
+                        print("[voice] ignore space trigger reason=onboarding_locked")
+                    ev = None
+                elif (
                     state.ui.voice_active
                     or (now - float(space_last_trigger_at)) < voice_space_cooldown_s
                 ):
@@ -1493,33 +1724,39 @@ def main() -> int:
                         why = "voice_active" if state.ui.voice_active else "space_cooldown"
                         print(f"[voice] ignore space trigger reason={why}")
                     continue
-                # Voice record + send flow on keyboard space.
-                driver_mode, voice_flow_ran = _run_voice_flow(
-                    state=state,
-                    epd=epd,
-                    fonts=fonts,
-                    theme=theme,
-                    panel_threshold=panel_threshold,
-                    panel_muted=panel_muted,
-                    panel_gamma=panel_gamma,
-                    panel_dither=panel_dither,
-                    voice_api_url=str(args.voice_api_url or ""),
-                    voice_locale=str(args.voice_locale or "zh-CN"),
-                    voice_timezone=str(args.voice_timezone or "UTC"),
-                    voice_timeout_s=float(args.voice_timeout),
-                    voice_max_sec=max(1, int(args.voice_max_sec)),
-                    voice_audio_device=str(args.voice_audio_device or "default"),
-                    voice_audio_rate=max(8000, int(args.voice_audio_rate)),
-                    voice_audio_channels=max(1, int(args.voice_audio_channels)),
-                    current_mode=driver_mode,
-                    supports_partial=bool(supports_partial),
-                    refresh_debug=bool(refresh_debug),
-                )
-                space_last_trigger_at = time.time()
-                buffered = _drain_stdin_nonblocking(max_chars=512)
-                if "\x03" in buffered or "q" in buffered.lower():
-                    return 0
-                ev = None
+                else:
+                    # Voice record + send flow on keyboard space.
+                    voice_flow_demo_only = bool(in_voice_guide_demo)
+                    driver_mode, voice_flow_ran = _run_voice_flow(
+                        state=state,
+                        epd=epd,
+                        fonts=fonts,
+                        theme=theme,
+                        panel_threshold=panel_threshold,
+                        panel_muted=panel_muted,
+                        panel_gamma=panel_gamma,
+                        panel_dither=panel_dither,
+                        voice_api_url=str(args.voice_api_url or ""),
+                        voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
+                        voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),
+                        voice_timeout_s=float(args.voice_timeout),
+                        voice_max_sec=max(1, int(args.voice_max_sec)),
+                        voice_audio_device=str(args.voice_audio_device or "default"),
+                        voice_audio_rate=max(8000, int(args.voice_audio_rate)),
+                        voice_audio_channels=max(1, int(args.voice_audio_channels)),
+                        current_mode=driver_mode,
+                        supports_partial=bool(supports_partial),
+                        refresh_debug=bool(refresh_debug),
+                        demo_only=voice_flow_demo_only,
+                    )
+                    if voice_flow_demo_only:
+                        # Let the normal frame pipeline render the updated onboarding demo panel.
+                        voice_flow_ran = False
+                    space_last_trigger_at = time.time()
+                    buffered = _drain_stdin_nonblocking(max_chars=512)
+                    if "\x03" in buffered or "q" in buffered.lower():
+                        return 0
+                    ev = None
             elif key in ("p", "P"):
                 # Keep a manual way to trigger legacy long-press behavior in console.
                 ev = LongPress()
@@ -1529,6 +1766,8 @@ def main() -> int:
                 ev = Back()
             elif key in ("s", "S"):
                 state.ui.screen = Screen.SETTINGS
+            elif key in ("g", "G"):
+                open_onboarding_voice_guide(state)
             elif key in ("w", "W"):
                 if state.ui.screen == Screen.HOME:
                     state.ui.screen = Screen.WEATHER
@@ -1542,6 +1781,16 @@ def main() -> int:
             if now >= next_tick:
                 reduce(state, Tick(now=now), theme=theme)
                 next_tick = now + float(args.tick)
+
+            current_device_config = _device_config_from_state(state)
+            if current_device_config != persisted_device_config:
+                try:
+                    save_device_config(repo_root, current_device_config)
+                    persisted_device_config = dict(current_device_config)
+                    if refresh_debug:
+                        print("[onboarding] device_config persisted")
+                except Exception as e:
+                    print(f"[warn] failed to persist device config: {e}")
 
             # Voice flow renders directly to EPD; resync committed snapshot/frame.
             if voice_flow_ran:
@@ -1612,8 +1861,18 @@ def main() -> int:
                             else:
                                 # BBox can be overly large when a few distant pixels change.
                                 # Only trust bbox fallback when changed-pixel ratio is meaningful.
+                                skip_onboarding_diff_fallback = (
+                                    curr_snapshot.screen == Screen.ONBOARDING
+                                    and str(curr_snapshot.onboarding_step or "").strip().lower() in ("prefs", "voice_guide")
+                                )
                                 fallback_ratio_min = float(theme.get("refresh_diff_fallback_min_ratio", 0.10) or 0.10)
-                                if diff_ratio >= fallback_ratio_min:
+                                if skip_onboarding_diff_fallback:
+                                    if refresh_debug:
+                                        print(
+                                            f"[refresh] DIFF_FALLBACK_SKIP screen={curr_snapshot.screen.value} "
+                                            f"step={curr_snapshot.onboarding_step} reason=onboarding_compact_policy"
+                                        )
+                                elif diff_ratio >= fallback_ratio_min:
                                     dirty_rects.append(diff_box)
                                     dirty_reasons.append("diff_fallback")
                                 elif refresh_debug:
@@ -1660,6 +1919,7 @@ def main() -> int:
                 force_full_clean = bool(full_clean_reason)
                 screen_changed = pending_snapshot.screen != committed_snapshot.screen
                 rotation_changed = pending_snapshot.rotation_deg != committed_snapshot.rotation_deg
+                screen_force_clean = _screen_force_full_clean_with_theme(pending_snapshot.screen, theme)
                 screen_change_partial = (
                     screen_changed
                     and _screen_change_partial_enabled_with_theme(
@@ -1668,8 +1928,13 @@ def main() -> int:
                         theme,
                     )
                 )
+                screen_change_force_partial = (
+                    screen_changed
+                    and screen_change_partial
+                    and _screen_change_force_partial_with_theme(pending_snapshot.screen, theme)
+                )
                 font_size_changed = pending_snapshot.font_size != committed_snapshot.font_size
-                force_flush = force_full_clean or screen_changed or rotation_changed
+                force_flush = force_full_clean or screen_changed or rotation_changed or screen_force_clean
 
                 if not refresh_runtime.should_throttle(now, min_gap_ms) or force_flush:
                     fast_full = _fast_full_enabled(theme)
@@ -1682,6 +1947,15 @@ def main() -> int:
                                     f"[refresh] R3_FULL_CLEAN screen={pending_snapshot.screen.value} "
                                     f"reason={full_clean_reason} partial_count={refresh_runtime.partial_count} "
                                     f"full_every={full_every_text} mode={policy_mode} "
+                                    f"dirty={','.join(pending_reasons) or '-'}"
+                                )
+                        elif screen_force_clean:
+                            driver_mode = _blit_full_clean(epd, pending_frame)
+                            refresh_runtime.mark_full_clean(now)
+                            if refresh_debug:
+                                print(
+                                    f"[refresh] R3_FULL_CLEAN screen={pending_snapshot.screen.value} "
+                                    f"reason=screen_policy_full_clean mode={policy_mode} "
                                     f"dirty={','.join(pending_reasons) or '-'}"
                                 )
                         elif rotation_changed:
@@ -1718,18 +1992,29 @@ def main() -> int:
                                 and pending_reasons
                                 and all(r in ("home.family_board_update", "diff_fallback") for r in pending_reasons)
                             )
-                            partial_pad = 1 if family_only else 2
+                            compact_onboarding = _is_onboarding_compact_step(pending_snapshot)
+                            partial_pad = 1 if (family_only or compact_onboarding) else 2
                             partial_max_rects = max(
                                 1,
                                 int(theme.get("refresh_partial_max_rects", 6) or 6),
                             )
+                            if compact_onboarding:
+                                partial_max_rects = max(
+                                    partial_max_rects,
+                                    int(theme.get("refresh_partial_max_rects_onboarding", 16) or 16),
+                                )
                             aligned_rects = _prepare_partial_rects(
                                 pending_rects,
                                 width=epd.width,
                                 height=epd.height,
                                 pad=partial_pad,
                                 max_rects=partial_max_rects,
+                                merge_overflow=not compact_onboarding,
                             )
+                            if compact_onboarding and len(aligned_rects) > 1:
+                                merged_compact = merge_rects(aligned_rects, epd.width, epd.height)
+                                if merged_compact is not None:
+                                    aligned_rects = [merged_compact]
                             partial_enabled = _screen_partial_enabled_with_theme(pending_snapshot.screen, theme)
                             mode_limit = _screen_area_limit_with_theme(
                                 pending_snapshot.screen,
@@ -1755,11 +2040,27 @@ def main() -> int:
                                 if aligned_rects
                                 else 1.0
                             )
+                            gate_area_ratio = _partial_gate_area_ratio(
+                                aligned_rects,
+                                width=epd.width,
+                                height=epd.height,
+                            )
+                            allow_over_limit_partial = (
+                                compact_onboarding
+                                and bool(theme.get("refresh_onboarding_compact_force_partial", True))
+                            )
+                            calendar_force_partial = (
+                                pending_snapshot.screen == Screen.CALENDAR
+                                and any(r.startswith("calendar.") for r in pending_reasons)
+                                and _calendar_force_partial_with_theme(theme)
+                            )
+                            allow_over_limit_partial = bool(allow_over_limit_partial or screen_change_force_partial)
+                            allow_over_limit_partial = bool(allow_over_limit_partial or calendar_force_partial)
                             if (
                                 supports_partial
                                 and partial_enabled
                                 and aligned_rects
-                                and max_area_ratio <= mode_limit
+                                and (gate_area_ratio <= mode_limit or allow_over_limit_partial)
                             ):
                                 for rect in aligned_rects:
                                     driver_mode = _blit_partial(epd, pending_frame, rect, driver_mode)
@@ -1770,8 +2071,10 @@ def main() -> int:
                                         f"[refresh] R1_PARTIAL_RECTS screen={pending_snapshot.screen.value} "
                                         f"count={len(aligned_rects)} rects={rect_text} "
                                         f"max_ratio={max_area_ratio:.3f} total_ratio={total_area_ratio:.3f} "
+                                        f"gate_ratio={gate_area_ratio:.3f} "
                                         f"limit={mode_limit:.3f} partial_count={refresh_runtime.partial_count}/{full_every_text} "
-                                        f"mode={policy_mode} dirty={','.join(pending_reasons) or '-'}"
+                                        f"mode={policy_mode} force_compact_partial={allow_over_limit_partial} "
+                                        f"dirty={','.join(pending_reasons) or '-'}"
                                     )
                             else:
                                 driver_mode = _blit_full(epd, pending_frame, driver_mode, fast=fast_full)
@@ -1782,11 +2085,12 @@ def main() -> int:
                                         why = "partial_disabled_for_screen"
                                     elif not aligned_rects:
                                         why = "no_aligned_rect"
-                                    elif max_area_ratio > mode_limit:
+                                    elif gate_area_ratio > mode_limit:
                                         why = "area_over_limit"
                                     print(
                                         f"[refresh] R2_FAST_FULL screen={pending_snapshot.screen.value} reason={why} "
                                         f"max_ratio={max_area_ratio:.3f} total_ratio={total_area_ratio:.3f} "
+                                        f"gate_ratio={gate_area_ratio:.3f} "
                                         f"limit={mode_limit:.3f} "
                                         f"mode={policy_mode} fast={'on' if fast_full else 'off'} "
                                         f"dirty={','.join(pending_reasons) or '-'}"
