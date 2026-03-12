@@ -1647,6 +1647,7 @@ def main() -> int:
     space_last_trigger_at = 0.0
     keyboard_voice_hold_active = False
     keyboard_voice_last_seen_at = 0.0
+    keyboard_voice_repeat_seen = False
     voice_capture_proc: Any | None = None
     voice_capture_path = ""
     voice_capture_started_at = 0.0
@@ -1773,7 +1774,9 @@ def main() -> int:
                 voice_capture_path = ""
                 voice_capture_started_at = 0.0
                 keyboard_voice_hold_active = False
+                keyboard_voice_repeat_seen = False
                 if not audio:
+                    print("[voice] capture_failed source=max_sec reason=empty_or_short_audio")
                     _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
                 else:
                     voice_job_capture_s = max(0.0, now - capture_started_at)
@@ -1800,6 +1803,7 @@ def main() -> int:
 
             if (
                 keyboard_voice_hold_active
+                and keyboard_voice_repeat_seen
                 and voice_capture_proc is not None
                 and voice_job_future is None
                 and str(voice_capture_source or "") == "keyboard_hold"
@@ -1811,7 +1815,9 @@ def main() -> int:
                 voice_capture_path = ""
                 voice_capture_started_at = 0.0
                 keyboard_voice_hold_active = False
+                keyboard_voice_repeat_seen = False
                 if not audio:
+                    print("[voice] capture_failed source=keyboard_hold reason=empty_or_short_audio")
                     _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
                 else:
                     voice_job_capture_s = max(0.0, now - capture_started_at)
@@ -1960,6 +1966,7 @@ def main() -> int:
                                 voice_capture_path = ""
                                 voice_capture_started_at = 0.0
                                 keyboard_voice_hold_active = False
+                                keyboard_voice_repeat_seen = False
                                 if not audio:
                                     _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
                                 else:
@@ -2065,6 +2072,7 @@ def main() -> int:
                         print("[voice] ignore V trigger reason=voice_processing")
                 elif voice_capture_proc is not None and str(voice_capture_source or "") == "keyboard_hold":
                     keyboard_voice_hold_active = True
+                    keyboard_voice_repeat_seen = True
                     keyboard_voice_last_seen_at = now
                     ev = None
                 elif (
@@ -2090,6 +2098,7 @@ def main() -> int:
                         voice_capture_demo_only = bool(in_voice_guide_demo)
                         voice_capture_source = "keyboard_hold"
                         keyboard_voice_hold_active = True
+                        keyboard_voice_repeat_seen = False
                         keyboard_voice_last_seen_at = now
                         space_last_trigger_at = now
                         _set_voice_overlay(state, "recording", "Listening... release V to send")
@@ -2122,6 +2131,7 @@ def main() -> int:
                     voice_capture_path = ""
                     voice_capture_started_at = 0.0
                     keyboard_voice_hold_active = False
+                    keyboard_voice_repeat_seen = False
                     if not audio:
                         _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
                     else:
@@ -2184,6 +2194,7 @@ def main() -> int:
                         voice_capture_demo_only = bool(in_voice_guide_demo)
                         voice_capture_source = "space"
                         keyboard_voice_hold_active = False
+                        keyboard_voice_repeat_seen = False
                         space_last_trigger_at = now
                         _set_voice_overlay(state, "recording", "Listening... press Space again to send")
                         if refresh_debug:
@@ -2201,6 +2212,7 @@ def main() -> int:
                     voice_capture_path = ""
                     voice_capture_started_at = 0.0
                     keyboard_voice_hold_active = False
+                    keyboard_voice_repeat_seen = False
                     voice_capture_demo_only = False
                     voice_capture_source = ""
                     _set_voice_overlay(state, "idle")
@@ -2566,6 +2578,7 @@ def main() -> int:
         if voice_capture_proc is not None:
             _stop_audio_capture(proc=voice_capture_proc, audio_path=voice_capture_path)
             keyboard_voice_hold_active = False
+            keyboard_voice_repeat_seen = False
         if voice_job_audio_path:
             try:
                 os.remove(voice_job_audio_path)
