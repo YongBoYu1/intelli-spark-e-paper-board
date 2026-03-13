@@ -11,7 +11,11 @@ import time
 import uuid
 from zoneinfo import ZoneInfo
 
-from app.core.reducer import open_app_by_name
+from app.core.reducer import (
+    _toggle_home_kitchen_task_by_index,
+    _toggle_task_completed_by_index,
+    open_app_by_name,
+)
 from app.core.state import AppState, MemoItem, Reminder, Screen, WidgetMode
 from app.voice.policy import decide_voice_policy
 
@@ -1413,11 +1417,18 @@ def _mark_voice_completed(state: AppState, model_idx: int, *, now_ts: float | No
         return False
 
     now_v = float(now_ts if now_ts is not None else time.time())
-    state.model.reminders[model_idx] = replace(row, completed=True)
-    state.ui.reminders_version = int(state.ui.reminders_version or 0) + 1
-    state.ui.pending_reorder = True
-    state.ui.reorder_due_at = max(float(state.ui.reorder_due_at or 0.0), now_v + 2.0)
+    if _use_home_kitchen_completion_semantics(state):
+        _toggle_home_kitchen_task_by_index(state, model_idx, now_v, theme={})
+        return True
+
+    _toggle_task_completed_by_index(state, model_idx)
     return True
+
+
+def _use_home_kitchen_completion_semantics(state: AppState) -> bool:
+    if state.ui.screen != Screen.HOME:
+        return False
+    return bool(str(state.ui.kitchen_visible_layout or "").strip())
 
 
 def _norm_item_name(value: str) -> str:

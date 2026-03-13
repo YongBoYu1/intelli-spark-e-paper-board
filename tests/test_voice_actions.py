@@ -277,6 +277,32 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(len(shopping_rows), 1)
         self.assertFalse(bool(shopping_rows[0].completed))
 
+    def test_apply_shopping_remove_item_inventory_source_on_home_kitchen_uses_pending_hide(self) -> None:
+        self.state.ui.screen = Screen.HOME
+        self.state.ui.kitchen_visible_layout = "landscape"
+
+        result = apply_voice_action(
+            self.state,
+            VoiceAction(tool="shopping_remove_item", args={"item_name": "milk", "source": "inventory"}),
+        )
+
+        self.assertTrue(result.changed)
+        self.assertEqual(self.state.ui.home_pending_hide_rids, ["f1"])
+        self.assertFalse(self.state.ui.pending_reorder)
+        self.assertEqual(self.state.ui.reorder_due_at, 0.0)
+
+    def test_apply_shopping_remove_item_inventory_source_on_list_keeps_reorder_behavior(self) -> None:
+        self.state.ui.screen = Screen.REMINDERS
+
+        result = apply_voice_action(
+            self.state,
+            VoiceAction(tool="shopping_remove_item", args={"item_name": "milk", "source": "inventory"}),
+        )
+
+        self.assertTrue(result.changed)
+        self.assertTrue(self.state.ui.pending_reorder)
+        self.assertGreater(self.state.ui.reorder_due_at, 0.0)
+
     def test_apply_shopping_remove_positional_first_two(self) -> None:
         self.state.model.reminders.append(Reminder(rid="g2", title="Buy Bread", right="", category="general", created_at=1771616001.0))
         result = apply_voice_action(
@@ -411,6 +437,22 @@ class VoiceActionTests(unittest.TestCase):
         self.assertIn("skipped", result.message.lower())
         after_titles = [r.title for r in self.state.model.reminders]
         self.assertEqual(after_titles, before_titles)
+
+    def test_apply_inventory_used_on_home_kitchen_uses_pending_hide(self) -> None:
+        self.state.ui.screen = Screen.HOME
+        self.state.ui.kitchen_visible_layout = "landscape"
+
+        result = apply_voice_action(
+            self.state,
+            VoiceAction(
+                tool="inventory_log_event",
+                args={"item_name": "milk", "event_type": "consumed", "effective_date": "2026-02-20"},
+            ),
+        )
+
+        self.assertTrue(result.changed)
+        self.assertEqual(self.state.ui.home_pending_hide_rids, ["f1"])
+        self.assertFalse(self.state.ui.pending_reorder)
 
     def test_clear_shopping_requires_confirm_and_then_clears(self) -> None:
         first = apply_voice_action(self.state, VoiceAction(tool="shopping_clear_all", args={}))
