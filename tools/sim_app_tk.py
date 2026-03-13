@@ -31,7 +31,7 @@ from app.core.reducer import (
     MemoDelta,
     apply_onboarding_voice_demo_result,
     apply_onboarding_voice_demo_error,
-    open_onboarding_voice_guide,
+    open_landing_welcome,
 )
 from app.data.location import resolve_dashboard_location
 from app.data.weather_api import resolve_weather_data
@@ -700,7 +700,7 @@ class Simulator(tk.Tk):
             "  S = Open settings\n"
             "  T = Open timer (home only)\n"
             "  O = Restart onboarding from landing\n"
-            "  G = Open voice guide directly\n"
+            "  G = Open welcome landing\n"
             "  Hold Space = Record, Release Space = Send to Voice API\n"
             "  B / Esc / Backspace = Back (dashboard -> menu, detail/menu -> dashboard)\n"
             "  ↑/↓ = Memo (when left panel focused)\n"
@@ -721,8 +721,8 @@ class Simulator(tk.Tk):
         self.bind("T", lambda _e: self._open_timer())
         self.bind("o", lambda _e: self._start_onboarding_from_landing())
         self.bind("O", lambda _e: self._start_onboarding_from_landing())
-        self.bind("g", lambda _e: self._open_voice_guide_direct())
-        self.bind("G", lambda _e: self._open_voice_guide_direct())
+        self.bind("g", lambda _e: self._start_onboarding_from_landing())
+        self.bind("G", lambda _e: self._start_onboarding_from_landing())
         self.bind_all("<KeyPress-Return>", self._on_enter_press)
         self.bind_all("<KeyPress-KP_Enter>", self._on_enter_press)
         self.bind("b", lambda _e: self._dispatch(Back()))
@@ -931,42 +931,7 @@ class Simulator(tk.Tk):
         self._render()
 
     def _start_onboarding_from_landing(self):
-        # Force-first-run path for simulator demos.
-        self.state.ui.setup_completed = False
-        self.state.ui.screen = Screen.LANDING
-        self.state.ui.boot_started_at = time.time()
-        self.state.ui.boot_min_show_s = 0.0
-        self.state.ui.landing_rotate_seen = False
-        self.state.ui.landing_confirm_seen = False
-        locale = str(self.state.ui.voice_locale or "en-US")
-        self.state.ui.landing_voice_demo_index = 1 if locale == "es-ES" else (2 if locale == "fr-FR" else 0)
-        self.state.ui.landing_voice_demo_cycles = 0
-        self.state.ui.landing_last_demo_at = time.time()
-        self.state.ui.landing_status = ""
-        self.state.ui.onboarding_step = "start"
-        self.state.ui.onboarding_focus_index = 0
-        self.state.ui.onboarding_qr_focus_index = 0
-        self.state.ui.onboarding_prefs_focus_index = 0
-        self.state.ui.onboarding_voice_guide_focus_index = 0
-        self.state.ui.onboarding_pair_token = ""
-        self.state.ui.onboarding_pair_expires_at = 0.0
-        self.state.ui.onboarding_status = ""
-        self.state.ui.onboarding_voice_demo_heard = ""
-        self.state.ui.onboarding_voice_demo_attempted = False
-        self.state.ui.onboarding_voice_demo_case_index = 0
-        self.state.ui.onboarding_voice_demo_pass_mask = 0
-        self.state.ui.onboarding_voice_demo_action = ""
-        self.state.ui.onboarding_voice_sample_text = "Add milk to inventory"
-        self.state.ui.onboarding_voice_expected_action = "Add inventory"
-        self.state.ui.idle = False
-        self.state.ui.last_interaction_at = time.time()
-        self._render()
-        return "break"
-
-    def _open_voice_guide_direct(self):
-        open_onboarding_voice_guide(self.state)
-        self.state.ui.idle = False
-        self.state.ui.last_interaction_at = time.time()
+        open_landing_welcome(self.state)
         self._render()
         return "break"
 

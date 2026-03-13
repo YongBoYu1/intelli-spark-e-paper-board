@@ -85,6 +85,37 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         self.assertFalse(rec._screen_change_force_partial_with_theme(rec.Screen.SETTINGS, theme))
         self.assertTrue(rec._screen_change_force_partial_with_theme(rec.Screen.TIMER, theme))
 
+    def test_consume_encoder_turn_ignores_edges_during_click_guard(self) -> None:
+        accum, ev = rec._consume_encoder_turn(
+            0b00,
+            0b01,
+            key_phys_down=False,
+            now=1.00,
+            rotate_block_until=1.10,
+            accum=3,
+            step_n=4,
+            flip=False,
+        )
+
+        self.assertEqual(accum, 0)
+        self.assertIsNone(ev)
+
+    def test_consume_encoder_turn_emits_rotate_when_detent_completes(self) -> None:
+        accum, ev = rec._consume_encoder_turn(
+            0b10,
+            0b00,
+            key_phys_down=False,
+            now=1.00,
+            rotate_block_until=0.0,
+            accum=3,
+            step_n=4,
+            flip=False,
+        )
+
+        self.assertEqual(accum, 0)
+        self.assertIsInstance(ev, rec.Rotate)
+        self.assertEqual(ev.delta, 1)
+
     def test_calendar_force_partial_default_on(self) -> None:
         self.assertTrue(rec._calendar_force_partial_with_theme({}))
 
