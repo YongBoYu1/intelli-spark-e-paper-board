@@ -65,8 +65,8 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.LANDING, {}))
         self.assertFalse(rec._screen_force_full_clean_with_theme(rec.Screen.HOME, {}))
 
-    def test_screen_change_partial_default_allows_settings(self) -> None:
-        self.assertTrue(
+    def test_screen_change_partial_default_disables_settings(self) -> None:
+        self.assertFalse(
             rec._screen_change_partial_enabled_with_theme(
                 rec.Screen.HOME,
                 rec.Screen.SETTINGS,

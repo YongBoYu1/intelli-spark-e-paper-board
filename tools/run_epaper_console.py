@@ -794,7 +794,7 @@ def _screen_partial_enabled_with_theme(screen: Screen, theme: dict) -> bool:
         return True
 
     # Keep first-boot flows on partial-first path (same as other interactive screens).
-    default_screens = "settings,timer,home,menu,landing,onboarding"
+    default_screens = "timer,home,menu,landing,onboarding"
     default_names = [x.strip().lower() for x in default_screens.split(",") if x.strip()]
     raw = theme.get("refresh_partial_screens", default_screens)
     if isinstance(raw, str):
@@ -843,7 +843,7 @@ def _screen_change_partial_enabled_with_theme(prev_screen: Screen, curr_screen: 
     if bool(theme.get("refresh_force_full_on_screen_change", False)):
         return False
 
-    default_screens = "settings,timer,memo,calendar,inventory,reminders,landing,onboarding"
+    default_screens = "timer,memo,calendar,inventory,reminders,landing,onboarding"
     raw = theme.get("refresh_partial_screen_change_screens", default_screens)
     if isinstance(raw, str):
         names = [x.strip().lower() for x in raw.split(",") if x.strip()]
