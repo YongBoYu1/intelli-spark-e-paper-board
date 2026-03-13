@@ -1996,12 +1996,18 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         if rect is not None:
             rects.append(rect)
         reasons.append("home.weather_update")
-    if (
-        prev.timer_seconds != curr.timer_seconds
-        or prev.timer_running != curr.timer_running
-        or prev.clock_minute_bucket != curr.clock_minute_bucket
-        or prev.widget_mode != curr.widget_mode
-    ):
+    kitchen_layout = str(curr.kitchen_visible_layout or prev.kitchen_visible_layout or "").strip().lower()
+    is_kitchen_home = kitchen_layout in {"landscape", "portrait"}
+    if is_kitchen_home:
+        clock_or_timer_changed = prev.clock_minute_bucket != curr.clock_minute_bucket
+    else:
+        clock_or_timer_changed = (
+            prev.timer_seconds != curr.timer_seconds
+            or prev.timer_running != curr.timer_running
+            or prev.clock_minute_bucket != curr.clock_minute_bucket
+            or prev.widget_mode != curr.widget_mode
+        )
+    if clock_or_timer_changed:
         rect = home_regions["header_clock"] if portrait_home else regions["left_clock"]
         if rect is not None:
             rects.append(rect)

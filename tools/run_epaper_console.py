@@ -1221,7 +1221,7 @@ def _apply_voice_payload(
 
     before_screen = state.ui.screen
     plan = parse_voice_plan(payload)
-    plan_result = apply_voice_plan(state, plan, transcript=transcript)
+    plan_result = apply_voice_plan(state, plan, transcript=transcript, theme=theme)
     action_desc = ", ".join([describe_voice_action(a) for a in list(plan.actions or [])[:4]])
     if not action_desc:
         action_desc = describe_voice_action(parse_voice_action(payload))

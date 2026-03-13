@@ -291,6 +291,22 @@ class VoiceActionTests(unittest.TestCase):
         self.assertFalse(self.state.ui.pending_reorder)
         self.assertEqual(self.state.ui.reorder_due_at, 0.0)
 
+    def test_apply_shopping_remove_item_inventory_source_on_home_uses_theme_semantics_when_layout_not_set(self) -> None:
+        self.state.ui.screen = Screen.HOME
+        self.state.ui.rotation_deg = 0
+        self.state.ui.kitchen_visible_layout = ""
+
+        result = apply_voice_action(
+            self.state,
+            VoiceAction(tool="shopping_remove_item", args={"item_name": "milk", "source": "inventory"}),
+            theme={"home_variant": "kitchen_portrait"},
+        )
+
+        self.assertTrue(result.changed)
+        self.assertEqual(self.state.ui.home_pending_hide_rids, ["f1"])
+        self.assertFalse(self.state.ui.pending_reorder)
+        self.assertEqual(self.state.ui.reorder_due_at, 0.0)
+
     def test_apply_shopping_remove_item_inventory_source_on_list_keeps_reorder_behavior(self) -> None:
         self.state.ui.screen = Screen.REMINDERS
 

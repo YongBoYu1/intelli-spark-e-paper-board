@@ -12,6 +12,8 @@ import uuid
 from zoneinfo import ZoneInfo
 
 from app.core.reducer import (
+    _is_kitchen_variant,
+    _resolved_home_variant,
     _toggle_home_kitchen_task_by_index,
     _toggle_task_completed_by_index,
     open_app_by_name,
@@ -383,7 +385,13 @@ def build_request_meta(*, locale: str = "en-US", tz_name: str = "UTC") -> VoiceR
     )
 
 
-def apply_voice_plan(state: AppState, plan: VoicePlan, *, transcript: str = "") -> VoicePlanApplyResult:
+def apply_voice_plan(
+    state: AppState,
+    plan: VoicePlan,
+    *,
+    transcript: str = "",
+    theme: dict[str, Any] | None = None,
+) -> VoicePlanApplyResult:
     if not isinstance(plan, VoicePlan):
         plan = VoicePlan(actions=[VoiceAction("no_action", {"reason": "invalid_plan"})])
 
@@ -396,7 +404,7 @@ def apply_voice_plan(state: AppState, plan: VoicePlan, *, transcript: str = "") 
     hit_confirm = False
 
     for action in list(plan.actions or []):
-        result = apply_voice_action(state, action)
+        result = apply_voice_action(state, action, theme=theme)
         step_results.append(VoicePlanStepResult(action=action, result=result))
         changed = changed or bool(result.changed)
 
@@ -467,7 +475,12 @@ def apply_voice_plan(state: AppState, plan: VoicePlan, *, transcript: str = "") 
     )
 
 
-def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult:
+def apply_voice_action(
+    state: AppState,
+    action: VoiceAction,
+    *,
+    theme: dict[str, Any] | None = None,
+) -> VoiceApplyResult:
     expire_pending_voice_confirmation(state)
 
     if action.tool == "no_action":
@@ -489,7 +502,7 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
         app_name = _canonical_open_app_name(str(action.args.get("app") or ""))
         if not app_name:
             return VoiceApplyResult(changed=False, status="error", message="Invalid app target")
-        changed = open_app_by_name(state, app_name, now=time.time(), theme={})
+        changed = open_app_by_name(state, app_name, now=time.time(), theme=theme)
         return VoiceApplyResult(changed=changed, status="done", message=f"Opened {app_name}")
 
     if action.tool == "shopping_add_item":
@@ -558,7 +571,7 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
                 idx = _find_reminder_index(state, category="fridge", item_key=key)
                 if idx < 0:
                     return VoiceApplyResult(changed=False, status="done", message=f"Skipped: no matching inventory item for {title}")
-                changed = _mark_voice_completed(state, idx, now_ts=time.time())
+                changed = _mark_voice_completed(state, idx, now_ts=time.time(), theme=theme)
                 if not changed:
                     return VoiceApplyResult(changed=False, status="done", message=f"Skipped: inventory item already completed: {state.model.reminders[idx].title}")
                 return VoiceApplyResult(changed=True, status="done", message=f"Marked done in inventory: {state.model.reminders[idx].title}")
@@ -566,7 +579,7 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
             idx = _find_shopping_item_index(state, item_key=key)
             if idx < 0:
                 return VoiceApplyResult(changed=False, status="done", message=f"Skipped: no matching shopping item for {title}")
-            changed = _mark_voice_completed(state, idx, now_ts=time.time())
+            changed = _mark_voice_completed(state, idx, now_ts=time.time(), theme=theme)
             if not changed:
                 return VoiceApplyResult(changed=False, status="done", message=f"Skipped: item already completed: {state.model.reminders[idx].title}")
             return VoiceApplyResult(changed=True, status="done", message=f"Marked done in reminders: {state.model.reminders[idx].title}")
@@ -594,7 +607,7 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
         titles: list[str] = []
         for model_idx in selected:
             row = state.model.reminders[model_idx]
-            if _mark_voice_completed(state, model_idx, now_ts=time.time()):
+            if _mark_voice_completed(state, model_idx, now_ts=time.time(), theme=theme):
                 changed_count += 1
                 titles.append(str(row.title or ""))
         if changed_count <= 0:
@@ -645,7 +658,7 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
         if event_type in ("finished",):
             if policy.require_inventory_match and idx < 0:
                 return VoiceApplyResult(changed=False, status="done", message=f"Skipped: no matching inventory item for {title}")
-            changed = _mark_voice_completed(state, idx, now_ts=time.time())
+            changed = _mark_voice_completed(state, idx, now_ts=time.time(), theme=theme)
             if not changed:
                 return VoiceApplyResult(changed=False, status="done", message=f"Skipped: inventory item already completed: {state.model.reminders[idx].title}")
             return VoiceApplyResult(changed=True, status="done", message=f"Marked done in inventory: {state.model.reminders[idx].title}")
@@ -653,7 +666,7 @@ def apply_voice_action(state: AppState, action: VoiceAction) -> VoiceApplyResult
         if event_type in ("used", "consumed"):
             if policy.require_inventory_match and idx < 0:
                 return VoiceApplyResult(changed=False, status="done", message=f"Skipped: no matching inventory item for {title}")
-            changed = _mark_voice_completed(state, idx, now_ts=time.time())
+            changed = _mark_voice_completed(state, idx, now_ts=time.time(), theme=theme)
             if not changed:
                 return VoiceApplyResult(changed=False, status="done", message=f"Skipped: inventory item already completed: {state.model.reminders[idx].title}")
             return VoiceApplyResult(changed=True, status="done", message=f"Marked done in inventory: {state.model.reminders[idx].title}")
@@ -1409,7 +1422,13 @@ def _select_indices_by_position(
     return []
 
 
-def _mark_voice_completed(state: AppState, model_idx: int, *, now_ts: float | None = None) -> bool:
+def _mark_voice_completed(
+    state: AppState,
+    model_idx: int,
+    *,
+    now_ts: float | None = None,
+    theme: dict[str, Any] | None = None,
+) -> bool:
     if model_idx < 0 or model_idx >= len(state.model.reminders):
         return False
     row = state.model.reminders[model_idx]
@@ -1417,17 +1436,24 @@ def _mark_voice_completed(state: AppState, model_idx: int, *, now_ts: float | No
         return False
 
     now_v = float(now_ts if now_ts is not None else time.time())
-    if _use_home_kitchen_completion_semantics(state):
-        _toggle_home_kitchen_task_by_index(state, model_idx, now_v, theme={})
+    if _use_home_kitchen_completion_semantics(state, theme=theme):
+        _toggle_home_kitchen_task_by_index(state, model_idx, now_v, theme=dict(theme or {}))
         return True
 
     _toggle_task_completed_by_index(state, model_idx)
     return True
 
 
-def _use_home_kitchen_completion_semantics(state: AppState) -> bool:
+def _use_home_kitchen_completion_semantics(
+    state: AppState,
+    theme: dict[str, Any] | None = None,
+) -> bool:
     if state.ui.screen != Screen.HOME:
         return False
+    if theme:
+        variant = _resolved_home_variant(theme, rotation_deg=int(state.ui.rotation_deg or 0))
+        if _is_kitchen_variant(variant):
+            return True
     return bool(str(state.ui.kitchen_visible_layout or "").strip())
 
 

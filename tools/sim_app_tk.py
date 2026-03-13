@@ -1356,7 +1356,7 @@ class Simulator(tk.Tk):
         plan = parse_voice_plan(payload)
         action = plan.actions[0] if list(plan.actions or []) else parse_voice_action(payload)
         before_snap = _debug_snapshot_for_action(self.state, action)
-        result = apply_voice_plan(self.state, plan, transcript=transcript)
+        result = apply_voice_plan(self.state, plan, transcript=transcript, theme=self.theme)
         after_snap = _debug_snapshot_for_action(self.state, action)
         self.last_heard = transcript
         self.last_tool = ",".join([str(a.tool or "") for a in list(plan.actions or [])[:3]]) or str(action.tool or "")
