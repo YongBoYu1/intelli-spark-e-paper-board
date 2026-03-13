@@ -48,6 +48,7 @@ from app.core.reducer import (
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
 from app.data.location import resolve_dashboard_location
 from app.data.device_config import (
+    default_device_config,
     detect_local_timezone,
     load_device_config,
     sanitize_device_config,
@@ -518,6 +519,15 @@ def _device_config_from_state(state: AppState) -> dict:
     )
 
 
+def _landing_voice_demo_index(locale: str) -> int:
+    norm = str(locale or "en-US").strip()
+    if norm == "es-ES":
+        return 1
+    if norm == "fr-FR":
+        return 2
+    return 0
+
+
 def _apply_device_config_to_state(state: AppState, config: dict) -> None:
     cfg = sanitize_device_config(config)
     state.ui.setup_completed = bool(cfg.get("setup_completed", False))
@@ -528,6 +538,47 @@ def _apply_device_config_to_state(state: AppState, config: dict) -> None:
     state.ui.wifi_enabled = bool(cfg.get("wifi_enabled", False))
     state.ui.bluetooth_enabled = bool(cfg.get("bluetooth_enabled", False))
     state.ui.onboarding_wifi_ssid = str(cfg.get("wifi_ssid") or "")
+
+
+def _initialize_boot_flow_state(state: AppState, theme: dict, *, now: float | None = None) -> None:
+    started_at = time.time() if now is None else float(now)
+    state.ui.boot_started_at = started_at
+    state.ui.boot_min_show_s = 0.0
+    state.ui.landing_rotate_seen = False
+    state.ui.landing_confirm_seen = False
+    state.ui.landing_voice_demo_index = _landing_voice_demo_index(state.ui.voice_locale)
+    state.ui.landing_voice_demo_cycles = 0
+    state.ui.landing_last_demo_at = started_at
+    state.ui.landing_status = ""
+    state.ui.onboarding_focus_index = 0
+    state.ui.onboarding_qr_focus_index = 0
+    state.ui.onboarding_prefs_focus_index = 0
+    state.ui.onboarding_voice_guide_focus_index = 0
+    state.ui.onboarding_voice_demo_heard = ""
+    state.ui.onboarding_voice_demo_attempted = False
+    state.ui.onboarding_voice_demo_case_index = 0
+    state.ui.onboarding_voice_demo_pass_mask = 0
+    state.ui.onboarding_voice_demo_action = ""
+    state.ui.onboarding_voice_sample_text = "Add milk to inventory"
+    state.ui.onboarding_voice_expected_action = "Add inventory"
+    if bool(state.ui.setup_completed):
+        state.ui.screen = Screen.HOME
+    elif bool(theme.get("boot_landing_enabled", True)):
+        state.ui.screen = Screen.LANDING
+    else:
+        state.ui.screen = Screen.ONBOARDING
+        state.ui.onboarding_step = "start"
+
+
+def _apply_factory_reset(state: AppState, repo_root: str, theme: dict, *, now: float | None = None) -> dict:
+    config = sanitize_device_config(default_device_config())
+    save_device_config(repo_root, config)
+    state.ui = AppState(model=state.model).ui
+    _apply_device_config_to_state(state, config)
+    _initialize_boot_flow_state(state, theme, now=now)
+    state.ui.factory_reset_armed_until = 0.0
+    state.ui.factory_reset_requested = False
+    return config
 
 
 def _render_frame(
@@ -1422,36 +1473,7 @@ def main() -> int:
     state = AppState(model=_load_model(repo_root))
     device_config = load_device_config(repo_root)
     _apply_device_config_to_state(state, device_config)
-    state.ui.boot_started_at = time.time()
-    state.ui.boot_min_show_s = 0.0
-    state.ui.landing_rotate_seen = False
-    state.ui.landing_confirm_seen = False
-    state.ui.landing_voice_demo_index = (
-        1 if str(state.ui.voice_locale or "en-US") == "es-ES"
-        else (2 if str(state.ui.voice_locale or "en-US") == "fr-FR" else 0)
-    )
-    state.ui.landing_voice_demo_cycles = 0
-    state.ui.landing_last_demo_at = time.time()
-    state.ui.landing_status = ""
-    state.ui.onboarding_focus_index = 0
-    state.ui.onboarding_qr_focus_index = 0
-    state.ui.onboarding_prefs_focus_index = 0
-    state.ui.onboarding_voice_guide_focus_index = 0
-    state.ui.onboarding_voice_demo_heard = ""
-    state.ui.onboarding_voice_demo_attempted = False
-    state.ui.onboarding_voice_demo_case_index = 0
-    state.ui.onboarding_voice_demo_pass_mask = 0
-    state.ui.onboarding_voice_demo_action = ""
-    state.ui.onboarding_voice_sample_text = "Add milk to inventory"
-    state.ui.onboarding_voice_expected_action = "Add inventory"
-    if bool(state.ui.setup_completed):
-        state.ui.screen = Screen.HOME
-    elif bool(theme.get("boot_landing_enabled", True)):
-        # Landing is first-boot only.
-        state.ui.screen = Screen.LANDING
-    else:
-        state.ui.screen = Screen.ONBOARDING
-        state.ui.onboarding_step = "start"
+    _initialize_boot_flow_state(state, theme)
     persisted_device_config = _device_config_from_state(state)
     save_device_config(repo_root, persisted_device_config)
     if not str(args.voice_api_url or "").strip():
@@ -1781,6 +1803,38 @@ def main() -> int:
             if now >= next_tick:
                 reduce(state, Tick(now=now), theme=theme)
                 next_tick = now + float(args.tick)
+
+            if bool(state.ui.factory_reset_requested):
+                try:
+                    persisted_device_config = _apply_factory_reset(state, repo_root, theme, now=now)
+                    committed_frame = _render_frame(
+                        epd,
+                        state,
+                        fonts,
+                        theme,
+                        panel_threshold=panel_threshold,
+                        panel_muted=panel_muted,
+                        panel_gamma=panel_gamma,
+                        panel_dither=panel_dither,
+                    )
+                    driver_mode = _blit_full_clean(epd, committed_frame)
+                    committed_sig = _state_render_sig(state)
+                    committed_snapshot = build_ui_snapshot(state)
+                    pending_frame = None
+                    pending_sig = None
+                    pending_snapshot = None
+                    pending_reasons = []
+                    refresh_runtime.clear_pending()
+                    refresh_runtime.mark_full_clean(now)
+                    weather_refresh_tz = str(state.ui.device_timezone or "")
+                    next_weather_refresh_at = _next_weather_refresh_at(now, weather_refresh_hours, tz_name=weather_refresh_tz)
+                    continue
+                except Exception as e:
+                    state.ui.factory_reset_requested = False
+                    state.ui.factory_reset_armed_until = 0.0
+                    state.ui.settings_notice = "RESET FAILED"
+                    state.ui.settings_notice_due_at = time.time() + 3.0
+                    print(f"[warn] failed to factory reset device config: {e}")
 
             current_device_config = _device_config_from_state(state)
             if current_device_config != persisted_device_config:

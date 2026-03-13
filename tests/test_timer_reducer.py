@@ -395,6 +395,43 @@ class TimerReducerTests(unittest.TestCase):
         self.assertEqual(self.state.ui.screen, Screen.SETTINGS)
         self.assertGreaterEqual(self.state.ui.settings_focused_index, 0)
 
+    def test_settings_reset_requires_second_click(self) -> None:
+        self.state.ui.screen = Screen.SETTINGS
+        self.state.ui.settings_focused_index = SETTINGS_ORDER.index(SettingsItem.RESET_AND_WIPE)
+
+        reduce(self.state, Click(), theme={})
+
+        self.assertFalse(self.state.ui.factory_reset_requested)
+        self.assertGreater(self.state.ui.factory_reset_armed_until, 0.0)
+        self.assertEqual(self.state.ui.settings_notice, "CLICK AGAIN TO RESET")
+
+    def test_settings_reset_second_click_requests_factory_reset(self) -> None:
+        self.state.ui.screen = Screen.SETTINGS
+        self.state.ui.settings_focused_index = SETTINGS_ORDER.index(SettingsItem.RESET_AND_WIPE)
+        self.state.ui.factory_reset_armed_until = 200.0
+
+        with patch("app.core.reducer.time.time", return_value=100.0):
+            reduce(self.state, Click(), theme={})
+
+        self.assertTrue(self.state.ui.factory_reset_requested)
+        self.assertEqual(self.state.ui.factory_reset_armed_until, 0.0)
+
+    def test_settings_rotate_cancels_factory_reset_confirmation(self) -> None:
+        self.state.ui.screen = Screen.SETTINGS
+        self.state.ui.settings_focused_index = SETTINGS_ORDER.index(SettingsItem.RESET_AND_WIPE)
+        self.state.ui.factory_reset_armed_until = 200.0
+
+        reduce(self.state, Rotate(+1), theme={})
+
+        self.assertEqual(self.state.ui.factory_reset_armed_until, 0.0)
+
+    def test_tick_expires_factory_reset_confirmation(self) -> None:
+        self.state.ui.factory_reset_armed_until = 100.0
+
+        reduce(self.state, Tick(now=100.1), theme={})
+
+        self.assertEqual(self.state.ui.factory_reset_armed_until, 0.0)
+
     def test_tick_reaching_zero_starts_timer_done_alert(self) -> None:
         self.state.ui.screen = Screen.TIMER
         self.state.ui.widget_mode = WidgetMode.TIMER

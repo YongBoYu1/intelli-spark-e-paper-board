@@ -20,6 +20,8 @@ from app.core.settings_schema import SettingsItem, SETTINGS_ORDER
 from app.core.state import AppState, Screen, Reminder, MenuItemId, WeatherDay, WidgetMode
 from app.data.weather_api import resolve_weather_data
 
+FACTORY_RESET_CONFIRM_WINDOW_S = 6.0
+
 
 class Event:
     pass
@@ -572,20 +574,24 @@ def _handle_settings_click(state: AppState, now: float) -> None:
     item = _settings_item_for_focus(state)
 
     if item == SettingsItem.FONT_SIZE:
+        state.ui.factory_reset_armed_until = 0.0
         state.ui.font_size = str(_cycle_value(str(state.ui.font_size or "medium"), ["small", "medium", "large"]))
         return
 
     if item == SettingsItem.PARTIAL_REFRESH:
+        state.ui.factory_reset_armed_until = 0.0
         state.ui.partial_refresh_mode = str(
             _cycle_value(str(state.ui.partial_refresh_mode or "balanced"), ["slow", "balanced", "fast"])
         )
         return
 
     if item == SettingsItem.FULL_REFRESH:
+        state.ui.factory_reset_armed_until = 0.0
         state.ui.full_refresh_every = int(_cycle_value(int(state.ui.full_refresh_every or 30), [10, 20, 30]))
         return
 
     if item == SettingsItem.CONNECTIVITY:
+        state.ui.factory_reset_armed_until = 0.0
         # One switch for the combined connectivity row.
         next_on = not (bool(state.ui.wifi_enabled) and bool(state.ui.bluetooth_enabled))
         state.ui.wifi_enabled = next_on
@@ -593,10 +599,12 @@ def _handle_settings_click(state: AppState, now: float) -> None:
         return
 
     if item == SettingsItem.AUTO_SYNC:
+        state.ui.factory_reset_armed_until = 0.0
         state.ui.auto_sync_enabled = not bool(state.ui.auto_sync_enabled)
         return
 
     if item == SettingsItem.SYNC_NOW:
+        state.ui.factory_reset_armed_until = 0.0
         # V1 placeholder: fake sync success without backend integration.
         state.ui.last_sync_at = float(now)
         state.ui.sync_state = "ok"
@@ -604,10 +612,21 @@ def _handle_settings_click(state: AppState, now: float) -> None:
         return
 
     if item == SettingsItem.RESET_AND_WIPE:
-        _set_settings_notice(state, "NOT IMPLEMENTED")
+        if float(state.ui.factory_reset_armed_until or 0.0) > float(now):
+            state.ui.factory_reset_armed_until = 0.0
+            state.ui.factory_reset_requested = True
+        else:
+            state.ui.factory_reset_requested = False
+            state.ui.factory_reset_armed_until = float(now) + FACTORY_RESET_CONFIRM_WINDOW_S
+            _set_settings_notice(
+                state,
+                "CLICK AGAIN TO RESET",
+                due_in_s=FACTORY_RESET_CONFIRM_WINDOW_S,
+            )
         return
 
     if item == SettingsItem.ROTATION:
+        state.ui.factory_reset_armed_until = 0.0
         _toggle_rotation(state)
         return
 
@@ -1296,6 +1315,8 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         if state.ui.settings_notice and now >= float(state.ui.settings_notice_due_at or 0.0):
             state.ui.settings_notice = ""
             state.ui.settings_notice_due_at = 0.0
+        if state.ui.factory_reset_armed_until and now >= float(state.ui.factory_reset_armed_until or 0.0):
+            state.ui.factory_reset_armed_until = 0.0
 
         if state.ui.screen == Screen.HOME and _is_kitchen_variant(variant):
             if _maybe_promote_home_pending_hide(state, now, theme=theme):
@@ -1406,6 +1427,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             cur = int(state.ui.settings_focused_index or 0)
             if cur < 0:
                 cur = 0
+            state.ui.factory_reset_armed_until = 0.0
             state.ui.settings_focused_index = (cur + event.delta) % n
         elif state.ui.screen == Screen.TIMER:
             _clear_timer_alert(state)
@@ -1516,6 +1538,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         return state
 
     if isinstance(event, LongPress):
+        state.ui.factory_reset_armed_until = 0.0
         # Single-button policy:
         # - HOME long press toggles navigation overlay
         # - Any other screen long press returns to HOME
@@ -1535,12 +1558,14 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         return state
 
     if isinstance(event, RotateButton):
+        state.ui.factory_reset_armed_until = 0.0
         _toggle_rotation(state)
         if state.ui.screen == Screen.HOME and _is_kitchen_variant(_resolved_home_variant(theme, rotation_deg=int(state.ui.rotation_deg or 0))):
             _clamp_focus_kitchen(state, theme)
         return state
 
     if isinstance(event, Back):
+        state.ui.factory_reset_armed_until = 0.0
         # Back should always cancel any pending destructive voice confirmation,
         # even if the confirmation overlay has already timed out/hidden.
         state.ui.voice_confirm_tool = ""

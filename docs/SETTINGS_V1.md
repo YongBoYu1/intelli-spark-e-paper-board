@@ -22,7 +22,7 @@ Goals:
 - `Sync Now`: action row
 
 ### Other
-- `Reset / Web Data`: placeholder action (not implemented)
+- `Reset / Web Data`: reset device configuration and return to first-boot flow
 
 ## Layout Rules
 
@@ -60,7 +60,7 @@ Goals:
   - `WiFi + BT`: toggle combined state for both switches
   - `Auto Sync`: toggle on/off
   - `Sync Now`: fake success, updates `last_sync_at`
-  - `Reset / Web Data`: placeholder (`NOT IMPLEMENTED`)
+  - `Reset / Web Data`: two-click confirm, then reset device config and return to first boot
 
 ## Current Implementation Status
 
@@ -74,7 +74,7 @@ Implemented files:
 
 Not implemented in V1:
 - Real backend sync pipeline
-- Real reset/wipe execution
+- Full dashboard/user-data wipe
 - Dedicated WiFi/Bluetooth pairing/configuration flow
 
 ## Branch and Tracking

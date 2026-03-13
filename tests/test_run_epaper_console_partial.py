@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -187,6 +189,36 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         self.assertEqual(epd.init_count, 1)
         self.assertEqual(epd.clear_count, 1)
         self.assertEqual(epd.full_display_count, 1)
+
+    def test_apply_factory_reset_resets_to_first_boot_state(self) -> None:
+        state = AppState(model=DashboardModel())
+        state.ui.setup_completed = True
+        state.ui.screen = rec.Screen.SETTINGS
+        state.ui.device_language = "fr-FR"
+        state.ui.voice_locale = "fr-FR"
+        state.ui.auto_sync_enabled = False
+        state.ui.wifi_enabled = True
+        state.ui.bluetooth_enabled = True
+        state.ui.onboarding_wifi_ssid = "Cafe"
+        state.ui.factory_reset_requested = True
+        state.ui.settings_notice = "Busy"
+
+        with tempfile.TemporaryDirectory() as td:
+            cfg = rec._apply_factory_reset(state, td, {}, now=123.0)
+
+            self.assertEqual(cfg, rec.sanitize_device_config(rec.default_device_config()))
+            self.assertFalse(state.ui.setup_completed)
+            self.assertEqual(state.ui.screen, rec.Screen.LANDING)
+            self.assertEqual(state.ui.device_language, cfg["language"])
+            self.assertEqual(state.ui.voice_locale, cfg["voice_locale"])
+            self.assertEqual(state.ui.onboarding_wifi_ssid, "")
+            self.assertFalse(state.ui.wifi_enabled)
+            self.assertFalse(state.ui.bluetooth_enabled)
+            self.assertTrue(state.ui.auto_sync_enabled)
+            self.assertFalse(state.ui.factory_reset_requested)
+            self.assertEqual(state.ui.factory_reset_armed_until, 0.0)
+            self.assertEqual(state.ui.settings_notice, "")
+            self.assertTrue(os.path.exists(os.path.join(td, "data", "device_config.json")))
 
     def test_render_frame_uses_global_tone_params(self) -> None:
         epd = _FakeEpd()
