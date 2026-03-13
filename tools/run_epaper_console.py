@@ -1219,6 +1219,7 @@ def _apply_voice_payload(
         _set_voice_overlay(state, "idle")
         return False, False
 
+    before_screen = state.ui.screen
     plan = parse_voice_plan(payload)
     plan_result = apply_voice_plan(state, plan, transcript=transcript)
     action_desc = ", ".join([describe_voice_action(a) for a in list(plan.actions or [])[:4]])
@@ -1245,7 +1246,7 @@ def _apply_voice_payload(
     if should_hold_feedback:
         _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
         return True, False
-    if defer_success_idle_clear and bool(plan_result.changed):
+    if defer_success_idle_clear and bool(plan_result.changed) and state.ui.screen == before_screen:
         return False, True
     _set_voice_overlay(state, "idle")
     return False, False
