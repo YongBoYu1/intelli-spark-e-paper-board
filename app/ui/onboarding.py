@@ -242,7 +242,7 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
         x1 = x0 + tip_w
         y0 = y + row * (tip_h + tip_gap_y)
         y1 = y0 + tip_h
-        fill_color = ink if i < 2 else bg
+        fill_color = bg
         draw.rounded_rectangle((x0, y0, x1, y1), radius=10, outline=border, width=2, fill=fill_color)
         top = truncate_text(draw, top, f["button"], max(60, tip_w - 20))
         top_w = draw.textlength(top, font=f["button"])
