@@ -852,6 +852,38 @@ def open_onboarding_voice_guide(state: AppState) -> None:
     _set_onboarding_voice_prompt(state)
 
 
+def open_landing_welcome(state: AppState) -> None:
+    # Debug/test entrypoint: reset first-boot flow back to the landing welcome page.
+    state.ui.setup_completed = False
+    state.ui.screen = Screen.LANDING
+    state.ui.boot_started_at = time.time()
+    state.ui.boot_min_show_s = 0.0
+    state.ui.landing_rotate_seen = False
+    state.ui.landing_confirm_seen = False
+    locale = str(state.ui.voice_locale or state.ui.device_language or "en-US")
+    state.ui.landing_voice_demo_index = 1 if locale == "es-ES" else (2 if locale == "fr-FR" else 0)
+    state.ui.landing_voice_demo_cycles = 0
+    state.ui.landing_last_demo_at = time.time()
+    state.ui.landing_status = ""
+    state.ui.onboarding_step = "start"
+    state.ui.onboarding_focus_index = 0
+    state.ui.onboarding_qr_focus_index = 0
+    state.ui.onboarding_prefs_focus_index = 0
+    state.ui.onboarding_voice_guide_focus_index = 0
+    state.ui.onboarding_pair_token = ""
+    state.ui.onboarding_pair_expires_at = 0.0
+    state.ui.onboarding_status = ""
+    state.ui.onboarding_voice_demo_heard = ""
+    state.ui.onboarding_voice_demo_attempted = False
+    state.ui.onboarding_voice_demo_case_index = 0
+    state.ui.onboarding_voice_demo_pass_mask = 0
+    state.ui.onboarding_voice_demo_action = ""
+    state.ui.onboarding_voice_sample_text = "Add milk to inventory"
+    state.ui.onboarding_voice_expected_action = "Add inventory"
+    state.ui.idle = False
+    state.ui.last_interaction_at = time.time()
+
+
 def _enter_home_after_boot(state: AppState, *, variant: str, theme: dict, items_per_page: int) -> None:
     state.ui.screen = Screen.HOME
     state.ui.menu_overlay_active = False

@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import unittest
 
-from app.core.reducer import Back, Click, Rotate, Tick, apply_onboarding_voice_demo_result, open_onboarding_voice_guide, reduce
+from app.core.reducer import (
+    Back,
+    Click,
+    Rotate,
+    Tick,
+    apply_onboarding_voice_demo_result,
+    open_landing_welcome,
+    open_onboarding_voice_guide,
+    reduce,
+)
 from app.core.state import AppState, DashboardModel, Screen
 
 
@@ -168,6 +177,25 @@ class OnboardingReducerTests(unittest.TestCase):
         self.assertEqual(int(self.state.ui.onboarding_voice_demo_case_index), 0)
         self.assertEqual(int(self.state.ui.onboarding_voice_demo_pass_mask), 0)
         self.assertEqual(str(self.state.ui.onboarding_voice_demo_heard or ""), "")
+
+    def test_open_landing_welcome_resets_to_first_page(self) -> None:
+        self.state.ui.screen = Screen.ONBOARDING
+        self.state.ui.setup_completed = True
+        self.state.ui.voice_locale = "fr-FR"
+        self.state.ui.landing_rotate_seen = True
+        self.state.ui.onboarding_step = "voice_guide"
+        self.state.ui.onboarding_voice_demo_case_index = 2
+        self.state.ui.onboarding_status = "stale"
+
+        open_landing_welcome(self.state)
+
+        self.assertFalse(self.state.ui.setup_completed)
+        self.assertEqual(self.state.ui.screen, Screen.LANDING)
+        self.assertFalse(self.state.ui.landing_rotate_seen)
+        self.assertEqual(int(self.state.ui.landing_voice_demo_index), 2)
+        self.assertEqual(self.state.ui.onboarding_step, "start")
+        self.assertEqual(int(self.state.ui.onboarding_voice_demo_case_index), 0)
+        self.assertEqual(str(self.state.ui.onboarding_status or ""), "")
 
     def test_voice_guide_click_skips_when_not_complete(self) -> None:
         self.state.ui.screen = Screen.ONBOARDING

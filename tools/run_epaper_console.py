@@ -43,7 +43,7 @@ from app.core.reducer import (
     Tick,
     apply_onboarding_voice_demo_result,
     apply_onboarding_voice_demo_error,
-    open_onboarding_voice_guide,
+    open_landing_welcome,
 )
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
 from app.data.location import resolve_dashboard_location
@@ -1597,7 +1597,7 @@ def main() -> int:
             rotate_btn_ready = False
 
     try:
-        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice (or voice-demo in guide), R rotate screen (+90°), S settings, G voice guide, W weather, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice (or voice-demo in guide), R rotate screen (+90°), S settings, G welcome landing, W weather, B/Esc back, Q quit")
         next_tick = time.time()
         weather_refresh_tz = str(state.ui.device_timezone or "")
         next_weather_refresh_at = _next_weather_refresh_at(next_tick, weather_refresh_hours, tz_name=weather_refresh_tz)
@@ -1798,7 +1798,7 @@ def main() -> int:
             elif key in ("s", "S"):
                 state.ui.screen = Screen.SETTINGS
             elif key in ("g", "G"):
-                open_onboarding_voice_guide(state)
+                open_landing_welcome(state)
             elif key in ("w", "W"):
                 if state.ui.screen == Screen.HOME:
                     state.ui.screen = Screen.WEATHER
