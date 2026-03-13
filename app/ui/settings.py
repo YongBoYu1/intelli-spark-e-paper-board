@@ -81,7 +81,7 @@ def _value_for_item(state: AppState, item: SettingsItem) -> str:
     if item == SettingsItem.ROTATION:
         return _rotation_text(state.ui.rotation_deg)
     if item == SettingsItem.RESET_AND_WIPE:
-        return "OPEN"
+        return ""
     return ""
 
 
@@ -150,16 +150,6 @@ def _draw_reset_dialog(
         draw.text((x0 + 18, body_y), line, font=body_font, fill=ink)
         _, line_h = text_size(draw, line, body_font)
         body_y += line_h + 8
-
-    draw_text_spaced(
-        draw,
-        "ROTATE TO CHOOSE. CLICK TO CONFIRM.",
-        x0 + 18,
-        body_y + 4,
-        meta_font,
-        spacing=meta_spacing,
-        fill=muted,
-    )
 
     btn_h = 34
     btn_w = max(120, int((x1 - x0 - 54) / 2))
