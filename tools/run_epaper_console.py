@@ -43,7 +43,7 @@ from app.core.reducer import (
     Tick,
     apply_onboarding_voice_demo_result,
     apply_onboarding_voice_demo_error,
-    open_onboarding_voice_guide,
+    open_landing_welcome,
 )
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
 from app.data.location import resolve_dashboard_location
@@ -104,6 +104,39 @@ CCW_SEQ = {
     (0b11, 0b01),
     (0b01, 0b00),
 }
+
+
+def _consume_encoder_turn(
+    prev_ab: int,
+    curr_ab: int,
+    *,
+    key_phys_down: bool,
+    now: float,
+    rotate_block_until: float,
+    accum: int,
+    step_n: int,
+    flip: bool,
+):
+    if curr_ab == prev_ab:
+        return accum, None
+    if key_phys_down or float(now) < float(rotate_block_until):
+        return 0, None
+
+    edge = (prev_ab, curr_ab)
+    if edge in CW_SEQ:
+        accum += 1
+    elif edge in CCW_SEQ:
+        accum -= 1
+
+    steps = max(1, int(step_n))
+    logical_flip = bool(flip)
+    if accum >= steps:
+        logical_cw = not logical_flip
+        return 0, Rotate(+1 if logical_cw else -1)
+    if accum <= -steps:
+        logical_cw = logical_flip
+        return 0, Rotate(+1 if logical_cw else -1)
+    return accum, None
 
 
 def _hex_to_rgb(value):
@@ -1495,6 +1528,7 @@ def main() -> int:
     key_down_at = 0.0
     key_long_sent = False
     key_last_edge_at = 0.0
+    key_rotate_block_until = 0.0
     rotate_prev = None
     rotate_btn_last_press_at = 0.0
     space_last_trigger_at = 0.0
@@ -1505,6 +1539,7 @@ def main() -> int:
         encoder_key_min_press_ms = theme.get("encoder_key_min_press_ms", 35)
     encoder_key_min_press_s = max(0.0, float(encoder_key_min_press_ms) / 1000.0)
     encoder_key_long_press_s = max(0.1, float(args.encoder_key_long_press_ms) / 1000.0)
+    encoder_rotate_guard_s = max(0.0, float(theme.get("encoder_rotate_guard_ms", 120) or 120) / 1000.0)
     rotate_debounce_s = max(0.0, float(args.rotate_debounce_ms) / 1000.0)
     voice_space_cooldown_s = max(0.2, float(theme.get("voice_space_cooldown_s", 1.2) or 1.2))
 
@@ -1531,6 +1566,7 @@ def main() -> int:
                 key_is_down = bool((prev_key == GPIO.LOW) if active_low else (prev_key == GPIO.HIGH))
                 if key_is_down:
                     key_down_at = time.time()
+                    key_rotate_block_until = max(key_rotate_block_until, key_down_at + encoder_rotate_guard_s)
                 gpio_pins_in_use.add(int(encoder_key_pin))
 
             if rotate_pin is not None:
@@ -1561,7 +1597,7 @@ def main() -> int:
             rotate_btn_ready = False
 
     try:
-        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice (or voice-demo in guide), R rotate screen (+90°), S settings, G voice guide, W weather, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice (or voice-demo in guide), R rotate screen (+90°), S settings, G welcome landing, W weather, B/Esc back, Q quit")
         next_tick = time.time()
         weather_refresh_tz = str(state.ui.device_timezone or "")
         next_weather_refresh_at = _next_weather_refresh_at(next_tick, weather_refresh_hours, tz_name=weather_refresh_tz)
@@ -1603,27 +1639,18 @@ def main() -> int:
                 try:
                     curr_ab = (GPIO.input(int(encoder_pin_s1)) << 1) | GPIO.input(int(encoder_pin_s2))
                     if curr_ab != prev_ab:
-                        # Ignore quadrature jitter while KEY is held down. Pressing the knob can
-                        # produce tiny AB edges that otherwise swallow/shift the click target.
-                        if key_phys_down:
-                            encoder_accum = 0
-                        else:
-                            edge = (prev_ab, curr_ab)
-                            if edge in CW_SEQ:
-                                encoder_accum += 1
-                            elif edge in CCW_SEQ:
-                                encoder_accum -= 1
-
-                            step_n = max(1, int(args.encoder_steps_per_detent))
-                            flip = bool(args.encoder_flip_direction)
-                            if encoder_accum >= step_n:
-                                logical_cw = not flip
-                                ev = Rotate(+1 if logical_cw else -1)
-                                encoder_accum = 0
-                            elif encoder_accum <= -step_n:
-                                logical_cw = flip
-                                ev = Rotate(+1 if logical_cw else -1)
-                                encoder_accum = 0
+                        encoder_accum, rotate_ev = _consume_encoder_turn(
+                            int(prev_ab),
+                            int(curr_ab),
+                            key_phys_down=key_phys_down,
+                            now=now,
+                            rotate_block_until=key_rotate_block_until,
+                            accum=encoder_accum,
+                            step_n=int(args.encoder_steps_per_detent),
+                            flip=bool(args.encoder_flip_direction),
+                        )
+                        if rotate_ev is not None:
+                            ev = rotate_ev
                         prev_ab = curr_ab
                 except Exception:
                     pass
@@ -1643,6 +1670,8 @@ def main() -> int:
                                 key_is_down = True
                                 key_down_at = now
                                 key_long_sent = False
+                                key_rotate_block_until = max(key_rotate_block_until, now + encoder_rotate_guard_s)
+                                encoder_accum = 0
                         else:
                             if key_is_down:
                                 press_dur = max(0.0, now - key_down_at)
@@ -1652,6 +1681,8 @@ def main() -> int:
                                     and press_dur < encoder_key_long_press_s
                                 ):
                                     ev = Click()
+                            key_rotate_block_until = max(key_rotate_block_until, now + encoder_rotate_guard_s)
+                            encoder_accum = 0
                             key_is_down = False
                             key_down_at = 0.0
                             key_long_sent = False
@@ -1767,7 +1798,7 @@ def main() -> int:
             elif key in ("s", "S"):
                 state.ui.screen = Screen.SETTINGS
             elif key in ("g", "G"):
-                open_onboarding_voice_guide(state)
+                open_landing_welcome(state)
             elif key in ("w", "W"):
                 if state.ui.screen == Screen.HOME:
                     state.ui.screen = Screen.WEATHER

@@ -188,6 +188,86 @@ def _draw_qr_placeholder(draw, box: tuple[int, int, int, int], token: str, ink, 
                 draw.rectangle((xx, yy, xx + cell - 1, yy + cell - 1), fill=ink)
 
 
+def landing_layout_metrics(
+    width: int,
+    height: int,
+    *,
+    title_block_h: int = 36,
+    subtitle_block_h: int = 44,
+) -> dict[str, int | tuple[int, int, int, int]]:
+    w = max(1, int(width))
+    h = max(1, int(height))
+    margin = _clamp_i(int(min(w, h) * 0.05), 14, 24)
+    content_x0 = margin + 16
+    content_x1 = w - margin - 16
+    content_w = max(120, content_x1 - content_x0)
+
+    tips_count = 4
+    tip_cols = 2 if content_w >= 560 else 1
+    tip_gap_x = 12
+    tip_gap_y = 10
+    tip_w = int((content_w - ((tip_cols - 1) * tip_gap_x)) / tip_cols)
+    tip_h = 60
+    tips_y0 = margin + 18 + max(0, int(title_block_h)) + max(0, int(subtitle_block_h))
+    tip_rows = (tips_count + tip_cols - 1) // tip_cols
+    tips_y1 = tips_y0 + tip_rows * tip_h + max(0, tip_rows - 1) * tip_gap_y
+
+    voice_hint_y = tips_y1 + 12
+    language_label_y = voice_hint_y + 20
+    chips_y0 = language_label_y + 26
+
+    chip_cols = 3 if content_w >= 520 else 1
+    chip_gap_x = 10
+    chip_gap_y = 8
+    chip_w = int((content_w - ((chip_cols - 1) * chip_gap_x)) / chip_cols)
+    chip_h = 40
+    chip_rows = (3 + chip_cols - 1) // chip_cols
+    chips_y1 = chips_y0 + chip_rows * chip_h + max(0, chip_rows - 1) * chip_gap_y
+    after_chips_y = chips_y1 + 8
+
+    bottom_safe_y = h - margin - 18
+    button_h = 52
+    button_w = min(420, content_w)
+    button_x0 = content_x0 + (content_w - button_w) // 2
+    button_y1 = bottom_safe_y
+    button_y0 = button_y1 - button_h
+    if button_y0 < after_chips_y + 54:
+        button_y0 = after_chips_y + 54
+        button_y1 = button_y0 + button_h
+
+    status_y = max(after_chips_y + 18, button_y0 - 66)
+    status_y0 = max(after_chips_y + 6, status_y - 6)
+    status_y1 = min(max(status_y0 + 24, status_y + 28), max(status_y0 + 24, button_y0 - 6))
+    button = (button_x0, button_y0, button_x0 + button_w, button_y1)
+
+    return {
+        "margin": margin,
+        "content_x0": content_x0,
+        "content_x1": content_x1,
+        "content_w": content_w,
+        "tip_cols": tip_cols,
+        "tip_gap_x": tip_gap_x,
+        "tip_gap_y": tip_gap_y,
+        "tip_w": tip_w,
+        "tip_h": tip_h,
+        "tips_y0": tips_y0,
+        "voice_hint_y": voice_hint_y,
+        "language_label_y": language_label_y,
+        "chip_cols": chip_cols,
+        "chip_gap_x": chip_gap_x,
+        "chip_gap_y": chip_gap_y,
+        "chip_w": chip_w,
+        "chip_h": chip_h,
+        "chips_y0": chips_y0,
+        "chips_y1": chips_y1,
+        "status_y": status_y,
+        "button": button,
+        "language_block": (content_x0 - 4, language_label_y - 6, content_x1 + 4, chips_y1 + 6),
+        "status_text": (content_x0, status_y0, min(content_x1, button[2] + 48), status_y1),
+        "cta_button": (button[0] - 6, button[1] - 6, button[2] + 6, button[3] + 6),
+    }
+
+
 def render_landing(image, state: AppState, fonts, theme: dict) -> None:
     theme = apply_panel_font_template(theme)
     f = _theme_fonts(theme, fonts)
@@ -217,12 +297,21 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
     title = truncate_text(draw, "INTELLI SPARK BOARD", f["title"], max(120, content_w))
     tw = draw.textlength(title, font=f["title"])
     draw.text((content_x0 + (content_w - tw) / 2, y), title, fill=ink, font=f["title"])
-    y += max(28, text_size(draw, title, f["title"])[1] + 8)
+    title_block_h = max(28, text_size(draw, title, f["title"])[1] + 8)
+    y += title_block_h
 
     subtitle = truncate_text(draw, "Welcome. Learn controls before first setup.", f["body"], max(120, content_w))
     sw = draw.textlength(subtitle, font=f["body"])
     draw.text((content_x0 + (content_w - sw) / 2, y), subtitle, fill=muted, font=f["body"])
-    y += max(30, text_size(draw, subtitle, f["body"])[1] + 14)
+    subtitle_block_h = max(30, text_size(draw, subtitle, f["body"])[1] + 14)
+    y += subtitle_block_h
+
+    layout = landing_layout_metrics(
+        w,
+        h,
+        title_block_h=title_block_h,
+        subtitle_block_h=subtitle_block_h,
+    )
 
     tips = [
         ("Rotate", "Move focus"),
@@ -230,11 +319,12 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
         ("Long Press", "Back to home"),
         ("Hold Voice Key", "Talk to assistant"),
     ]
-    tip_cols = 2 if content_w >= 560 else 1
-    tip_gap_x = 12
-    tip_gap_y = 10
-    tip_w = int((content_w - ((tip_cols - 1) * tip_gap_x)) / tip_cols)
-    tip_h = 60
+    tip_cols = int(layout["tip_cols"])
+    tip_gap_x = int(layout["tip_gap_x"])
+    tip_gap_y = int(layout["tip_gap_y"])
+    tip_w = int(layout["tip_w"])
+    tip_h = int(layout["tip_h"])
+    y = int(layout["tips_y0"])
     for i, (top, bottom) in enumerate(tips):
         col = i % tip_cols
         row = i // tip_cols
@@ -265,19 +355,27 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
 
     voice_gate_hint = _meta_text("Voice key unlocks after first setup.", compact=f["meta_compact"])
     voice_gate_hint = truncate_text(draw, voice_gate_hint, f["meta"], max(120, content_w))
-    draw_text_spaced(draw, voice_gate_hint, content_x0, y, f["meta"], spacing=f["meta_spacing"], fill=muted)
-    y += 20
+    draw_text_spaced(
+        draw,
+        voice_gate_hint,
+        content_x0,
+        int(layout["voice_hint_y"]),
+        f["meta"],
+        spacing=f["meta_spacing"],
+        fill=muted,
+    )
+    y = int(layout["language_label_y"])
 
     draw.text((content_x0, y), "Language", fill=ink, font=f["button"])
-    y += 26
+    y = int(layout["chips_y0"])
 
     choices = [("en-US", "English"), ("es-ES", "Spanish"), ("fr-FR", "French")]
     locale = str(state.ui.device_language or state.ui.voice_locale or "en-US").strip()
-    chip_cols = 3 if content_w >= 520 else 1
-    chip_gap_x = 10
-    chip_gap_y = 8
-    chip_w = int((content_w - ((chip_cols - 1) * chip_gap_x)) / chip_cols)
-    chip_h = 40
+    chip_cols = int(layout["chip_cols"])
+    chip_gap_x = int(layout["chip_gap_x"])
+    chip_gap_y = int(layout["chip_gap_y"])
+    chip_w = int(layout["chip_w"])
+    chip_h = int(layout["chip_h"])
     for i, (lang_key, raw_label) in enumerate(choices):
         col = i % chip_cols
         row = i // chip_cols
@@ -304,24 +402,16 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
     chip_rows = (len(choices) + chip_cols - 1) // chip_cols
     y += chip_rows * chip_h + max(0, chip_rows - 1) * chip_gap_y + 8
 
-    bottom_safe_y = h - margin - 18
-    button_h = 52
-    button_w = min(420, content_w)
-    button_x0 = content_x0 + (content_w - button_w) // 2
-    button_y1 = bottom_safe_y
-    button_y0 = button_y1 - button_h
-    if button_y0 < y + 54:
-        button_y0 = y + 54
-        button_y1 = button_y0 + button_h
-    button = (button_x0, button_y0, button_x0 + button_w, button_y1)
+    button = layout["button"]
+    button_w = button[2] - button[0]
 
     status = (
         str(state.ui.landing_status or "").strip()
-        or "Rotate to choose language, click once to confirm, click again to start setup."
+        or "Rotate to choose language, then click to start setup."
     )
     status = _meta_text(status, compact=f["meta_compact"])
     status = truncate_text(draw, status, f["meta"], max(120, content_w))
-    status_y = max(y + 18, button[1] - 66)
+    status_y = int(layout["status_y"])
     draw_text_spaced(draw, status, content_x0, status_y, f["meta"], spacing=f["meta_spacing"], fill=ink)
 
     draw.rounded_rectangle(button, radius=12, outline=border, width=2, fill=ink)
@@ -330,8 +420,6 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
         button_label = "Enter Home"
     elif not bool(state.ui.landing_rotate_seen):
         button_label = "Rotate to choose language"
-    elif not bool(state.ui.landing_confirm_seen):
-        button_label = "Click to confirm language"
     else:
         button_label = "Click to start first setup"
     button_label = truncate_text(draw, button_label, f["button"], max(80, button_w - 24))
