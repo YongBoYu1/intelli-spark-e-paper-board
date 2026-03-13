@@ -135,37 +135,46 @@ class RefreshPolicyTests(unittest.TestCase):
         merged = merge_rects(rects, 800, 480)
         self.assertEqual(merged, (18, 18, 782, 462))
 
-    def test_landing_demo_change_updates_partial_regions(self) -> None:
+    def test_landing_language_change_uses_compact_regions(self) -> None:
         prev = AppState(model=DashboardModel())
         prev.ui.screen = Screen.LANDING
         prev.ui.landing_voice_demo_index = 0
+        prev.ui.device_language = "en-US"
+        prev.ui.voice_locale = "en-US"
         prev.ui.landing_status = "Rotate"
 
         curr = AppState(model=DashboardModel())
         curr.ui.screen = Screen.LANDING
         curr.ui.landing_voice_demo_index = 1
-        curr.ui.landing_status = "Confirm"
+        curr.ui.device_language = "fr-FR"
+        curr.ui.voice_locale = "fr-FR"
+        curr.ui.landing_status = "Start setup"
 
-        _, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
-        self.assertIn("landing.demo_or_status", reasons)
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("landing.language_change", reasons)
+        ratio = sum(rect_area_ratio(rect, 800, 480) for rect in rects)
+        self.assertLess(ratio, 0.25)
 
-    def test_landing_language_confirm_change_avoids_full_rect(self) -> None:
+    def test_landing_status_change_stays_footer_sized(self) -> None:
         prev = AppState(model=DashboardModel())
         prev.ui.screen = Screen.LANDING
-        prev.ui.device_language = "en-US"
-        prev.ui.landing_rotate_seen = False
+        prev.ui.device_language = "fr-FR"
+        prev.ui.voice_locale = "fr-FR"
+        prev.ui.landing_rotate_seen = True
+        prev.ui.landing_status = "Language set to French. Press click to start first setup."
 
         curr = AppState(model=DashboardModel())
         curr.ui.screen = Screen.LANDING
         curr.ui.device_language = "fr-FR"
+        curr.ui.voice_locale = "fr-FR"
         curr.ui.landing_rotate_seen = True
+        curr.ui.landing_confirm_seen = True
+        curr.ui.landing_status = "Language confirmed: French."
 
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
-        self.assertIn("landing.state_change", reasons)
-        merged = merge_rects(rects, 800, 480)
-        self.assertIsNotNone(merged)
-        ratio = rect_area_ratio(merged, 800, 480)
-        self.assertLess(ratio, 0.45)
+        self.assertIn("landing.status_change", reasons)
+        ratio = sum(rect_area_ratio(rect, 800, 480) for rect in rects)
+        self.assertLess(ratio, 0.15)
 
     def test_memo_rotate_change_generates_memo_focus_reason(self) -> None:
         model = DashboardModel()

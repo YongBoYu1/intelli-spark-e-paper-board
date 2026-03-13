@@ -774,15 +774,18 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
     split_x = ox0 + int((ox1 - ox0) * 0.60)
     left_split = split_x
     if screen == Screen.LANDING:
-        content_x0 = 34
-        content_x1 = w - 34
-        mid_y = h // 2
+        margin = max(14, min(24, int(min(w, h) * 0.05)))
+        content_x0 = margin + 16
+        content_x1 = w - margin - 16
+        button_w = min(420, max(220, content_x1 - content_x0))
+        button_x0 = content_x0 + max(0, (content_x1 - content_x0 - button_w) // 2)
+        button_x1 = button_x0 + button_w
         regions = {
             "full": (0, 0, w, h),
             "panel": (18, 18, w - 18, h - 18),
-            "tips": (content_x0, 96, content_x1, min(h, 260)),
-            "language": (content_x0, max(0, mid_y + 12), content_x1, min(h, mid_y + 118)),
-            "status_button": (content_x0, max(0, h - 122), content_x1, h - 18),
+            "language_block": (content_x0, 286, content_x1, min(h, 342)),
+            "status_text": (content_x0, max(0, h - 124), min(content_x1, button_x1 + 48), max(1, h - 88)),
+            "cta_button": (button_x0 - 6, max(0, h - 96), button_x1 + 6, h - 28),
         }
         if rot in (90, 270):
             return {
@@ -1451,23 +1454,23 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
             return rects, reasons
         if (
             prev.landing_rotate_seen != curr.landing_rotate_seen
-            or prev.landing_confirm_seen != curr.landing_confirm_seen
             or prev.device_language != curr.device_language
             or prev.voice_locale != curr.voice_locale
+            or prev.landing_voice_demo_index != curr.landing_voice_demo_index
+            or prev.landing_voice_demo_cycles != curr.landing_voice_demo_cycles
         ):
-            rects.extend([regions["language"], regions["status_button"]])
-            reasons.append("landing.state_change")
+            rects.extend([regions["language_block"], regions["status_text"], regions["cta_button"]])
+            reasons.append("landing.language_change")
             return rects, reasons
         if (
-            prev.landing_voice_demo_index != curr.landing_voice_demo_index
-            or prev.landing_voice_demo_cycles != curr.landing_voice_demo_cycles
+            prev.landing_confirm_seen != curr.landing_confirm_seen
             or prev.landing_status != curr.landing_status
         ):
-            rects.extend([regions["tips"], regions["status_button"]])
-            reasons.append("landing.demo_or_status")
+            rects.extend([regions["status_text"], regions["cta_button"]])
+            reasons.append("landing.status_change")
             return rects, reasons
         if prev.onboarding_pair_expires_at != curr.onboarding_pair_expires_at:
-            rects.append(regions["status_button"])
+            rects.extend([regions["status_text"], regions["cta_button"]])
             reasons.append("landing.footer_countdown")
         return rects, reasons
 

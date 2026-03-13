@@ -10,7 +10,7 @@ class OnboardingReducerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.state = AppState(model=DashboardModel())
 
-    def test_landing_requires_rotate_and_confirm_before_onboarding(self) -> None:
+    def test_landing_requires_rotate_and_single_click_before_onboarding(self) -> None:
         self.state.ui.screen = Screen.LANDING
         self.state.ui.setup_completed = False
         self.state.ui.boot_started_at = 100.0
@@ -20,28 +20,21 @@ class OnboardingReducerTests(unittest.TestCase):
         reduce(self.state, Tick(now=102.2), theme={})
         self.assertEqual(self.state.ui.screen, Screen.LANDING)
 
-        # Rotate + first click confirms language but stays on landing.
+        # Rotate + first click enters onboarding.
         reduce(self.state, Rotate(+1), theme={})
-        reduce(self.state, Click(), theme={})
-        self.assertEqual(self.state.ui.screen, Screen.LANDING)
-
-        # Second click enters onboarding.
         reduce(self.state, Click(), theme={})
         self.assertEqual(self.state.ui.screen, Screen.ONBOARDING)
         self.assertEqual(self.state.ui.onboarding_step, "start")
 
-    def test_landing_rotate_after_confirm_requires_reconfirm(self) -> None:
+    def test_landing_click_before_rotate_stays_on_landing(self) -> None:
         self.state.ui.screen = Screen.LANDING
         self.state.ui.setup_completed = False
         self.state.ui.boot_started_at = 100.0
         self.state.ui.boot_min_show_s = 0.0
 
-        reduce(self.state, Rotate(+1), theme={})
         reduce(self.state, Click(), theme={})
-        self.assertTrue(self.state.ui.landing_confirm_seen)
-
-        reduce(self.state, Rotate(+1), theme={})
-        self.assertFalse(self.state.ui.landing_confirm_seen)
+        self.assertEqual(self.state.ui.screen, Screen.LANDING)
+        self.assertIn("Rotate to choose language", str(self.state.ui.landing_status))
 
     def test_landing_rotate_cycles_voice_locale(self) -> None:
         self.state.ui.screen = Screen.LANDING

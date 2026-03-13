@@ -866,8 +866,6 @@ def _landing_ready_for_onboarding(state: AppState, now: float) -> bool:
     _ = now
     if not bool(state.ui.landing_rotate_seen):
         return False
-    if not bool(state.ui.landing_confirm_seen):
-        return False
     return True
 
 
@@ -879,9 +877,6 @@ def _handle_landing_tick(state: AppState, now: float, *, theme: dict, variant: s
         return
     if not bool(state.ui.landing_rotate_seen):
         state.ui.landing_status = "Rotate knob to choose language."
-    elif not bool(state.ui.landing_confirm_seen):
-        lang = _voice_locale_label(state.ui.device_language)
-        state.ui.landing_status = f"Language: {lang}. Press click to confirm."
     else:
         lang = _voice_locale_label(state.ui.device_language)
         state.ui.landing_status = f"Language: {lang}. Press click to start first setup."
@@ -1311,16 +1306,14 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         if isinstance(event, Rotate):
             state.ui.landing_rotate_seen = True
             _landing_rotate_select_voice(state, event.delta)
-            # If language changes after confirm, require one more confirm click.
-            if bool(state.ui.landing_confirm_seen):
-                state.ui.landing_confirm_seen = False
+            state.ui.landing_confirm_seen = False
             if bool(state.ui.setup_completed):
                 return state
             if _landing_ready_for_onboarding(state, now):
                 # Keep landing on-screen; setup starts only on explicit click.
                 pass
             lang = _voice_locale_label(state.ui.device_language)
-            state.ui.landing_status = f"Language set to {lang}. Press click to confirm."
+            state.ui.landing_status = f"Language set to {lang}. Press click to start first setup."
             return state
         if isinstance(event, Click):
             if bool(state.ui.setup_completed):
@@ -1328,14 +1321,11 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
             else:
                 if not bool(state.ui.landing_rotate_seen):
                     state.ui.landing_status = "Rotate to choose language first, then press click."
-                elif not bool(state.ui.landing_confirm_seen):
-                    state.ui.landing_confirm_seen = True
-                    lang = _voice_locale_label(state.ui.device_language)
-                    state.ui.landing_status = f"Language confirmed: {lang}. Press click again to start setup."
                 elif _landing_ready_for_onboarding(state, now):
+                    state.ui.landing_confirm_seen = True
                     _enter_onboarding_start(state)
                 else:
-                    state.ui.landing_status = "Press click again to start setup."
+                    state.ui.landing_status = "Rotate to choose language first, then press click."
             return state
         if isinstance(event, RotateButton):
             _toggle_rotation(state)

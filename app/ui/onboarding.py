@@ -317,7 +317,7 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
 
     status = (
         str(state.ui.landing_status or "").strip()
-        or "Rotate to choose language, click once to confirm, click again to start setup."
+        or "Rotate to choose language, then click to start setup."
     )
     status = _meta_text(status, compact=f["meta_compact"])
     status = truncate_text(draw, status, f["meta"], max(120, content_w))
@@ -330,8 +330,6 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
         button_label = "Enter Home"
     elif not bool(state.ui.landing_rotate_seen):
         button_label = "Rotate to choose language"
-    elif not bool(state.ui.landing_confirm_seen):
-        button_label = "Click to confirm language"
     else:
         button_label = "Click to start first setup"
     button_label = truncate_text(draw, button_label, f["button"], max(80, button_w - 24))
