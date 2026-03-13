@@ -12,6 +12,7 @@ from app.ui.home_kitchen_geometry import (
     home_portrait_header_focus_source_box_for_panel,
 )
 from app.ui.menu import home_menu_overlay_rect
+from app.ui.onboarding import landing_layout_metrics
 
 Rect = tuple[int, int, int, int]
 
@@ -774,18 +775,13 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
     split_x = ox0 + int((ox1 - ox0) * 0.60)
     left_split = split_x
     if screen == Screen.LANDING:
-        margin = max(14, min(24, int(min(w, h) * 0.05)))
-        content_x0 = margin + 16
-        content_x1 = w - margin - 16
-        button_w = min(420, max(220, content_x1 - content_x0))
-        button_x0 = content_x0 + max(0, (content_x1 - content_x0 - button_w) // 2)
-        button_x1 = button_x0 + button_w
+        layout = landing_layout_metrics(w, h)
         regions = {
             "full": (0, 0, w, h),
             "panel": (18, 18, w - 18, h - 18),
-            "language_block": (content_x0, 286, content_x1, min(h, 342)),
-            "status_text": (content_x0, max(0, h - 124), min(content_x1, button_x1 + 48), max(1, h - 88)),
-            "cta_button": (button_x0 - 6, max(0, h - 96), button_x1 + 6, h - 28),
+            "language_block": layout["language_block"],
+            "status_text": layout["status_text"],
+            "cta_button": layout["cta_button"],
         }
         if rot in (90, 270):
             return {

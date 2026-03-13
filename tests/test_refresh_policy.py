@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+from PIL import Image, ImageChops, ImageDraw, ImageOps
+
 from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen, WeatherDay
 from app.render.refresh_policy import (
     RefreshPolicyRuntime,
@@ -14,9 +16,57 @@ from app.render.refresh_policy import (
     rect_area_ratio,
     mode_params,
 )
+from app.shared.fonts import FontBook
+from tools.run_epaper_console import _render_frame
 
 
 class RefreshPolicyTests(unittest.TestCase):
+    def _render_landing_frame(self, state: AppState) -> Image.Image:
+        fonts = FontBook(
+            {
+                "inter_medium": "assets/fonts/Inter-Medium.ttf",
+                "inter_bold": "assets/fonts/Inter-Bold.ttf",
+                "inter_black": "assets/fonts/Inter-Black.ttf",
+                "jet_bold": "assets/fonts/JetBrainsMono-Bold.ttf",
+            }
+        )
+
+        class _FakeEpd:
+            width = 800
+            height = 480
+
+        return _render_frame(
+            _FakeEpd(),
+            state,
+            fonts,
+            {},
+            panel_threshold=168,
+            panel_muted=150,
+            panel_gamma=1.0,
+            panel_dither=False,
+        )
+
+    def _assert_changed_pixels_covered(
+        self,
+        prev: AppState,
+        curr: AppState,
+        *,
+        width: int = 800,
+        height: int = 480,
+    ) -> None:
+        prev_frame = self._render_landing_frame(prev)
+        curr_frame = self._render_landing_frame(curr)
+        diff = ImageChops.difference(prev_frame, curr_frame).convert("L")
+        self.assertIsNotNone(diff.getbbox())
+
+        rects, _ = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), width, height)
+        coverage = Image.new("L", (width, height), 0)
+        draw = ImageDraw.Draw(coverage)
+        for rect in rects:
+            draw.rectangle(rect, fill=255)
+        outside = ImageChops.multiply(diff, ImageOps.invert(coverage))
+        self.assertIsNone(outside.getbbox())
+
     def test_mode_params_mapping(self) -> None:
         slow = mode_params("slow")
         balanced = mode_params("balanced")
@@ -153,7 +203,7 @@ class RefreshPolicyTests(unittest.TestCase):
         rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
         self.assertIn("landing.language_change", reasons)
         ratio = sum(rect_area_ratio(rect, 800, 480) for rect in rects)
-        self.assertLess(ratio, 0.25)
+        self.assertLess(ratio, 0.30)
 
     def test_landing_status_change_stays_footer_sized(self) -> None:
         prev = AppState(model=DashboardModel())
@@ -175,6 +225,46 @@ class RefreshPolicyTests(unittest.TestCase):
         self.assertIn("landing.status_change", reasons)
         ratio = sum(rect_area_ratio(rect, 800, 480) for rect in rects)
         self.assertLess(ratio, 0.15)
+
+    def test_landing_language_change_rotated_90_covers_changed_pixels(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.LANDING
+        prev.ui.rotation_deg = 90
+        prev.ui.device_language = "en-US"
+        prev.ui.voice_locale = "en-US"
+        prev.ui.landing_voice_demo_index = 0
+        prev.ui.landing_status = "Rotate knob to choose language."
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.LANDING
+        curr.ui.rotation_deg = 90
+        curr.ui.device_language = "fr-FR"
+        curr.ui.voice_locale = "fr-FR"
+        curr.ui.landing_voice_demo_index = 2
+        curr.ui.landing_rotate_seen = True
+        curr.ui.landing_status = "Language set to French. Press click to start first setup."
+
+        self._assert_changed_pixels_covered(prev, curr)
+
+    def test_landing_language_change_rotated_270_covers_changed_pixels(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.LANDING
+        prev.ui.rotation_deg = 270
+        prev.ui.device_language = "en-US"
+        prev.ui.voice_locale = "en-US"
+        prev.ui.landing_voice_demo_index = 0
+        prev.ui.landing_status = "Rotate knob to choose language."
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.LANDING
+        curr.ui.rotation_deg = 270
+        curr.ui.device_language = "fr-FR"
+        curr.ui.voice_locale = "fr-FR"
+        curr.ui.landing_voice_demo_index = 2
+        curr.ui.landing_rotate_seen = True
+        curr.ui.landing_status = "Language set to French. Press click to start first setup."
+
+        self._assert_changed_pixels_covered(prev, curr)
 
     def test_memo_rotate_change_generates_memo_focus_reason(self) -> None:
         model = DashboardModel()
