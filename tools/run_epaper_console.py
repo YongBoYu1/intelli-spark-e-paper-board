@@ -1209,14 +1209,15 @@ def _apply_voice_payload(
     payload: dict[str, Any] | None,
     theme: dict,
     demo_only: bool,
-) -> bool:
+    defer_success_idle_clear: bool = False,
+) -> tuple[bool, bool]:
     transcript = ""
     if isinstance(payload, dict):
         transcript = str(payload.get("transcript") or "").strip()
     if demo_only:
         apply_onboarding_voice_demo_result(state, transcript)
         _set_voice_overlay(state, "idle")
-        return False
+        return False, False
 
     plan = parse_voice_plan(payload)
     plan_result = apply_voice_plan(state, plan, transcript=transcript)
@@ -1243,9 +1244,11 @@ def _apply_voice_payload(
         hold_s = max(hold_s, remaining_confirm_s + 0.2)
     if should_hold_feedback:
         _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
-        return True
+        return True, False
+    if defer_success_idle_clear and bool(plan_result.changed):
+        return False, True
     _set_voice_overlay(state, "idle")
-    return False
+    return False, False
 
 
 def _voice_interpret_job(
@@ -1394,7 +1397,7 @@ def _run_voice_flow(
             timeout_s=float(voice_timeout_s),
             board_context=build_board_context(state),
         )
-        should_render_feedback = _apply_voice_payload(
+        should_render_feedback, _ = _apply_voice_payload(
             state=state,
             payload=payload if isinstance(payload, dict) else {},
             theme=theme,
@@ -1706,6 +1709,7 @@ def main() -> int:
     voice_apply_pending = False
     voice_apply_started_at = 0.0
     voice_apply_action = ""
+    voice_overlay_clear_after_commit = False
     gpio_pins_in_use = set()
     encoder_key_debounce_s = max(0.0, float(args.encoder_key_debounce_ms) / 1000.0)
     encoder_key_min_press_ms = args.encoder_key_min_press_ms
@@ -1906,11 +1910,12 @@ def main() -> int:
                         transcript_len = len(str(payload.get("transcript") or "").strip())
                         action_brief = _voice_action_brief(payload)
                     apply_started = time.time()
-                    _apply_voice_payload(
+                    _should_render_feedback, defer_idle_clear = _apply_voice_payload(
                         state=state,
                         payload=payload if isinstance(payload, dict) else {},
                         theme=theme,
                         demo_only=bool(voice_job_demo_only),
+                        defer_success_idle_clear=True,
                     )
                     apply_ms = int(max(0.0, (time.time() - apply_started) * 1000))
                     print(
@@ -1920,6 +1925,7 @@ def main() -> int:
                     voice_apply_pending = True
                     voice_apply_started_at = time.time()
                     voice_apply_action = action_brief
+                    voice_overlay_clear_after_commit = bool(defer_idle_clear)
                 else:
                     err = str(result.get("error") or "Voice failed").strip() or "Voice failed"
                     if voice_job_demo_only:
@@ -2598,9 +2604,13 @@ def main() -> int:
                             f"[voice] render_committed action={str(voice_apply_action or '-')}"
                             f" render_lag_ms={render_lag_ms} screen={screen_name}"
                         )
+                        should_clear_voice_overlay = bool(voice_overlay_clear_after_commit)
                         voice_apply_pending = False
                         voice_apply_started_at = 0.0
                         voice_apply_action = ""
+                        voice_overlay_clear_after_commit = False
+                        if should_clear_voice_overlay:
+                            _set_voice_overlay(state, "idle")
                     pending_frame = None
                     pending_sig = None
                     pending_snapshot = None
