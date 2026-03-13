@@ -1978,7 +1978,7 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
                 if fallback is not None:
                     rects.append(fallback)
             reasons.append("home.reminder_reorder")
-    if prev.memo_index != curr.memo_index:
+    if prev.memo_index != curr.memo_index or prev.memos_digest != curr.memos_digest:
         if portrait_home:
             rect = home_regions["memo"]
             if rect is not None:

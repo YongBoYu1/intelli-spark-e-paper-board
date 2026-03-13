@@ -43,6 +43,45 @@ class _FakeEpd:
 
 
 class RunEpaperConsolePartialTests(unittest.TestCase):
+    def test_apply_voice_payload_hides_post_action_overlay_for_changed_action(self) -> None:
+        state = AppState(model=DashboardModel())
+        state.ui.screen = rec.Screen.HOME
+        state.ui.voice_active = True
+        state.ui.voice_phase = "processing"
+        state.ui.voice_message = "Interpreting command"
+
+        should_render_overlay = rec._apply_voice_payload(
+            state=state,
+            payload={"tool": "open_app", "args": {"app": "timer"}, "transcript": "open timer"},
+            theme={},
+            demo_only=False,
+        )
+
+        self.assertFalse(should_render_overlay)
+        self.assertEqual(state.ui.screen, rec.Screen.TIMER)
+        self.assertFalse(state.ui.voice_active)
+        self.assertEqual(state.ui.voice_phase, "idle")
+        self.assertEqual(state.ui.voice_message, "")
+
+    def test_apply_voice_payload_keeps_overlay_for_no_action_feedback(self) -> None:
+        state = AppState(model=DashboardModel())
+        state.ui.screen = rec.Screen.HOME
+        state.ui.voice_active = True
+        state.ui.voice_phase = "processing"
+        state.ui.voice_message = "Interpreting command"
+
+        should_render_overlay = rec._apply_voice_payload(
+            state=state,
+            payload={"tool": "no_action", "args": {"reason": "insufficient_intent"}, "transcript": "uh"},
+            theme={},
+            demo_only=False,
+        )
+
+        self.assertTrue(should_render_overlay)
+        self.assertTrue(state.ui.voice_active)
+        self.assertEqual(state.ui.voice_phase, "done")
+        self.assertIn("No actionable command heard", state.ui.voice_message)
+
     def test_partial_budget_default_matches_playbook(self) -> None:
         self.assertFalse(rec._partial_budget_enabled_with_theme({}))
 

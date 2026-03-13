@@ -598,6 +598,33 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.30)
 
+    def test_home_family_board_content_change_without_index_change_uses_partial_rect(self) -> None:
+        prev_model = DashboardModel()
+        prev_model.memos = [
+            MemoItem(mid="m0", text="older memo", author="Mom", timestamp=1000, is_new=False),
+            MemoItem(mid="m1", text="oldest memo", author="Dad", timestamp=999, is_new=False),
+        ]
+        prev = AppState(model=prev_model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.memo_index = 0
+
+        curr_model = DashboardModel()
+        curr_model.memos = [
+            MemoItem(mid="m2", text="new memo", author="Voice", timestamp=1001, is_new=True),
+            MemoItem(mid="m0", text="older memo", author="Mom", timestamp=1000, is_new=False),
+            MemoItem(mid="m1", text="oldest memo", author="Dad", timestamp=999, is_new=False),
+        ]
+        curr = AppState(model=curr_model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.memo_index = 0
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.family_board_update", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.30)
+
     def test_home_portrait_focus_move_uses_rotated_row_rect(self) -> None:
         model = DashboardModel()
         model.reminders = [
