@@ -46,6 +46,9 @@ pip install -r backend/voice_api/requirements.txt
 ```bash
 export GOOGLE_API_KEY="<your-key>"
 export GEMINI_MODEL="gemini-2.5-flash"
+# Optional: enable one extra low-risk repair pass after an initial no_action.
+# Default is off to avoid extra latency on normal requests.
+export VOICE_ENABLE_NO_ACTION_RETRY="1"
 ```
 
 Or put variables in repo root `.env` (auto-loaded by backend and simulator).
@@ -86,6 +89,10 @@ VOICE_API_URL="http://<server>:8000/voice/interpret" python3 tools/run_epaper_co
 - Prompt source: `docs/prompt/voice_prompt_v1.md`
 - Tool schema source: `docs/prompt/voice_tools_schema_v1.json`
 - `request_id` is idempotent within process memory (simple cache)
+- `VOICE_ENABLE_NO_ACTION_RETRY` is off by default.
+  - When enabled, the backend may do one additional low-risk retry after an initial `no_action`.
+  - This improves recovery for some colloquial phrasing, but it adds latency.
+  - If we surface this outside env vars later, it should be a user/operator setting rather than the default path.
 - Local correction KB (voice alias memory) path:
   - default: `backend/voice_api/data/correction_kb.json`
   - override: `VOICE_CORRECTION_KB_PATH=/abs/path/to/correction_kb.json`

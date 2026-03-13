@@ -240,7 +240,15 @@ class VoiceServiceColloquialFlowTests(unittest.TestCase):
                 return {"tool": "no_action", "args": {"reason": "insufficient_intent"}}
             return {"tool": "shopping_remove_item", "args": {"source": "reminders", "position_mode": "first", "count": 2}}
 
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key", "GEMINI_MODEL": "test-model"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "GOOGLE_API_KEY": "test-key",
+                "GEMINI_MODEL": "test-model",
+                "VOICE_ENABLE_NO_ACTION_RETRY": "1",
+            },
+            clear=False,
+        ):
             with patch.object(
                 voice_service,
                 "_call_gemini_for_action",
@@ -277,7 +285,15 @@ class VoiceServiceColloquialFlowTests(unittest.TestCase):
                 return {"tool": "no_action", "args": {"reason": "insufficient_intent"}}
             return {"tool": "memo_clear_all", "args": {}}
 
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key", "GEMINI_MODEL": "test-model"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "GOOGLE_API_KEY": "test-key",
+                "GEMINI_MODEL": "test-model",
+                "VOICE_ENABLE_NO_ACTION_RETRY": "1",
+            },
+            clear=False,
+        ):
             with patch.object(
                 voice_service,
                 "_call_gemini_for_action",
@@ -305,7 +321,15 @@ class VoiceServiceColloquialFlowTests(unittest.TestCase):
             call_count += 1
             return {"tool": "no_action", "args": {"reason": "missing_google_api_key"}}
 
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key", "GEMINI_MODEL": "test-model"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "GOOGLE_API_KEY": "test-key",
+                "GEMINI_MODEL": "test-model",
+                "VOICE_ENABLE_NO_ACTION_RETRY": "1",
+            },
+            clear=False,
+        ):
             with patch.object(
                 voice_service,
                 "_call_gemini_for_action",
@@ -319,6 +343,34 @@ class VoiceServiceColloquialFlowTests(unittest.TestCase):
                             "timezone": "America/Toronto",
                             "locale": "en-US",
                             "transcript": "Check weather for tomorrow.",
+                        }
+                    )
+
+        self.assertEqual(call_count, 1)
+        self.assertEqual(got["action"]["tool"], "no_action")
+
+    def test_interpret_does_not_retry_no_action_by_default(self) -> None:
+        call_count = 0
+
+        def fake_call(**_: object) -> dict[str, object]:
+            nonlocal call_count
+            call_count += 1
+            return {"tool": "no_action", "args": {"reason": "insufficient_intent"}}
+
+        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key", "GEMINI_MODEL": "test-model"}, clear=False):
+            with patch.object(
+                voice_service,
+                "_call_gemini_for_action",
+                side_effect=fake_call,
+            ):
+                with patch.object(voice_service, "_apply_scope_corrections", side_effect=lambda *, transcript, scope_id: transcript):
+                    got = interpret_request_with_debug(
+                        {
+                            "request_id": "voice-check-repair-default-off",
+                            "request_time": "2026-03-12T10:00:00-05:00",
+                            "timezone": "America/Toronto",
+                            "locale": "en-US",
+                            "transcript": "Check the first two items on the reminder.",
                         }
                     )
 
@@ -363,7 +415,15 @@ class VoiceServiceColloquialFlowTests(unittest.TestCase):
                 return {"tool": "no_action", "args": {"reason": "insufficient_intent"}}
             return dict(row["raw"])
 
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key", "GEMINI_MODEL": "test-model"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "GOOGLE_API_KEY": "test-key",
+                "GEMINI_MODEL": "test-model",
+                "VOICE_ENABLE_NO_ACTION_RETRY": "1",
+            },
+            clear=False,
+        ):
             with patch.object(voice_service, "_call_gemini_for_action", side_effect=fake_call):
                 with patch.object(voice_service, "_apply_scope_corrections", side_effect=lambda *, transcript, scope_id: transcript):
                     for i, row in enumerate(scenarios):
@@ -391,7 +451,15 @@ class VoiceServiceColloquialFlowTests(unittest.TestCase):
             captured["has_allowed_tools"] = "yes" if allowed_tools is not None else "no"
             return {"tool": "shopping_remove_item", "args": {"source": "inventory", "position_mode": "first", "count": 2}}
 
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key", "GEMINI_MODEL": "test-model"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "GOOGLE_API_KEY": "test-key",
+                "GEMINI_MODEL": "test-model",
+                "VOICE_ENABLE_NO_ACTION_RETRY": "1",
+            },
+            clear=False,
+        ):
             with patch.object(voice_service, "_decode_audio_base64_to_temp", return_value="/tmp/voice-audio-locale.wav"):
                 with patch.object(voice_service, "_transcribe_audio_via_gemini") as transcribe_mock:
                     with patch.object(voice_service, "_call_gemini_for_action_from_audio", side_effect=fake_audio_call):
@@ -422,7 +490,15 @@ class VoiceServiceColloquialFlowTests(unittest.TestCase):
                     return {"tool": "no_action", "args": {"reason": "insufficient_intent"}}
             return {"tool": "shopping_remove_item", "args": {"source": "reminders", "position_mode": "first", "count": 2}}
 
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key", "GEMINI_MODEL": "test-model"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "GOOGLE_API_KEY": "test-key",
+                "GEMINI_MODEL": "test-model",
+                "VOICE_ENABLE_NO_ACTION_RETRY": "1",
+            },
+            clear=False,
+        ):
             with patch.object(voice_service, "_decode_audio_base64_to_temp", return_value="/tmp/voice-audio-fallback.wav"):
                 with patch.object(voice_service, "_call_gemini_for_action_from_audio", side_effect=fake_audio_call):
                     got = interpret_request_with_debug(
