@@ -864,7 +864,9 @@ def _screen_change_force_partial_with_theme(screen: Screen, theme: dict) -> bool
     if not bool(theme.get("refresh_force_partial_on_screen_change", True)):
         return False
 
-    default_screens = "settings,timer,memo,calendar,inventory,reminders"
+    # Settings entry often covers most of the panel; forcing partial there can
+    # produce near-full partial refreshes that leave visible artifacts on e-paper.
+    default_screens = "timer,memo,calendar,inventory,reminders"
     raw = theme.get("refresh_force_partial_on_screen_change_screens", default_screens)
     if isinstance(raw, str):
         names = [x.strip().lower() for x in raw.split(",") if x.strip()]
@@ -1842,6 +1844,8 @@ def main() -> int:
                     pending_reasons = []
                     refresh_runtime.clear_pending()
                     refresh_runtime.mark_full_clean(now)
+                    if refresh_debug:
+                        print("[refresh] RESET_TO_LANDING_FULL_CLEAN")
                     weather_refresh_tz = str(state.ui.device_timezone or "")
                     next_weather_refresh_at = _next_weather_refresh_at(now, weather_refresh_hours, tz_name=weather_refresh_tz)
                     continue
