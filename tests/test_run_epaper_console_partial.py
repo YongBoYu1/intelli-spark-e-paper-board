@@ -202,6 +202,8 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         state.ui.onboarding_wifi_ssid = "Cafe"
         state.ui.factory_reset_requested = True
         state.ui.settings_notice = "Busy"
+        state.ui.settings_reset_dialog_open = True
+        state.ui.settings_reset_dialog_confirm = True
         state.model.reminders = [rec.Reminder(rid="r1", title="Old task", category="general")]
         state.model.memos = [rec.MemoItem(mid="m1", text="Old memo", author="Me", timestamp=1.0, is_new=False)]
 
@@ -222,7 +224,8 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
             self.assertFalse(state.ui.bluetooth_enabled)
             self.assertTrue(state.ui.auto_sync_enabled)
             self.assertFalse(state.ui.factory_reset_requested)
-            self.assertEqual(state.ui.factory_reset_armed_until, 0.0)
+            self.assertFalse(state.ui.settings_reset_dialog_open)
+            self.assertFalse(state.ui.settings_reset_dialog_confirm)
             self.assertEqual(state.ui.settings_notice, "")
             self.assertTrue(os.path.exists(os.path.join(td, "data", "device_config.json")))
             self.assertFalse(os.path.exists(os.path.join(td, "data", "dashboard.json")))

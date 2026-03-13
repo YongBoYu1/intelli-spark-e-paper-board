@@ -81,7 +81,7 @@ def _value_for_item(state: AppState, item: SettingsItem) -> str:
     if item == SettingsItem.ROTATION:
         return _rotation_text(state.ui.rotation_deg)
     if item == SettingsItem.RESET_AND_WIPE:
-        return "PLACEHOLDER"
+        return "OPEN"
     return ""
 
 
@@ -103,6 +103,82 @@ def _draw_home_icon(image, x: int, y: int, size: int, color) -> None:
     # Use a higher alpha cutoff so the rendered outline looks thinner on e-ink.
     alpha = src.getchannel("A").point(lambda v: 255 if v >= 170 else 0, mode="1")
     image.paste(color, (x, y, x + s, y + s), alpha)
+
+
+def _draw_reset_dialog(
+    image,
+    state: AppState,
+    fonts,
+    *,
+    draw: ImageDraw.ImageDraw,
+    ink,
+    bg,
+    border,
+    muted,
+    body_key: str,
+    body_focus_key: str,
+    meta_key: str,
+    body_base: int,
+    meta_base: int,
+    meta_spacing: int,
+) -> None:
+    if not bool(state.ui.settings_reset_dialog_open):
+        return
+
+    w, h = image.size
+    dialog_w = min(w - 72, 420)
+    dialog_h = min(h - 96, 188)
+    x0 = max(24, (w - dialog_w) // 2)
+    y0 = max(60, (h - dialog_h) // 2)
+    x1 = min(w - 24, x0 + dialog_w)
+    y1 = min(h - 32, y0 + dialog_h)
+
+    title_font = fonts.get(body_focus_key, max(20, int(body_base * 1.2)))
+    body_font = fonts.get(body_key, max(14, body_base))
+    meta_font = fonts.get(meta_key, max(12, meta_base))
+
+    draw.rectangle((x0 - 6, y0 - 6, x1 + 6, y1 + 6), fill=bg)
+    draw.rectangle((x0, y0, x1, y1), fill=bg, outline=border, width=2)
+
+    draw.text((x0 + 18, y0 + 16), "FACTORY RESET?", font=title_font, fill=ink)
+
+    body_y = y0 + 56
+    for line in (
+        "This deletes local settings and",
+        "dashboard data on this device.",
+    ):
+        draw.text((x0 + 18, body_y), line, font=body_font, fill=ink)
+        _, line_h = text_size(draw, line, body_font)
+        body_y += line_h + 8
+
+    draw_text_spaced(
+        draw,
+        "ROTATE TO CHOOSE. CLICK TO CONFIRM.",
+        x0 + 18,
+        body_y + 4,
+        meta_font,
+        spacing=meta_spacing,
+        fill=muted,
+    )
+
+    btn_h = 34
+    btn_w = max(120, int((x1 - x0 - 54) / 2))
+    btn_y1 = y1 - 18
+    btn_y0 = btn_y1 - btn_h
+    cancel_rect = (x0 + 18, btn_y0, x0 + 18 + btn_w, btn_y1)
+    confirm_rect = (x1 - 18 - btn_w, btn_y0, x1 - 18, btn_y1)
+
+    for rect, label, active in (
+        (cancel_rect, "CANCEL", not bool(state.ui.settings_reset_dialog_confirm)),
+        (confirm_rect, "CONFIRM", bool(state.ui.settings_reset_dialog_confirm)),
+    ):
+        draw.rectangle(rect, fill=(ink if active else bg), outline=border, width=2)
+        btn_font = fonts.get(body_focus_key if active else body_key, max(14, body_base - 1))
+        text_fill = bg if active else ink
+        tx0, ty0, tx1, ty1 = draw.textbbox((0, 0), label, font=btn_font)
+        text_x = rect[0] + max(0, ((rect[2] - rect[0]) - (tx1 - tx0)) // 2) - tx0
+        text_y = rect[1] + max(0, ((rect[3] - rect[1]) - (ty1 - ty0)) // 2) - ty0
+        draw.text((text_x, text_y), label, font=btn_font, fill=text_fill)
 
 
 def render_settings(image, state: AppState, fonts, theme: dict) -> None:
@@ -282,3 +358,20 @@ def render_settings(image, state: AppState, fonts, theme: dict) -> None:
     if status_left:
         draw_text_spaced(draw, status_left, footer_pad_x, footer_y, meta_font, spacing=meta_spacing, fill=ink)
     draw_text_spaced(draw, status_right, right_x, footer_y, meta_font, spacing=meta_spacing, fill=muted)
+
+    _draw_reset_dialog(
+        image,
+        state,
+        fonts,
+        draw=draw,
+        ink=ink,
+        bg=bg,
+        border=border,
+        muted=muted,
+        body_key=body_key,
+        body_focus_key=body_focus_key,
+        meta_key=meta_key,
+        body_base=body_base,
+        meta_base=meta_base,
+        meta_spacing=meta_spacing,
+    )

@@ -271,6 +271,8 @@ class UiSnapshot:
     menu_overlay_active: bool
     settings_focused_index: int
     settings_notice: str
+    settings_reset_dialog_open: bool
+    settings_reset_dialog_confirm: bool
     partial_refresh_mode: str
     full_refresh_every: int
     wifi_enabled: bool
@@ -340,6 +342,8 @@ def build_ui_snapshot(state: AppState) -> UiSnapshot:
         menu_overlay_active=bool(state.ui.menu_overlay_active),
         settings_focused_index=int(state.ui.settings_focused_index or 0),
         settings_notice=str(state.ui.settings_notice or ""),
+        settings_reset_dialog_open=bool(getattr(state.ui, "settings_reset_dialog_open", False)),
+        settings_reset_dialog_confirm=bool(getattr(state.ui, "settings_reset_dialog_confirm", False)),
         partial_refresh_mode=str(state.ui.partial_refresh_mode or "balanced"),
         full_refresh_every=int(state.ui.full_refresh_every or 0),
         wifi_enabled=bool(state.ui.wifi_enabled),
@@ -823,6 +827,7 @@ def _screen_regions(screen: Screen, width: int, height: int, *, rotation_deg: in
             "header": (24, 10, w - 24, 78),
             "rows": (24, 84, w - 24, max(84, h - footer_h - 2)),
             "footer": (24, max(0, h - footer_h - 1), w - 24, h),
+            "dialog": _settings_dialog_rect(w, h, rotation_deg=rotation_deg) or (24, 84, w - 24, h - 24),
         }
     if screen == Screen.TIMER:
         src_w, src_h = _screen_source_size(width, height, rotation_deg)
@@ -1040,6 +1045,17 @@ def _settings_footer_rect(width: int, height: int, *, rotation_deg: int = 0) -> 
     footer_top = max(0, src_h - footer_h)
     source_rect = (24, footer_top, max(25, src_w - 24), src_h)
     return _transform_source_rect(source_rect, src_w, src_h, rotation_deg)
+
+
+def _settings_dialog_rect(width: int, height: int, *, rotation_deg: int = 0) -> Rect | None:
+    src_w, src_h = _screen_source_size(width, height, rotation_deg)
+    dialog_w = min(src_w - 72, 420)
+    dialog_h = min(src_h - 96, 188)
+    x0 = max(24, (src_w - dialog_w) // 2) - 6
+    y0 = max(60, (src_h - dialog_h) // 2) - 6
+    x1 = min(src_w - 24, x0 + dialog_w + 12)
+    y1 = min(src_h - 32, y0 + dialog_h + 12)
+    return _transform_source_rect((x0, y0, x1, y1), src_w, src_h, rotation_deg)
 
 
 def _memo_summary_rect(width: int, height: int, *, rotation_deg: int = 0) -> Rect | None:
@@ -1535,6 +1551,13 @@ def infer_dirty_rects_with_reasons(prev: UiSnapshot, curr: UiSnapshot, width: in
         return rects, reasons
 
     if curr.screen == Screen.SETTINGS:
+        if (
+            prev.settings_reset_dialog_open != curr.settings_reset_dialog_open
+            or prev.settings_reset_dialog_confirm != curr.settings_reset_dialog_confirm
+        ):
+            rect = _settings_dialog_rect(width, height, rotation_deg=curr.rotation_deg)
+            rects.append(rect if rect is not None else regions["dialog"])
+            reasons.append("settings.reset_dialog")
         if prev.settings_focused_index != curr.settings_focused_index:
             prev_row = _settings_row_rect(width, height, prev.settings_focused_index, rotation_deg=curr.rotation_deg)
             curr_row = _settings_row_rect(width, height, curr.settings_focused_index, rotation_deg=curr.rotation_deg)

@@ -60,7 +60,7 @@ Goals:
   - `WiFi + BT`: toggle combined state for both switches
   - `Auto Sync`: toggle on/off
   - `Sync Now`: fake success, updates `last_sync_at`
-  - `Reset / Web Data`: two-click confirm, then delete local data and return to first boot
+  - `Reset / Web Data`: open confirm dialog, then delete local data and return to first boot
 
 ## Current Implementation Status
 

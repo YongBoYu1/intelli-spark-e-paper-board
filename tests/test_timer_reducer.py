@@ -395,42 +395,58 @@ class TimerReducerTests(unittest.TestCase):
         self.assertEqual(self.state.ui.screen, Screen.SETTINGS)
         self.assertGreaterEqual(self.state.ui.settings_focused_index, 0)
 
-    def test_settings_reset_requires_second_click(self) -> None:
+    def test_settings_reset_click_opens_dialog(self) -> None:
         self.state.ui.screen = Screen.SETTINGS
         self.state.ui.settings_focused_index = SETTINGS_ORDER.index(SettingsItem.RESET_AND_WIPE)
 
         reduce(self.state, Click(), theme={})
 
         self.assertFalse(self.state.ui.factory_reset_requested)
-        self.assertGreater(self.state.ui.factory_reset_armed_until, 0.0)
-        self.assertEqual(self.state.ui.settings_notice, "CLICK AGAIN TO RESET")
+        self.assertTrue(self.state.ui.settings_reset_dialog_open)
+        self.assertFalse(self.state.ui.settings_reset_dialog_confirm)
 
-    def test_settings_reset_second_click_requests_factory_reset(self) -> None:
+    def test_settings_reset_confirm_click_requests_factory_reset(self) -> None:
         self.state.ui.screen = Screen.SETTINGS
-        self.state.ui.settings_focused_index = SETTINGS_ORDER.index(SettingsItem.RESET_AND_WIPE)
-        self.state.ui.factory_reset_armed_until = 200.0
+        self.state.ui.settings_reset_dialog_open = True
+        self.state.ui.settings_reset_dialog_confirm = True
 
-        with patch("app.core.reducer.time.time", return_value=100.0):
-            reduce(self.state, Click(), theme={})
+        reduce(self.state, Click(), theme={})
 
         self.assertTrue(self.state.ui.factory_reset_requested)
-        self.assertEqual(self.state.ui.factory_reset_armed_until, 0.0)
+        self.assertFalse(self.state.ui.settings_reset_dialog_open)
 
-    def test_settings_rotate_cancels_factory_reset_confirmation(self) -> None:
+    def test_settings_reset_click_on_cancel_closes_dialog(self) -> None:
         self.state.ui.screen = Screen.SETTINGS
-        self.state.ui.settings_focused_index = SETTINGS_ORDER.index(SettingsItem.RESET_AND_WIPE)
-        self.state.ui.factory_reset_armed_until = 200.0
+        self.state.ui.settings_reset_dialog_open = True
+        self.state.ui.settings_reset_dialog_confirm = False
+
+        reduce(self.state, Click(), theme={})
+
+        self.assertFalse(self.state.ui.factory_reset_requested)
+        self.assertFalse(self.state.ui.settings_reset_dialog_open)
+
+    def test_settings_rotate_switches_reset_dialog_choice(self) -> None:
+        self.state.ui.screen = Screen.SETTINGS
+        self.state.ui.settings_reset_dialog_open = True
+        self.state.ui.settings_reset_dialog_confirm = False
 
         reduce(self.state, Rotate(+1), theme={})
 
-        self.assertEqual(self.state.ui.factory_reset_armed_until, 0.0)
+        self.assertTrue(self.state.ui.settings_reset_dialog_confirm)
 
-    def test_tick_expires_factory_reset_confirmation(self) -> None:
-        self.state.ui.factory_reset_armed_until = 100.0
+        reduce(self.state, Rotate(-1), theme={})
 
-        reduce(self.state, Tick(now=100.1), theme={})
+        self.assertFalse(self.state.ui.settings_reset_dialog_confirm)
 
-        self.assertEqual(self.state.ui.factory_reset_armed_until, 0.0)
+    def test_settings_back_closes_reset_dialog(self) -> None:
+        self.state.ui.screen = Screen.SETTINGS
+        self.state.ui.settings_reset_dialog_open = True
+        self.state.ui.settings_reset_dialog_confirm = True
+
+        reduce(self.state, Back(), theme={})
+
+        self.assertFalse(self.state.ui.settings_reset_dialog_open)
+        self.assertEqual(self.state.ui.screen, Screen.SETTINGS)
 
     def test_tick_reaching_zero_starts_timer_done_alert(self) -> None:
         self.state.ui.screen = Screen.TIMER

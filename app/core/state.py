@@ -217,7 +217,8 @@ class UiState:
     rotation_deg: int = 0
     settings_notice: str = ""
     settings_notice_due_at: float = 0.0
-    factory_reset_armed_until: float = 0.0
+    settings_reset_dialog_open: bool = False
+    settings_reset_dialog_confirm: bool = False
     factory_reset_requested: bool = False
 
     last_interaction_at: float = field(default_factory=lambda: time.time())

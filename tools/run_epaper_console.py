@@ -587,7 +587,8 @@ def _apply_factory_reset(state: AppState, repo_root: str, theme: dict, *, now: f
     state.ui = AppState(model=state.model).ui
     _apply_device_config_to_state(state, config)
     _initialize_boot_flow_state(state, theme, now=now)
-    state.ui.factory_reset_armed_until = 0.0
+    state.ui.settings_reset_dialog_open = False
+    state.ui.settings_reset_dialog_confirm = False
     state.ui.factory_reset_requested = False
     return config
 
@@ -663,6 +664,8 @@ def _state_render_sig(state: AppState):
         state.ui.menu_overlay_active,
         state.ui.active_menu,
         state.ui.settings_focused_index,
+        state.ui.settings_reset_dialog_open,
+        state.ui.settings_reset_dialog_confirm,
         state.ui.font_size,
         state.ui.weather_day_index,
         state.ui.calendar_offset_days,
@@ -1842,7 +1845,8 @@ def main() -> int:
                     continue
                 except Exception as e:
                     state.ui.factory_reset_requested = False
-                    state.ui.factory_reset_armed_until = 0.0
+                    state.ui.settings_reset_dialog_open = False
+                    state.ui.settings_reset_dialog_confirm = False
                     state.ui.settings_notice = "RESET FAILED"
                     state.ui.settings_notice_due_at = time.time() + 3.0
                     print(f"[warn] failed to factory reset device config: {e}")
