@@ -1831,10 +1831,7 @@ def main() -> int:
                         panel_gamma=panel_gamma,
                         panel_dither=panel_dither,
                     )
-                    # Match cold boot behavior when returning to landing after reset.
-                    # On some panels, Clear()+display can leave a washed-out top region
-                    # even though a regular full refresh renders the same frame cleanly.
-                    driver_mode = _blit_full(epd, committed_frame, driver_mode, fast=False)
+                    driver_mode = _blit_full_clean(epd, committed_frame)
                     committed_sig = _state_render_sig(state)
                     committed_snapshot = build_ui_snapshot(state)
                     pending_frame = None
