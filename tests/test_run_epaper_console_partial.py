@@ -202,8 +202,14 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
         state.ui.onboarding_wifi_ssid = "Cafe"
         state.ui.factory_reset_requested = True
         state.ui.settings_notice = "Busy"
+        state.model.reminders = [rec.Reminder(rid="r1", title="Old task", category="general")]
+        state.model.memos = [rec.MemoItem(mid="m1", text="Old memo", author="Me", timestamp=1.0, is_new=False)]
 
         with tempfile.TemporaryDirectory() as td:
+            data_dir = os.path.join(td, "data")
+            os.makedirs(data_dir, exist_ok=True)
+            with open(os.path.join(data_dir, "dashboard.json"), "w", encoding="utf-8") as f:
+                f.write('{"reminders":[{"title":"Persisted task"}],"memos":[{"text":"Persisted memo","author":"A"}]}')
             cfg = rec._apply_factory_reset(state, td, {}, now=123.0)
 
             self.assertEqual(cfg, rec.sanitize_device_config(rec.default_device_config()))
@@ -219,6 +225,9 @@ class RunEpaperConsolePartialTests(unittest.TestCase):
             self.assertEqual(state.ui.factory_reset_armed_until, 0.0)
             self.assertEqual(state.ui.settings_notice, "")
             self.assertTrue(os.path.exists(os.path.join(td, "data", "device_config.json")))
+            self.assertFalse(os.path.exists(os.path.join(td, "data", "dashboard.json")))
+            self.assertNotEqual([r.title for r in state.model.reminders], ["Old task"])
+            self.assertNotEqual([m.text for m in state.model.memos], ["Old memo"])
 
     def test_render_frame_uses_global_tone_params(self) -> None:
         epd = _FakeEpd()

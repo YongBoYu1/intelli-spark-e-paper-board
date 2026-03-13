@@ -453,6 +453,10 @@ def _load_model(repo_root: str) -> DashboardModel:
     )
 
 
+def _dashboard_data_path(repo_root: str) -> str:
+    return os.path.join(repo_root, "data", "dashboard.json")
+
+
 def _read_key_nonblocking(escape_sequence_timeout_s: float = 0.06) -> str:
     r, _, _ = select.select([sys.stdin], [], [], 0)
     if not r:
@@ -572,7 +576,14 @@ def _initialize_boot_flow_state(state: AppState, theme: dict, *, now: float | No
 
 def _apply_factory_reset(state: AppState, repo_root: str, theme: dict, *, now: float | None = None) -> dict:
     config = sanitize_device_config(default_device_config())
+    dashboard_path = _dashboard_data_path(repo_root)
+    try:
+        if os.path.exists(dashboard_path):
+            os.remove(dashboard_path)
+    except FileNotFoundError:
+        pass
     save_device_config(repo_root, config)
+    state.model = _load_model(repo_root)
     state.ui = AppState(model=state.model).ui
     _apply_device_config_to_state(state, config)
     _initialize_boot_flow_state(state, theme, now=now)
