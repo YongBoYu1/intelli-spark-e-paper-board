@@ -317,7 +317,7 @@ def render_landing(image, state: AppState, fonts, theme: dict) -> None:
 
     status = (
         str(state.ui.landing_status or "").strip()
-        or "Rotate to choose language, click once to confirm, click again to start setup."
+        or "Rotate knob to choose language."
     )
     status = _meta_text(status, compact=f["meta_compact"])
     status = truncate_text(draw, status, f["meta"], max(120, content_w))

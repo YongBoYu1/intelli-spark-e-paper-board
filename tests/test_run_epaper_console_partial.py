@@ -45,6 +45,14 @@ class _FakeEpd:
 
 
 class RunEpaperConsolePartialTests(unittest.TestCase):
+    def test_initialize_boot_flow_state_seeds_stable_landing_status(self) -> None:
+        state = AppState(model=DashboardModel())
+
+        rec._initialize_boot_flow_state(state, {}, now=123.0)
+
+        self.assertEqual(state.ui.screen, rec.Screen.LANDING)
+        self.assertEqual(state.ui.landing_status, "Rotate knob to choose language.")
+
     def test_partial_budget_default_matches_playbook(self) -> None:
         self.assertFalse(rec._partial_budget_enabled_with_theme({}))
 

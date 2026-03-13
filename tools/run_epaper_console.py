@@ -553,7 +553,9 @@ def _initialize_boot_flow_state(state: AppState, theme: dict, *, now: float | No
     state.ui.landing_voice_demo_index = _landing_voice_demo_index(state.ui.voice_locale)
     state.ui.landing_voice_demo_cycles = 0
     state.ui.landing_last_demo_at = started_at
-    state.ui.landing_status = ""
+    # Seed the same copy that landing Tick would compute, so boot/reset does not
+    # immediately trigger a large landing partial update on the next frame.
+    state.ui.landing_status = "Rotate knob to choose language."
     state.ui.onboarding_focus_index = 0
     state.ui.onboarding_qr_focus_index = 0
     state.ui.onboarding_prefs_focus_index = 0
