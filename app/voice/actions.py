@@ -956,6 +956,7 @@ def _capture_undo_snapshot(state: AppState) -> dict[str, Any]:
             "screen": str(getattr(getattr(state.ui, "screen", None), "value", getattr(state.ui, "screen", Screen.HOME.value))),
             "widget_mode": str(getattr(state.ui, "widget_mode", WidgetMode.CLOCK) or WidgetMode.CLOCK.value),
             "timer_seconds": int(getattr(state.ui, "timer_seconds", 0) or 0),
+            "timer_target_seconds": int(getattr(state.ui, "timer_target_seconds", 0) or 0),
             "timer_running": bool(getattr(state.ui, "timer_running", False)),
             "timer_last_tick_at": float(getattr(state.ui, "timer_last_tick_at", 0.0) or 0.0),
             "memo_index": int(getattr(state.ui, "memo_index", 0) or 0),
@@ -993,6 +994,7 @@ def _restore_undo_snapshot(state: AppState, snap: dict[str, Any] | None) -> bool
     else:
         state.ui.widget_mode = WidgetMode.CLOCK
     state.ui.timer_seconds = int(ui.get("timer_seconds") or 0)
+    state.ui.timer_target_seconds = int(ui.get("timer_target_seconds") or 0)
     state.ui.timer_running = bool(ui.get("timer_running") or False)
     state.ui.timer_last_tick_at = float(ui.get("timer_last_tick_at") or time.time())
     state.ui.memo_index = int(ui.get("memo_index") or 0)

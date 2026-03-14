@@ -699,6 +699,30 @@ class VoiceActionTests(unittest.TestCase):
         self.assertIn("bread", [r.title.lower() for r in self.state.model.reminders if r.category != "fridge"])
         self.assertTrue(any(m.text == "check oven" for m in self.state.model.memos))
 
+    def test_undo_and_redo_restore_timer_target_seconds(self) -> None:
+        self.state.ui.timer_seconds = 300
+        self.state.ui.timer_target_seconds = 300
+        self.state.ui.timer_running = True
+
+        apply_voice_plan(
+            self.state,
+            parse_voice_plan({"plan": {"actions": [{"tool": "timer_set", "args": {"duration_seconds": 60}}]}}),
+            transcript="set a timer for 60 seconds",
+        )
+
+        self.assertEqual(self.state.ui.timer_seconds, 60)
+        self.assertEqual(self.state.ui.timer_target_seconds, 60)
+
+        undo_result = apply_voice_action(self.state, VoiceAction(tool="undo_last_action_group", args={}))
+        self.assertTrue(undo_result.changed)
+        self.assertEqual(self.state.ui.timer_seconds, 300)
+        self.assertEqual(self.state.ui.timer_target_seconds, 300)
+
+        redo_result = apply_voice_action(self.state, VoiceAction(tool="redo_last_action_group", args={}))
+        self.assertTrue(redo_result.changed)
+        self.assertEqual(self.state.ui.timer_seconds, 60)
+        self.assertEqual(self.state.ui.timer_target_seconds, 60)
+
     def test_redo_stack_cleared_after_new_committed_action(self) -> None:
         apply_voice_plan(
             self.state,
