@@ -723,6 +723,20 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(self.state.ui.timer_seconds, 60)
         self.assertEqual(self.state.ui.timer_target_seconds, 60)
 
+    def test_open_app_does_not_enter_undo_history(self) -> None:
+        self.state.ui.screen = Screen.HOME
+
+        result = apply_voice_plan(
+            self.state,
+            parse_voice_plan({"plan": {"actions": [{"tool": "open_app", "args": {"app": "inventory"}}]}}),
+            transcript="open inventory",
+        )
+
+        self.assertTrue(result.changed)
+        self.assertEqual(self.state.ui.screen, Screen.REMINDERS)
+        self.assertEqual(len(self.state.ui.voice_done_action_groups), 0)
+        self.assertEqual(len(self.state.ui.voice_redo_action_groups), 0)
+
     def test_redo_stack_cleared_after_new_committed_action(self) -> None:
         apply_voice_plan(
             self.state,

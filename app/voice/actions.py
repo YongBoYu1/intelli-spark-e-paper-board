@@ -46,6 +46,7 @@ ALLOWED_TOOLS = {
 ALLOWED_EVENT_TYPES = {"consumed", "used", "added", "restocked", "finished"}
 CONFIRM_WINDOW_S = 4.0
 VOICE_HISTORY_MAX_GROUPS = 8
+_UNDO_HISTORY_EXCLUDED_TOOLS = {"no_action", "undo_last_action_group", "redo_last_action_group", "open_app"}
 
 _OPEN_APP_NAMES = {"home", "weather", "calendar", "timer", "memo", "reminders", "inventory", "settings"}
 
@@ -1010,7 +1011,7 @@ def _should_record_undo_history(step_results: list[VoicePlanStepResult], *, stat
         return False
     for step in step_results:
         tool = str(step.action.tool or "").strip()
-        if tool in {"no_action", "undo_last_action_group", "redo_last_action_group"}:
+        if tool in _UNDO_HISTORY_EXCLUDED_TOOLS:
             continue
         if bool(step.result.changed):
             return True
@@ -1031,7 +1032,7 @@ def _push_undo_history_group(
     actions: list[dict[str, Any]] = []
     for step in step_results:
         tool = str(step.action.tool or "").strip()
-        if not tool or tool in {"no_action", "undo_last_action_group", "redo_last_action_group"}:
+        if not tool or tool in _UNDO_HISTORY_EXCLUDED_TOOLS:
             continue
         actions.append({"tool": tool, "args": dict(step.action.args or {})})
     if not actions:
