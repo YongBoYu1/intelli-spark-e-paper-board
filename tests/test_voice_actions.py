@@ -503,12 +503,14 @@ class VoiceActionTests(unittest.TestCase):
 
     def test_timer_control_actions(self) -> None:
         apply_voice_action(self.state, VoiceAction(tool="timer_set", args={"duration_seconds": 120}))
+        self.assertEqual(self.state.ui.timer_target_seconds, 120)
         pause = apply_voice_action(self.state, VoiceAction(tool="timer_pause", args={}))
         self.assertTrue(pause.changed)
         self.assertFalse(self.state.ui.timer_running)
         add = apply_voice_action(self.state, VoiceAction(tool="timer_add", args={"delta_seconds": 60}))
         self.assertTrue(add.changed)
         self.assertEqual(self.state.ui.timer_seconds, 180)
+        self.assertEqual(self.state.ui.timer_target_seconds, 180)
         resume = apply_voice_action(self.state, VoiceAction(tool="timer_resume", args={}))
         self.assertTrue(resume.changed)
         self.assertTrue(self.state.ui.timer_running)
@@ -516,6 +518,16 @@ class VoiceActionTests(unittest.TestCase):
         self.assertTrue(stop.changed)
         self.assertFalse(self.state.ui.timer_running)
         self.assertEqual(self.state.ui.timer_seconds, 0)
+
+    def test_timer_add_ignores_stale_target_from_previous_session(self) -> None:
+        self.state.ui.timer_target_seconds = 1800
+
+        apply_voice_action(self.state, VoiceAction(tool="timer_set", args={"duration_seconds": 60}))
+        add = apply_voice_action(self.state, VoiceAction(tool="timer_add", args={"delta_seconds": 30}))
+
+        self.assertTrue(add.changed)
+        self.assertEqual(self.state.ui.timer_seconds, 90)
+        self.assertEqual(self.state.ui.timer_target_seconds, 90)
 
     def test_clear_memo_requires_confirm_and_then_clears(self) -> None:
         self.state.model.memos = []

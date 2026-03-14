@@ -762,6 +762,7 @@ def apply_voice_action(
         state.ui.widget_mode = WidgetMode.TIMER
         state.ui.screen = Screen.TIMER
         state.ui.timer_seconds = secs
+        state.ui.timer_target_seconds = secs
         state.ui.timer_running = True
         state.ui.timer_last_tick_at = time.time()
         return VoiceApplyResult(changed=True, status="done", message=f"Timer set: {secs}s")
@@ -776,15 +777,10 @@ def apply_voice_action(
         next_secs = min(24 * 3600, cur + delta)
         if next_secs <= 0:
             return VoiceApplyResult(changed=False, status="done", message="Timer has no remaining time")
-        prev_target = int(state.ui.timer_target_seconds or 0)
-        if prev_target > 0:
-            next_target = min(24 * 3600, prev_target + delta)
-        else:
-            next_target = next_secs
         state.ui.widget_mode = WidgetMode.TIMER
         state.ui.screen = Screen.TIMER
         state.ui.timer_seconds = next_secs
-        state.ui.timer_target_seconds = next_target
+        state.ui.timer_target_seconds = next_secs
         state.ui.timer_last_tick_at = now_ts
         return VoiceApplyResult(changed=True, status="done", message=f"Timer +{delta}s")
 
