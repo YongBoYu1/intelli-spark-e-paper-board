@@ -4,7 +4,7 @@ import unittest
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps
 
-from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen, WeatherDay
+from app.core.state import AppState, CalendarEvent, DashboardModel, MemoItem, MenuItemId, Reminder, Screen, WeatherDay, WidgetMode
 from app.render.refresh_policy import (
     RefreshPolicyRuntime,
     align_rect_for_partial,
@@ -598,6 +598,33 @@ class RefreshPolicyTests(unittest.TestCase):
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.30)
 
+    def test_home_family_board_content_change_without_index_change_uses_partial_rect(self) -> None:
+        prev_model = DashboardModel()
+        prev_model.memos = [
+            MemoItem(mid="m0", text="older memo", author="Mom", timestamp=1000, is_new=False),
+            MemoItem(mid="m1", text="oldest memo", author="Dad", timestamp=999, is_new=False),
+        ]
+        prev = AppState(model=prev_model)
+        prev.ui.screen = Screen.HOME
+        prev.ui.memo_index = 0
+
+        curr_model = DashboardModel()
+        curr_model.memos = [
+            MemoItem(mid="m2", text="new memo", author="Voice", timestamp=1001, is_new=True),
+            MemoItem(mid="m0", text="older memo", author="Mom", timestamp=1000, is_new=False),
+            MemoItem(mid="m1", text="oldest memo", author="Dad", timestamp=999, is_new=False),
+        ]
+        curr = AppState(model=curr_model)
+        curr.ui.screen = Screen.HOME
+        curr.ui.memo_index = 0
+
+        rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertIn("home.family_board_update", reasons)
+        merged = merge_rects(rects, 800, 480)
+        self.assertIsNotNone(merged)
+        ratio = rect_area_ratio(merged, 800, 480)
+        self.assertLess(ratio, 0.30)
+
     def test_home_portrait_focus_move_uses_rotated_row_rect(self) -> None:
         model = DashboardModel()
         model.reminders = [
@@ -770,6 +797,26 @@ class RefreshPolicyTests(unittest.TestCase):
         self.assertIsNotNone(merged)
         ratio = rect_area_ratio(merged, 800, 480)
         self.assertLess(ratio, 0.24)
+
+    def test_home_kitchen_timer_state_change_does_not_mark_clock_region(self) -> None:
+        prev = AppState(model=DashboardModel())
+        prev.ui.screen = Screen.HOME
+        prev.ui.kitchen_visible_layout = "landscape"
+        prev.ui.timer_running = False
+        prev.ui.timer_seconds = 0
+        prev.ui.widget_mode = WidgetMode.CLOCK
+        prev.ui.clock_minute_bucket = 100
+
+        curr = AppState(model=DashboardModel())
+        curr.ui.screen = Screen.HOME
+        curr.ui.kitchen_visible_layout = "landscape"
+        curr.ui.timer_running = True
+        curr.ui.timer_seconds = 25
+        curr.ui.widget_mode = WidgetMode.TIMER
+        curr.ui.clock_minute_bucket = 100
+
+        _rects, reasons = infer_dirty_rects_with_reasons(build_ui_snapshot(prev), build_ui_snapshot(curr), 800, 480)
+        self.assertNotIn("home.clock_or_timer_state", reasons)
 
     def test_timer_alert_blink_change_marks_time_status_region(self) -> None:
         prev = AppState(model=DashboardModel())

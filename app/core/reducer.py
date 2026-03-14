@@ -314,6 +314,68 @@ def _open_timer_from_home(state: AppState, now: float, theme: dict) -> None:
     state.ui.screen = Screen.TIMER
 
 
+def _open_app_state_sig(state: AppState) -> tuple:
+    return (
+        state.ui.screen,
+        int(state.ui.weather_day_index or 0),
+        int(state.ui.calendar_offset_days or 0),
+        str(state.ui.calendar_mode or "date"),
+        int(state.ui.calendar_selected_index or 0),
+        str(state.ui.widget_mode.value if hasattr(state.ui.widget_mode, "value") else state.ui.widget_mode),
+        int(state.ui.timer_seconds or 0),
+        int(state.ui.timer_target_seconds or 0),
+        bool(state.ui.timer_running),
+        int(state.ui.timer_focused_index or 0),
+        bool(state.ui.timer_alert_active),
+        bool(state.ui.timer_alert_blink_on),
+        int(state.ui.memo_index or 0),
+        bool(state.ui.memo_expanded),
+        int(state.ui.list_focused_index or 0),
+    )
+
+
+def open_app_by_name(
+    state: AppState,
+    app_name: str,
+    *,
+    now: float | None = None,
+    theme: dict | None = None,
+) -> bool:
+    app = str(app_name or "").strip().lower()
+    if app not in {"home", "weather", "calendar", "timer", "memo", "reminders", "inventory", "settings"}:
+        return False
+
+    now_ts = float(now if now is not None else time.time())
+    theme_dict = dict(theme or {})
+    before = _open_app_state_sig(state)
+
+    if app == "home":
+        state.ui.screen = Screen.HOME
+    elif app == "weather":
+        state.ui.screen = Screen.WEATHER
+        state.ui.weather_day_index = 0
+    elif app == "calendar":
+        _open_calendar_from_home(state)
+    elif app == "timer":
+        _open_timer_from_home(state, now_ts, theme_dict)
+        _clear_timer_alert(state)
+    elif app == "memo":
+        state.ui.screen = Screen.MEMO
+        count = len(state.model.memos)
+        state.ui.memo_index = (int(state.ui.memo_index or 0) % max(1, count)) if count > 0 else 0
+        state.ui.memo_expanded = False
+    elif app == "reminders":
+        state.ui.screen = Screen.REMINDERS
+        _clamp_focus_list(state, prefer_section="reminders")
+    elif app == "inventory":
+        state.ui.screen = Screen.REMINDERS
+        _clamp_focus_list(state, prefer_section="inventory")
+    elif app == "settings":
+        state.ui.screen = Screen.SETTINGS
+
+    return _open_app_state_sig(state) != before
+
+
 def _activate_kitchen_left_target(state: AppState, target_kind: str, now: float, *, theme: dict) -> bool:
     if target_kind == KITCHEN_FOCUS_CLOCK:
         if state.ui.widget_mode == WidgetMode.TIMER:
@@ -322,14 +384,13 @@ def _activate_kitchen_left_target(state: AppState, target_kind: str, now: float,
                 state.ui.timer_running = not state.ui.timer_running
                 state.ui.timer_last_tick_at = now
             else:
-                _open_timer_from_home(state, now, theme)
+                open_app_by_name(state, "timer", now=now, theme=theme)
         else:
-            _open_calendar_from_home(state)
+            open_app_by_name(state, "calendar", now=now, theme=theme)
         return True
 
     if target_kind == KITCHEN_FOCUS_WEATHER:
-        state.ui.screen = Screen.WEATHER
-        state.ui.weather_day_index = 0
+        open_app_by_name(state, "weather", now=now, theme=theme)
         return True
 
     return False
@@ -1075,32 +1136,16 @@ def _handle_onboarding_back(state: AppState) -> None:
 def _activate_menu_pick(state: AppState, picked: MenuItemId, now: float, *, theme: dict, items_per_page: int, variant: str) -> None:
     state.ui.active_menu = picked
     state.ui.menu_overlay_active = False
-    if picked == MenuItemId.MEMO:
-        state.ui.screen = Screen.MEMO
-        count = len(state.model.memos)
-        state.ui.memo_index = (int(state.ui.memo_index or 0) % max(1, count)) if count > 0 else 0
-        state.ui.memo_expanded = False
-        return
-    if picked == MenuItemId.CALENDAR:
-        state.ui.screen = Screen.CALENDAR
-        return
-    if picked == MenuItemId.TIMER:
-        state.ui.widget_mode = WidgetMode.TIMER
-        if int(state.ui.timer_seconds or 0) <= 0:
-            state.ui.timer_seconds = _timer_default_s(theme)
-        state.ui.timer_target_seconds = int(state.ui.timer_seconds or 0)
-        state.ui.timer_running = False
-        state.ui.timer_last_tick_at = now
-        state.ui.timer_focused_index = 2
-        _clear_timer_alert(state)
-        state.ui.screen = Screen.TIMER
-        return
-    if picked == MenuItemId.LIST:
-        state.ui.screen = Screen.REMINDERS
-        _clamp_focus_list(state, prefer_section="reminders")
-        return
-    if picked == MenuItemId.SETTINGS:
-        state.ui.screen = Screen.SETTINGS
+    picked_to_app: dict[MenuItemId, str] = {
+        MenuItemId.MEMO: "memo",
+        MenuItemId.CALENDAR: "calendar",
+        MenuItemId.TIMER: "timer",
+        MenuItemId.LIST: "reminders",
+        MenuItemId.SETTINGS: "settings",
+    }
+    target_app = picked_to_app.get(picked)
+    if target_app:
+        open_app_by_name(state, target_app, now=now, theme=theme)
         return
     state.ui.screen = Screen.PLACEHOLDER
 
@@ -1487,13 +1532,9 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
                     state.ui.timer_running = not state.ui.timer_running
                     state.ui.timer_last_tick_at = now
                 else:
-                    state.ui.screen = Screen.CALENDAR
-                    state.ui.calendar_offset_days = 0
-                    state.ui.calendar_mode = "date"
-                    state.ui.calendar_selected_index = 0
+                    open_app_by_name(state, "calendar", now=now, theme=theme)
             elif state.ui.focused_index == 1:
-                state.ui.screen = Screen.WEATHER
-                state.ui.weather_day_index = 0
+                open_app_by_name(state, "weather", now=now, theme=theme)
             else:
                 _toggle_task_completed(state, items_per_page)
         elif state.ui.screen == Screen.CALENDAR:

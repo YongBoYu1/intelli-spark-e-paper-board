@@ -24,6 +24,8 @@ import termios
 import tempfile
 import time
 import tty
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageChops
@@ -1127,6 +1129,177 @@ def _record_audio_fixed(
     return audio_path
 
 
+def _start_audio_capture(
+    *,
+    audio_device: str,
+    audio_rate: int,
+    audio_channels: int,
+) -> tuple[Any | None, str]:
+    fd, audio_path = tempfile.mkstemp(prefix="voice_", suffix=".wav", dir="/tmp")
+    os.close(fd)
+    cmd = [
+        "arecord",
+        "-D",
+        str(audio_device),
+        "-f",
+        "S16_LE",
+        "-r",
+        str(int(audio_rate)),
+        "-c",
+        str(int(audio_channels)),
+        "-t",
+        "wav",
+        str(audio_path),
+    ]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return proc, audio_path
+    except Exception:
+        try:
+            os.remove(audio_path)
+        except Exception:
+            pass
+        return None, ""
+
+
+def _stop_audio_capture(*, proc: Any | None, audio_path: str) -> str | None:
+    p = proc
+    if p is None:
+        return None
+    try:
+        if p.poll() is None:
+            p.terminate()
+            try:
+                p.wait(timeout=0.8)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(timeout=0.5)
+    except Exception:
+        try:
+            p.kill()
+        except Exception:
+            pass
+
+    if not audio_path or not os.path.exists(audio_path):
+        return None
+    try:
+        size = os.path.getsize(audio_path)
+    except Exception:
+        size = 0
+    # WAV header is usually 44 bytes. Smaller than that is effectively empty.
+    if size <= 44:
+        try:
+            os.remove(audio_path)
+        except Exception:
+            pass
+        return None
+    return audio_path
+
+
+def _voice_overlay_holds(theme: dict) -> tuple[float, float, float]:
+    success_hold_s = max(0.0, float(theme.get("voice_success_hold_s", 0.35) or 0.35))
+    info_hold_s = max(success_hold_s, float(theme.get("voice_info_hold_s", 1.0) or 1.0))
+    error_hold_s = max(info_hold_s, float(theme.get("voice_error_hold_s", 1.6) or 1.6))
+    return success_hold_s, info_hold_s, error_hold_s
+
+
+def _apply_voice_payload(
+    *,
+    state: AppState,
+    payload: dict[str, Any] | None,
+    theme: dict,
+    demo_only: bool,
+    defer_success_idle_clear: bool = False,
+) -> tuple[bool, bool]:
+    transcript = ""
+    if isinstance(payload, dict):
+        transcript = str(payload.get("transcript") or "").strip()
+    if demo_only:
+        apply_onboarding_voice_demo_result(state, transcript)
+        _set_voice_overlay(state, "idle")
+        return False, False
+
+    before_screen = state.ui.screen
+    plan = parse_voice_plan(payload)
+    plan_result = apply_voice_plan(state, plan, transcript=transcript, theme=theme)
+    action_desc = ", ".join([describe_voice_action(a) for a in list(plan.actions or [])[:4]])
+    if not action_desc:
+        action_desc = describe_voice_action(parse_voice_action(payload))
+    heard = transcript if transcript else "-"
+    shown = (
+        f"Heard: {heard}\n"
+        f"Action: {action_desc}\n"
+        f"Result: {plan_result.message}"
+    )
+    success_hold_s, info_hold_s, _error_hold_s = _voice_overlay_holds(theme)
+    hold_s = success_hold_s
+    status_txt = str(plan_result.status or "").strip().lower()
+    should_hold_feedback = (
+        status_txt in {"error", "clarify", "confirm", "no_action"}
+        or not bool(plan_result.changed)
+    )
+    if status_txt in {"error", "clarify", "confirm", "no_action"}:
+        hold_s = info_hold_s
+    if status_txt == "confirm":
+        remaining_confirm_s = max(0.0, float(state.ui.voice_confirm_due_at or 0.0) - time.time())
+        hold_s = max(hold_s, remaining_confirm_s + 0.2)
+    if should_hold_feedback:
+        _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
+        return True, False
+    if defer_success_idle_clear and bool(plan_result.changed) and state.ui.screen == before_screen:
+        return False, True
+    _set_voice_overlay(state, "idle")
+    return False, False
+
+
+def _voice_interpret_job(
+    *,
+    api_url: str,
+    audio_path: str,
+    voice_locale: str,
+    voice_timezone: str,
+    voice_timeout_s: float,
+    board_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    started = time.time()
+    try:
+        meta = build_request_meta(locale=voice_locale, tz_name=voice_timezone)
+        payload = interpret_audio_via_backend(
+            api_url=str(api_url or ""),
+            audio_path=audio_path,
+            meta=meta,
+            timeout_s=float(voice_timeout_s),
+            board_context=board_context,
+        )
+        return {
+            "ok": True,
+            "payload": payload if isinstance(payload, dict) else {},
+            "elapsed_s": max(0.0, time.time() - started),
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "elapsed_s": max(0.0, time.time() - started),
+        }
+
+
+def _voice_access_block_message(state: AppState, *, in_voice_guide_demo: bool) -> str:
+    if ((not bool(state.ui.setup_completed)) or state.ui.screen in (Screen.LANDING, Screen.ONBOARDING)) and (not in_voice_guide_demo):
+        return "Voice is available after first setup."
+    return ""
+
+
+def _voice_action_brief(payload: dict[str, Any] | None) -> str:
+    if not isinstance(payload, dict):
+        return "no_payload"
+    try:
+        action = parse_voice_action(payload)
+        return describe_voice_action(action)
+    except Exception:
+        return "action_parse_failed"
+
+
 def _run_voice_flow(
     *,
     state: AppState,
@@ -1183,7 +1356,8 @@ def _run_voice_flow(
             max_sec=voice_max_sec,
         )
         if not audio:
-            _set_voice_overlay(state, "error", "Recording failed", hold_s=2.0)
+            _, _, error_hold_s = _voice_overlay_holds(theme)
+            _set_voice_overlay(state, "error", "Recording failed", hold_s=error_hold_s)
             driver_mode, _ = _render_voice_overlay_step(
                 epd=epd,
                 state=state,
@@ -1224,49 +1398,34 @@ def _run_voice_flow(
             timeout_s=float(voice_timeout_s),
             board_context=build_board_context(state),
         )
-        transcript = ""
-        if isinstance(payload, dict):
-            transcript = str(payload.get("transcript") or "").strip()
-        if demo_only:
-            apply_onboarding_voice_demo_result(state, transcript)
-            _set_voice_overlay(state, "idle")
-        else:
-            plan = parse_voice_plan(payload)
-            plan_result = apply_voice_plan(state, plan, transcript=transcript)
-            action_desc = ", ".join([describe_voice_action(a) for a in list(plan.actions or [])[:4]])
-            if not action_desc:
-                action_desc = describe_voice_action(parse_voice_action(payload))
-            heard = transcript if transcript else "-"
-            shown = (
-                f"Heard: {heard}\n"
-                f"Action: {action_desc}\n"
-                f"Result: {plan_result.message}"
-            )
-            hold_s = 2.2
-            if str(plan_result.status or "") == "confirm":
-                remaining_confirm_s = max(0.0, float(state.ui.voice_confirm_due_at or 0.0) - time.time())
-                hold_s = max(hold_s, remaining_confirm_s + 0.2)
-            _set_voice_overlay(state, plan_result.status, shown, hold_s=hold_s)
-        driver_mode, _ = _render_voice_overlay_step(
-            epd=epd,
+        should_render_feedback, _ = _apply_voice_payload(
             state=state,
-            fonts=fonts,
+            payload=payload if isinstance(payload, dict) else {},
             theme=theme,
-            panel_threshold=panel_threshold,
-            panel_muted=panel_muted,
-            panel_gamma=panel_gamma,
-            panel_dither=panel_dither,
-            current_mode=driver_mode,
-            supports_partial=supports_partial,
-            refresh_debug=refresh_debug,
+            demo_only=demo_only,
         )
-        did_render_step = True
+        if should_render_feedback:
+            driver_mode, _ = _render_voice_overlay_step(
+                epd=epd,
+                state=state,
+                fonts=fonts,
+                theme=theme,
+                panel_threshold=panel_threshold,
+                panel_muted=panel_muted,
+                panel_gamma=panel_gamma,
+                panel_dither=panel_dither,
+                current_mode=driver_mode,
+                supports_partial=supports_partial,
+                refresh_debug=refresh_debug,
+            )
+            did_render_step = True
     except VoiceClientError as e:
         if demo_only:
             apply_onboarding_voice_demo_error(state, str(e))
             _set_voice_overlay(state, "idle")
         else:
-            _set_voice_overlay(state, "error", str(e), hold_s=2.5)
+            _, _, error_hold_s = _voice_overlay_holds(theme)
+            _set_voice_overlay(state, "error", str(e), hold_s=error_hold_s)
         driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
@@ -1286,7 +1445,8 @@ def _run_voice_flow(
             apply_onboarding_voice_demo_error(state, str(e))
             _set_voice_overlay(state, "idle")
         else:
-            _set_voice_overlay(state, "error", f"Voice failed: {e}", hold_s=2.5)
+            _, _, error_hold_s = _voice_overlay_holds(theme)
+            _set_voice_overlay(state, "error", f"Voice failed: {e}", hold_s=error_hold_s)
         driver_mode, _ = _render_voice_overlay_step(
             epd=epd,
             state=state,
@@ -1532,6 +1692,25 @@ def main() -> int:
     rotate_prev = None
     rotate_btn_last_press_at = 0.0
     space_last_trigger_at = 0.0
+    keyboard_voice_hold_active = False
+    keyboard_voice_last_seen_at = 0.0
+    keyboard_voice_repeat_seen = False
+    voice_capture_proc: Any | None = None
+    voice_capture_path = ""
+    voice_capture_started_at = 0.0
+    voice_capture_demo_only = False
+    voice_capture_source = ""
+    voice_job_future: Future | None = None
+    voice_job_audio_path = ""
+    voice_job_demo_only = False
+    voice_job_source = ""
+    voice_job_capture_s = 0.0
+    voice_job_audio_bytes = 0
+    voice_job_enqueued_at = 0.0
+    voice_apply_pending = False
+    voice_apply_started_at = 0.0
+    voice_apply_action = ""
+    voice_overlay_clear_after_commit = False
     gpio_pins_in_use = set()
     encoder_key_debounce_s = max(0.0, float(args.encoder_key_debounce_ms) / 1000.0)
     encoder_key_min_press_ms = args.encoder_key_min_press_ms
@@ -1542,6 +1721,10 @@ def main() -> int:
     encoder_rotate_guard_s = max(0.0, float(theme.get("encoder_rotate_guard_ms", 120) or 120) / 1000.0)
     rotate_debounce_s = max(0.0, float(args.rotate_debounce_ms) / 1000.0)
     voice_space_cooldown_s = max(0.2, float(theme.get("voice_space_cooldown_s", 1.2) or 1.2))
+    keyboard_voice_release_gap_s = max(0.2, float(theme.get("voice_keyboard_release_gap_s", 0.8) or 0.8))
+    voice_encoder_hold_s = max(0.2, float(theme.get("voice_encoder_hold_s", 0.3) or 0.3))
+    _, _, voice_error_hold_s = _voice_overlay_holds(theme)
+    voice_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice-worker")
 
     if GPIO is None:
         if encoder_pin_s1 is not None or encoder_pin_s2 is not None or encoder_key_pin is not None or rotate_pin is not None:
@@ -1597,7 +1780,7 @@ def main() -> int:
             rotate_btn_ready = False
 
     try:
-        print("Controls: Left/Right rotate, Enter click, Hold encoder=long press, Space voice (or voice-demo in guide), R rotate screen (+90°), S settings, G welcome landing, W weather, B/Esc back, Q quit")
+        print("Controls: Left/Right rotate, Enter click, Hold encoder=voice on HOME (release to send) / long press elsewhere, Hold V=voice (release to send), Space start/stop voice, R rotate screen (+90°), S settings, G welcome landing, W weather, B/Esc back, Q quit")
         next_tick = time.time()
         weather_refresh_tz = str(state.ui.device_timezone or "")
         next_weather_refresh_at = _next_weather_refresh_at(next_tick, weather_refresh_hours, tz_name=weather_refresh_tz)
@@ -1621,11 +1804,159 @@ def main() -> int:
                     print(f"[warn] periodic weather refresh failed: {e}")
                 weather_refresh_tz = str(state.ui.device_timezone or "")
                 next_weather_refresh_at = _next_weather_refresh_at(now, weather_refresh_hours, tz_name=weather_refresh_tz)
+            in_voice_guide_demo = (
+                state.ui.screen == Screen.ONBOARDING
+                and str(state.ui.onboarding_step or "").strip().lower() == "voice_guide"
+            )
+            voice_block_message = _voice_access_block_message(
+                state,
+                in_voice_guide_demo=bool(in_voice_guide_demo),
+            )
+
+            if (
+                voice_capture_proc is not None
+                and voice_job_future is None
+                and (now - float(voice_capture_started_at or now)) >= max(1, int(args.voice_max_sec))
+            ):
+                capture_started_at = float(voice_capture_started_at or now)
+                audio = _stop_audio_capture(proc=voice_capture_proc, audio_path=voice_capture_path)
+                voice_capture_proc = None
+                voice_capture_path = ""
+                voice_capture_started_at = 0.0
+                keyboard_voice_hold_active = False
+                keyboard_voice_repeat_seen = False
+                if not audio:
+                    print("[voice] capture_failed source=max_sec reason=empty_or_short_audio")
+                    _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
+                else:
+                    voice_job_capture_s = max(0.0, now - capture_started_at)
+                    try:
+                        voice_job_audio_bytes = int(os.path.getsize(audio))
+                    except Exception:
+                        voice_job_audio_bytes = 0
+                    voice_job_enqueued_at = time.time()
+                    _set_voice_overlay(state, "processing", "Interpreting command")
+                    voice_job_audio_path = audio
+                    voice_job_demo_only = bool(voice_capture_demo_only)
+                    voice_job_source = str(voice_capture_source or "")
+                    voice_capture_demo_only = False
+                    voice_capture_source = ""
+                    voice_job_future = voice_executor.submit(
+                        _voice_interpret_job,
+                        api_url=str(args.voice_api_url or ""),
+                        audio_path=audio,
+                        voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
+                        voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),
+                        voice_timeout_s=float(args.voice_timeout),
+                        board_context=build_board_context(state),
+                    )
+
+            if (
+                keyboard_voice_hold_active
+                and keyboard_voice_repeat_seen
+                and voice_capture_proc is not None
+                and voice_job_future is None
+                and str(voice_capture_source or "") == "keyboard_hold"
+                and (now - float(keyboard_voice_last_seen_at or now)) >= keyboard_voice_release_gap_s
+            ):
+                capture_started_at = float(voice_capture_started_at or now)
+                audio = _stop_audio_capture(proc=voice_capture_proc, audio_path=voice_capture_path)
+                voice_capture_proc = None
+                voice_capture_path = ""
+                voice_capture_started_at = 0.0
+                keyboard_voice_hold_active = False
+                keyboard_voice_repeat_seen = False
+                if not audio:
+                    print("[voice] capture_failed source=keyboard_hold reason=empty_or_short_audio")
+                    _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
+                else:
+                    voice_job_capture_s = max(0.0, now - capture_started_at)
+                    try:
+                        voice_job_audio_bytes = int(os.path.getsize(audio))
+                    except Exception:
+                        voice_job_audio_bytes = 0
+                    voice_job_enqueued_at = time.time()
+                    _set_voice_overlay(state, "processing", "Interpreting command")
+                    voice_job_audio_path = audio
+                    voice_job_demo_only = bool(voice_capture_demo_only)
+                    voice_job_source = str(voice_capture_source or "keyboard_hold")
+                    voice_capture_demo_only = False
+                    voice_capture_source = ""
+                    voice_job_future = voice_executor.submit(
+                        _voice_interpret_job,
+                        api_url=str(args.voice_api_url or ""),
+                        audio_path=audio,
+                        voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
+                        voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),
+                        voice_timeout_s=float(args.voice_timeout),
+                        board_context=build_board_context(state),
+                    )
+
+            if voice_job_future is not None and voice_job_future.done():
+                result: dict[str, Any]
+                try:
+                    raw_result = voice_job_future.result()
+                    result = raw_result if isinstance(raw_result, dict) else {"ok": False, "error": "invalid_voice_result"}
+                except Exception as e:
+                    result = {"ok": False, "error": str(e)}
+                voice_job_future = None
+                elapsed_s = max(0.0, float(result.get("elapsed_s") or 0.0))
+                queue_s = max(0.0, time.time() - float(voice_job_enqueued_at or time.time()))
+                source = str(voice_job_source or "voice")
+                action_brief = "no_action"
+                transcript_len = 0
+                if bool(result.get("ok")):
+                    payload = result.get("payload")
+                    if isinstance(payload, dict):
+                        transcript_len = len(str(payload.get("transcript") or "").strip())
+                        action_brief = _voice_action_brief(payload)
+                    apply_started = time.time()
+                    _should_render_feedback, defer_idle_clear = _apply_voice_payload(
+                        state=state,
+                        payload=payload if isinstance(payload, dict) else {},
+                        theme=theme,
+                        demo_only=bool(voice_job_demo_only),
+                        defer_success_idle_clear=True,
+                    )
+                    apply_ms = int(max(0.0, (time.time() - apply_started) * 1000))
+                    print(
+                        f"[voice] action_applied source={source} apply_ms={apply_ms} "
+                        f"action={action_brief} demo={int(bool(voice_job_demo_only))}"
+                    )
+                    voice_apply_pending = True
+                    voice_apply_started_at = time.time()
+                    voice_apply_action = action_brief
+                    voice_overlay_clear_after_commit = bool(defer_idle_clear)
+                else:
+                    err = str(result.get("error") or "Voice failed").strip() or "Voice failed"
+                    if voice_job_demo_only:
+                        apply_onboarding_voice_demo_error(state, err)
+                        _set_voice_overlay(state, "idle")
+                    else:
+                        _set_voice_overlay(state, "error", err, hold_s=voice_error_hold_s)
+                status = "ok" if bool(result.get("ok")) else "error"
+                total_s = max(0.0, float(voice_job_capture_s or 0.0) + elapsed_s)
+                print(
+                    f"[voice] backend_done source={source} status={status} "
+                    f"capture_ms={int(float(voice_job_capture_s or 0.0) * 1000)} "
+                    f"backend_ms={int(elapsed_s * 1000)} total_ms={int(total_s * 1000)} "
+                    f"queue_ms={int(queue_s * 1000)} audio_kb={int(int(voice_job_audio_bytes or 0) / 1024)} "
+                    f"heard_len={int(transcript_len)} action={action_brief}"
+                )
+                voice_job_demo_only = False
+                voice_job_source = ""
+                voice_job_capture_s = 0.0
+                voice_job_audio_bytes = 0
+                voice_job_enqueued_at = 0.0
+                if voice_job_audio_path:
+                    try:
+                        os.remove(voice_job_audio_path)
+                    except Exception:
+                        pass
+                    voice_job_audio_path = ""
             key = _read_key_nonblocking()
 
             ev = None
-            voice_flow_ran = False
-            voice_flow_demo_only = False
             key_phys_down = bool(key_is_down)
             if encoder_key_pin is not None:
                 try:
@@ -1673,7 +2004,39 @@ def main() -> int:
                                 key_rotate_block_until = max(key_rotate_block_until, now + encoder_rotate_guard_s)
                                 encoder_accum = 0
                         else:
-                            if key_is_down:
+                            if voice_capture_proc is not None:
+                                capture_started_at = float(voice_capture_started_at or now)
+                                audio = _stop_audio_capture(proc=voice_capture_proc, audio_path=voice_capture_path)
+                                voice_capture_proc = None
+                                voice_capture_path = ""
+                                voice_capture_started_at = 0.0
+                                keyboard_voice_hold_active = False
+                                keyboard_voice_repeat_seen = False
+                                if not audio:
+                                    _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
+                                else:
+                                    voice_job_capture_s = max(0.0, now - capture_started_at)
+                                    try:
+                                        voice_job_audio_bytes = int(os.path.getsize(audio))
+                                    except Exception:
+                                        voice_job_audio_bytes = 0
+                                    voice_job_enqueued_at = time.time()
+                                    _set_voice_overlay(state, "processing", "Interpreting command")
+                                    voice_job_audio_path = audio
+                                    voice_job_demo_only = bool(voice_capture_demo_only)
+                                    voice_job_source = str(voice_capture_source or "encoder")
+                                    voice_capture_demo_only = False
+                                    voice_capture_source = ""
+                                    voice_job_future = voice_executor.submit(
+                                        _voice_interpret_job,
+                                        api_url=str(args.voice_api_url or ""),
+                                        audio_path=audio,
+                                        voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
+                                        voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),
+                                        voice_timeout_s=float(args.voice_timeout),
+                                        board_context=build_board_context(state),
+                                    )
+                            elif key_is_down:
                                 press_dur = max(0.0, now - key_down_at)
                                 if (
                                     (not key_long_sent)
@@ -1691,7 +2054,35 @@ def main() -> int:
                     pass
 
             if encoder_key_pin is not None and ev is None and key_is_down and not key_long_sent:
-                if (now - key_down_at) >= encoder_key_long_press_s:
+                press_dur = max(0.0, now - key_down_at)
+                if (
+                    press_dur >= voice_encoder_hold_s
+                    and state.ui.screen == Screen.HOME
+                    and not voice_block_message
+                    and not state.ui.voice_active
+                    and voice_capture_proc is None
+                    and voice_job_future is None
+                    and (now - float(space_last_trigger_at)) >= voice_space_cooldown_s
+                ):
+                    proc, path = _start_audio_capture(
+                        audio_device=str(args.voice_audio_device or "default"),
+                        audio_rate=max(8000, int(args.voice_audio_rate)),
+                        audio_channels=max(1, int(args.voice_audio_channels)),
+                    )
+                    if proc is None or not path:
+                        _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
+                    else:
+                        voice_capture_proc = proc
+                        voice_capture_path = path
+                        voice_capture_started_at = now
+                        voice_capture_demo_only = bool(in_voice_guide_demo)
+                        voice_capture_source = "encoder"
+                        key_long_sent = True
+                        space_last_trigger_at = now
+                        _set_voice_overlay(state, "recording", "Listening... release to send")
+                        if refresh_debug:
+                            print("[voice] start source=encoder")
+                elif press_dur >= encoder_key_long_press_s:
                     ev = LongPress()
                     key_long_sent = True
 
@@ -1714,6 +2105,53 @@ def main() -> int:
                 ev = Rotate(-1)
             elif key in ("\x1b[C", "l"):  # right
                 ev = Rotate(+1)
+            elif key in ("v", "V"):
+                if voice_block_message:
+                    msg = voice_block_message
+                    if state.ui.screen == Screen.LANDING:
+                        state.ui.landing_status = msg
+                    elif state.ui.screen == Screen.ONBOARDING:
+                        state.ui.onboarding_status = msg
+                    ev = None
+                elif voice_job_future is not None:
+                    ev = None
+                    if refresh_debug:
+                        print("[voice] ignore V trigger reason=voice_processing")
+                elif voice_capture_proc is not None and str(voice_capture_source or "") == "keyboard_hold":
+                    keyboard_voice_hold_active = True
+                    keyboard_voice_repeat_seen = True
+                    keyboard_voice_last_seen_at = now
+                    ev = None
+                elif (
+                    state.ui.voice_active
+                    or (now - float(space_last_trigger_at)) < voice_space_cooldown_s
+                ):
+                    ev = None
+                    if refresh_debug:
+                        why = "voice_active" if state.ui.voice_active else "space_cooldown"
+                        print(f"[voice] ignore V trigger reason={why}")
+                else:
+                    proc, path = _start_audio_capture(
+                        audio_device=str(args.voice_audio_device or "default"),
+                        audio_rate=max(8000, int(args.voice_audio_rate)),
+                        audio_channels=max(1, int(args.voice_audio_channels)),
+                    )
+                    if proc is None or not path:
+                        _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
+                    else:
+                        voice_capture_proc = proc
+                        voice_capture_path = path
+                        voice_capture_started_at = now
+                        voice_capture_demo_only = bool(in_voice_guide_demo)
+                        voice_capture_source = "keyboard_hold"
+                        keyboard_voice_hold_active = True
+                        keyboard_voice_repeat_seen = False
+                        keyboard_voice_last_seen_at = now
+                        space_last_trigger_at = now
+                        _set_voice_overlay(state, "recording", "Listening... release V to send")
+                        if refresh_debug:
+                            print("[voice] start source=keyboard_hold")
+                    ev = None
             elif key == "\x03":  # Ctrl+C in raw mode
                 return 0
             elif key in ("\r", "\n"):  # enter
@@ -1733,12 +2171,41 @@ def main() -> int:
                 else:
                     ev = Click()
             elif key == " ":
-                in_voice_guide_demo = (
-                    state.ui.screen == Screen.ONBOARDING
-                    and str(state.ui.onboarding_step or "").strip().lower() == "voice_guide"
-                )
-                if ((not bool(state.ui.setup_completed)) or state.ui.screen in (Screen.LANDING, Screen.ONBOARDING)) and (not in_voice_guide_demo):
-                    msg = "Voice is available after first setup."
+                if voice_capture_proc is not None:
+                    capture_started_at = float(voice_capture_started_at or now)
+                    audio = _stop_audio_capture(proc=voice_capture_proc, audio_path=voice_capture_path)
+                    voice_capture_proc = None
+                    voice_capture_path = ""
+                    voice_capture_started_at = 0.0
+                    keyboard_voice_hold_active = False
+                    keyboard_voice_repeat_seen = False
+                    if not audio:
+                        _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
+                    else:
+                        voice_job_capture_s = max(0.0, now - capture_started_at)
+                        try:
+                            voice_job_audio_bytes = int(os.path.getsize(audio))
+                        except Exception:
+                            voice_job_audio_bytes = 0
+                        voice_job_enqueued_at = time.time()
+                        _set_voice_overlay(state, "processing", "Interpreting command")
+                        voice_job_audio_path = audio
+                        voice_job_demo_only = bool(voice_capture_demo_only)
+                        voice_job_source = str(voice_capture_source or "space")
+                        voice_capture_demo_only = False
+                        voice_capture_source = ""
+                        voice_job_future = voice_executor.submit(
+                            _voice_interpret_job,
+                            api_url=str(args.voice_api_url or ""),
+                            audio_path=audio,
+                            voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
+                            voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),
+                            voice_timeout_s=float(args.voice_timeout),
+                            board_context=build_board_context(state),
+                        )
+                    ev = None
+                elif voice_block_message:
+                    msg = voice_block_message
                     if state.ui.screen == Screen.LANDING:
                         state.ui.landing_status = msg
                     elif state.ui.screen == Screen.ONBOARDING:
@@ -1746,6 +2213,10 @@ def main() -> int:
                     if refresh_debug:
                         print("[voice] ignore space trigger reason=onboarding_locked")
                     ev = None
+                elif voice_job_future is not None:
+                    ev = None
+                    if refresh_debug:
+                        print("[voice] ignore space trigger reason=voice_processing")
                 elif (
                     state.ui.voice_active
                     or (now - float(space_last_trigger_at)) < voice_space_cooldown_s
@@ -1756,37 +2227,25 @@ def main() -> int:
                         print(f"[voice] ignore space trigger reason={why}")
                     continue
                 else:
-                    # Voice record + send flow on keyboard space.
-                    voice_flow_demo_only = bool(in_voice_guide_demo)
-                    driver_mode, voice_flow_ran = _run_voice_flow(
-                        state=state,
-                        epd=epd,
-                        fonts=fonts,
-                        theme=theme,
-                        panel_threshold=panel_threshold,
-                        panel_muted=panel_muted,
-                        panel_gamma=panel_gamma,
-                        panel_dither=panel_dither,
-                        voice_api_url=str(args.voice_api_url or ""),
-                        voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
-                        voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),
-                        voice_timeout_s=float(args.voice_timeout),
-                        voice_max_sec=max(1, int(args.voice_max_sec)),
-                        voice_audio_device=str(args.voice_audio_device or "default"),
-                        voice_audio_rate=max(8000, int(args.voice_audio_rate)),
-                        voice_audio_channels=max(1, int(args.voice_audio_channels)),
-                        current_mode=driver_mode,
-                        supports_partial=bool(supports_partial),
-                        refresh_debug=bool(refresh_debug),
-                        demo_only=voice_flow_demo_only,
+                    proc, path = _start_audio_capture(
+                        audio_device=str(args.voice_audio_device or "default"),
+                        audio_rate=max(8000, int(args.voice_audio_rate)),
+                        audio_channels=max(1, int(args.voice_audio_channels)),
                     )
-                    if voice_flow_demo_only:
-                        # Let the normal frame pipeline render the updated onboarding demo panel.
-                        voice_flow_ran = False
-                    space_last_trigger_at = time.time()
-                    buffered = _drain_stdin_nonblocking(max_chars=512)
-                    if "\x03" in buffered or "q" in buffered.lower():
-                        return 0
+                    if proc is None or not path:
+                        _set_voice_overlay(state, "error", "Recording failed", hold_s=voice_error_hold_s)
+                    else:
+                        voice_capture_proc = proc
+                        voice_capture_path = path
+                        voice_capture_started_at = now
+                        voice_capture_demo_only = bool(in_voice_guide_demo)
+                        voice_capture_source = "space"
+                        keyboard_voice_hold_active = False
+                        keyboard_voice_repeat_seen = False
+                        space_last_trigger_at = now
+                        _set_voice_overlay(state, "recording", "Listening... press Space again to send")
+                        if refresh_debug:
+                            print("[voice] start source=space")
                     ev = None
             elif key in ("p", "P"):
                 # Keep a manual way to trigger legacy long-press behavior in console.
@@ -1794,7 +2253,19 @@ def main() -> int:
             elif key in ("r", "R"):
                 ev = RotateButton()
             elif key in ("b", "B", "\x7f", "\x1b"):  # backspace / esc
-                ev = Back()
+                if voice_capture_proc is not None:
+                    _stop_audio_capture(proc=voice_capture_proc, audio_path=voice_capture_path)
+                    voice_capture_proc = None
+                    voice_capture_path = ""
+                    voice_capture_started_at = 0.0
+                    keyboard_voice_hold_active = False
+                    keyboard_voice_repeat_seen = False
+                    voice_capture_demo_only = False
+                    voice_capture_source = ""
+                    _set_voice_overlay(state, "idle")
+                    ev = None
+                else:
+                    ev = Back()
             elif key in ("s", "S"):
                 state.ui.screen = Screen.SETTINGS
             elif key in ("g", "G"):
@@ -1822,27 +2293,6 @@ def main() -> int:
                         print("[onboarding] device_config persisted")
                 except Exception as e:
                     print(f"[warn] failed to persist device config: {e}")
-
-            # Voice flow renders directly to EPD; resync committed snapshot/frame.
-            if voice_flow_ran:
-                committed_frame = _render_frame(
-                    epd,
-                    state,
-                    fonts,
-                    theme,
-                    panel_threshold=panel_threshold,
-                    panel_muted=panel_muted,
-                    panel_gamma=panel_gamma,
-                    panel_dither=panel_dither,
-                )
-                committed_sig = _state_render_sig(state)
-                committed_snapshot = build_ui_snapshot(state)
-                pending_frame = None
-                pending_sig = None
-                pending_snapshot = None
-                pending_reasons = []
-                refresh_runtime.clear_pending()
-                refresh_runtime.mark_fast_full(now)
 
             # Stage updates against the last committed frame.
             sig = _state_render_sig(state)
@@ -2144,6 +2594,24 @@ def main() -> int:
                     committed_frame = pending_frame
                     committed_sig = pending_sig
                     committed_snapshot = pending_snapshot
+                    if voice_apply_pending:
+                        screen_name = (
+                            pending_snapshot.screen.value
+                            if isinstance(pending_snapshot.screen, Screen)
+                            else str(pending_snapshot.screen)
+                        )
+                        render_lag_ms = int(max(0.0, (time.time() - float(voice_apply_started_at or time.time())) * 1000))
+                        print(
+                            f"[voice] render_committed action={str(voice_apply_action or '-')}"
+                            f" render_lag_ms={render_lag_ms} screen={screen_name}"
+                        )
+                        should_clear_voice_overlay = bool(voice_overlay_clear_after_commit)
+                        voice_apply_pending = False
+                        voice_apply_started_at = 0.0
+                        voice_apply_action = ""
+                        voice_overlay_clear_after_commit = False
+                        if should_clear_voice_overlay:
+                            _set_voice_overlay(state, "idle")
                     pending_frame = None
                     pending_sig = None
                     pending_snapshot = None
@@ -2158,6 +2626,19 @@ def main() -> int:
 
             time.sleep(0.01)
     finally:
+        if voice_capture_proc is not None:
+            _stop_audio_capture(proc=voice_capture_proc, audio_path=voice_capture_path)
+            keyboard_voice_hold_active = False
+            keyboard_voice_repeat_seen = False
+        if voice_job_audio_path:
+            try:
+                os.remove(voice_job_audio_path)
+            except Exception:
+                pass
+        try:
+            voice_executor.shutdown(wait=False, cancel_futures=False)
+        except Exception:
+            pass
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
         if GPIO is not None and gpio_pins_in_use:
             try:

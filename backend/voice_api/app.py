@@ -20,7 +20,7 @@ class VoiceInterpretRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=128)
     request_time: str = Field(min_length=1, max_length=64)
     timezone: str = Field(min_length=1, max_length=64)
-    locale: str = Field(default="zh-CN", min_length=2, max_length=32)
+    locale: str = Field(default="en-US", min_length=2, max_length=32)
     household_id: str | None = None
     audio_base64: str | None = None
     transcript: str | None = None
@@ -192,6 +192,9 @@ def _summarize_action(action: dict[str, Any]) -> str:
         if day:
             return f"inventory_log_event(item={item}, event={event_type}, date={day})"
         return f"inventory_log_event(item={item}, event={event_type})"
+    if tool == "open_app":
+        app = str(args.get("app") or "?").strip() or "?"
+        return f"open_app(app={app})"
     if tool == "inventory_set_expiry":
         item = str(args.get("item_name") or "?").strip() or "?"
         day = str(args.get("expiry_date") or "?").strip() or "?"
@@ -202,17 +205,57 @@ def _summarize_action(action: dict[str, Any]) -> str:
         item = str(args.get("item_name") or "?").strip() or "?"
         return f"shopping_add_item(item={item})"
     if tool == "shopping_remove_item":
-        item = str(args.get("item_name") or "?").strip() or "?"
-        return f"shopping_remove_item(item={item})"
+        item = str(args.get("item_name") or "").strip()
+        source = str(args.get("source") or "reminders").strip() or "reminders"
+        if item:
+            return f"shopping_remove_item(source={source}, item={item})"
+        mode = str(args.get("position_mode") or "?").strip() or "?"
+        count = str(args.get("count") or "1").strip() or "1"
+        index = str(args.get("index") or "").strip()
+        if mode == "index" and index:
+            return f"shopping_remove_item(source={source}, position=index:{index}, count={count})"
+        return f"shopping_remove_item(source={source}, position={mode}, count={count})"
     if tool == "shopping_clear_all":
         return "shopping_clear_all"
     if tool == "timer_set":
         secs = str(args.get("duration_seconds") or "?").strip() or "?"
         return f"timer_set(duration_seconds={secs})"
+    if tool == "timer_add":
+        secs = str(args.get("delta_seconds") or "?").strip() or "?"
+        return f"timer_add(delta_seconds={secs})"
+    if tool == "timer_pause":
+        return "timer_pause"
+    if tool == "timer_resume":
+        return "timer_resume"
+    if tool == "timer_stop":
+        return "timer_stop"
     if tool == "memo_add":
         txt = str(args.get("text") or "").strip()
         if len(txt) > 18:
             txt = txt[:15] + "..."
         return f"memo_add(text={txt or '?'})"
+    if tool == "memo_delete":
+        target = str(args.get("target") or "latest").strip() or "latest"
+        if target == "index":
+            idx = str(args.get("index") or "?").strip() or "?"
+            return f"memo_delete(index={idx})"
+        if target == "author":
+            author = str(args.get("author") or "?").strip() or "?"
+            return f"memo_delete(author={author})"
+        return "memo_delete(latest)"
+    if tool == "memo_update":
+        target = str(args.get("target") or "latest").strip() or "latest"
+        txt = str(args.get("text") or "").strip()
+        if len(txt) > 18:
+            txt = txt[:15] + "..."
+        if target == "index":
+            idx = str(args.get("index") or "?").strip() or "?"
+            return f"memo_update(index={idx}, text={txt or '?'})"
+        if target == "author":
+            author = str(args.get("author") or "?").strip() or "?"
+            return f"memo_update(author={author}, text={txt or '?'})"
+        return f"memo_update(latest, text={txt or '?'})"
+    if tool == "memo_clear_all":
+        return "memo_clear_all"
     reason = str(args.get("reason") or "no_action").strip() or "no_action"
     return f"no_action(reason={reason})"

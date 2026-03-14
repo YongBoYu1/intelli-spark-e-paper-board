@@ -166,13 +166,13 @@ def _debug_snapshot_for_action(state, action):
                 "item_name": target_item,
                 "row": _debug_inventory_lookup(inventory_items, target_item),
             }
-    if tool == "timer_set":
+    if tool in ("timer_set", "timer_add", "timer_pause", "timer_resume", "timer_stop"):
         snap["timer"] = {
             "mode": str(getattr(state.ui, "widget_mode", "")),
             "seconds": int(getattr(state.ui, "timer_seconds", 0) or 0),
             "running": bool(getattr(state.ui, "timer_running", False)),
         }
-    if tool == "memo_add":
+    if tool in ("memo_add", "memo_delete", "memo_update", "memo_clear_all"):
         memos = list(getattr(state.model, "memos", []) or [])
         top = []
         for m in memos[:3]:
@@ -558,6 +558,7 @@ class Simulator(tk.Tk):
         self.voice_mic_mode = tk.StringVar(value=str(self.theme.get("voice_zone_mic_mode", "tabler_state")))
         self.voice_mic_style = tk.StringVar(value=str(self.theme.get("voice_zone_mic_style", "tabler_outline")))
         self.voice_api_url = tk.StringVar(value=os.environ.get("VOICE_SIM_API_URL", os.environ.get("VOICE_API_URL", "")))
+        self.voice_locale = str(os.environ.get("VOICE_LOCALE", "en-US") or "en-US").strip() or "en-US"
         self.voice_timeout_s = tk.DoubleVar(value=float(os.environ.get("VOICE_TIMEOUT_S", "12")))
         self.voice_audio_max_sec = tk.IntVar(value=max(1, int(os.environ.get("VOICE_MAX_SEC", "6"))))
         self.voice_audio_device = tk.StringVar(value=os.environ.get("VOICE_AUDIO_DEVICE", "default"))
@@ -1355,7 +1356,7 @@ class Simulator(tk.Tk):
         plan = parse_voice_plan(payload)
         action = plan.actions[0] if list(plan.actions or []) else parse_voice_action(payload)
         before_snap = _debug_snapshot_for_action(self.state, action)
-        result = apply_voice_plan(self.state, plan, transcript=transcript)
+        result = apply_voice_plan(self.state, plan, transcript=transcript, theme=self.theme)
         after_snap = _debug_snapshot_for_action(self.state, action)
         self.last_heard = transcript
         self.last_tool = ",".join([str(a.tool or "") for a in list(plan.actions or [])[:3]]) or str(action.tool or "")
