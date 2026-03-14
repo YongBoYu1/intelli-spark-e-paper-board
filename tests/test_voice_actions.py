@@ -723,6 +723,41 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(self.state.ui.timer_seconds, 60)
         self.assertEqual(self.state.ui.timer_target_seconds, 60)
 
+    def test_undo_restores_home_completion_and_ui_queues(self) -> None:
+        self.state.ui.screen = Screen.HOME
+        self.state.ui.kitchen_visible_layout = "landscape"
+        self.state.ui.home_hidden_rids = ["g1"]
+        self.state.ui.pending_reorder = True
+        self.state.ui.reorder_due_at = 1771616123.0
+
+        apply_voice_plan(
+            self.state,
+            parse_voice_plan(
+                {
+                    "plan": {
+                        "actions": [
+                            {"tool": "shopping_remove_item", "args": {"item_name": "milk", "source": "inventory"}},
+                        ]
+                    }
+                }
+            ),
+            transcript="remove milk from inventory",
+        )
+
+        milk = next(r for r in self.state.model.reminders if r.rid == "f1")
+        self.assertTrue(milk.completed)
+        self.assertEqual(self.state.ui.home_pending_hide_rids, ["f1"])
+        self.assertFalse(self.state.ui.pending_reorder)
+
+        undo_result = apply_voice_action(self.state, VoiceAction(tool="undo_last_action_group", args={}))
+        self.assertTrue(undo_result.changed)
+        milk = next(r for r in self.state.model.reminders if r.rid == "f1")
+        self.assertFalse(milk.completed)
+        self.assertEqual(self.state.ui.home_pending_hide_rids, [])
+        self.assertEqual(self.state.ui.home_hidden_rids, ["g1"])
+        self.assertTrue(self.state.ui.pending_reorder)
+        self.assertEqual(self.state.ui.reorder_due_at, 1771616123.0)
+
     def test_open_app_does_not_enter_undo_history(self) -> None:
         self.state.ui.screen = Screen.HOME
 
@@ -769,6 +804,33 @@ class VoiceActionTests(unittest.TestCase):
         undo_result = apply_voice_action(self.state, VoiceAction(tool="undo_last_action_group", args={}))
         self.assertTrue(undo_result.changed)
         self.assertEqual(len([r for r in self.state.model.reminders if r.category != "fridge"]), before_right)
+
+    def test_confirm_plan_preserves_undo_history_for_preconfirm_steps(self) -> None:
+        result = apply_voice_plan(
+            self.state,
+            parse_voice_plan(
+                {
+                    "plan": {
+                        "actions": [
+                            {"tool": "shopping_add_item", "args": {"item_name": "bread"}},
+                            {"tool": "shopping_clear_all", "args": {}},
+                        ]
+                    }
+                }
+            ),
+            transcript="add bread and clear shopping list",
+        )
+
+        self.assertEqual(result.status, "confirm")
+        self.assertTrue(any(r.title.lower() == "bread" for r in self.state.model.reminders if r.category != "fridge"))
+        self.assertEqual(len(self.state.ui.voice_done_action_groups), 1)
+        top = dict(self.state.ui.voice_done_action_groups[0] or {})
+        self.assertEqual([str(a.get("tool") or "") for a in list(top.get("actions") or [])], ["shopping_add_item"])
+
+        reduce(self.state, Back())
+        undo_result = apply_voice_action(self.state, VoiceAction(tool="undo_last_action_group", args={}))
+        self.assertTrue(undo_result.changed)
+        self.assertFalse(any(r.title.lower() == "bread" for r in self.state.model.reminders if r.category != "fridge"))
 
     def test_build_request_meta_uses_caller_timezone_for_request_time(self) -> None:
         meta = build_request_meta(locale="en-US", tz_name="Asia/Shanghai")

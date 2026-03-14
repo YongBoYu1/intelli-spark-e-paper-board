@@ -963,6 +963,11 @@ def _capture_undo_snapshot(state: AppState) -> dict[str, Any]:
             "memo_index": int(getattr(state.ui, "memo_index", 0) or 0),
             "memo_last_rotated_at": float(getattr(state.ui, "memo_last_rotated_at", 0.0) or 0.0),
             "reminders_version": int(getattr(state.ui, "reminders_version", 0) or 0),
+            "home_pending_hide_rids": [str(x) for x in list(getattr(state.ui, "home_pending_hide_rids", []) or []) if str(x).strip()],
+            "home_hidden_rids": [str(x) for x in list(getattr(state.ui, "home_hidden_rids", []) or []) if str(x).strip()],
+            "home_hide_due_at": float(getattr(state.ui, "home_hide_due_at", 0.0) or 0.0),
+            "pending_reorder": bool(getattr(state.ui, "pending_reorder", False)),
+            "reorder_due_at": float(getattr(state.ui, "reorder_due_at", 0.0) or 0.0),
         },
     }
 
@@ -1001,21 +1006,30 @@ def _restore_undo_snapshot(state: AppState, snap: dict[str, Any] | None) -> bool
     state.ui.memo_index = int(ui.get("memo_index") or 0)
     state.ui.memo_last_rotated_at = float(ui.get("memo_last_rotated_at") or time.time())
     state.ui.reminders_version = int(ui.get("reminders_version") or 0)
-    state.ui.pending_reorder = False
-    state.ui.reorder_due_at = 0.0
+    state.ui.home_pending_hide_rids = [str(x) for x in list(ui.get("home_pending_hide_rids") or []) if str(x).strip()]
+    state.ui.home_hidden_rids = [str(x) for x in list(ui.get("home_hidden_rids") or []) if str(x).strip()]
+    state.ui.home_hide_due_at = float(ui.get("home_hide_due_at") or 0.0)
+    state.ui.pending_reorder = bool(ui.get("pending_reorder") or False)
+    state.ui.reorder_due_at = float(ui.get("reorder_due_at") or 0.0)
     return True
 
 
-def _should_record_undo_history(step_results: list[VoicePlanStepResult], *, status: str) -> bool:
-    if str(status or "").strip().lower() in {"confirm", "error"}:
-        return False
+def _undoable_step_results(step_results: list[VoicePlanStepResult]) -> list[VoicePlanStepResult]:
+    out: list[VoicePlanStepResult] = []
     for step in step_results:
         tool = str(step.action.tool or "").strip()
-        if tool in _UNDO_HISTORY_EXCLUDED_TOOLS:
+        if not tool or tool in _UNDO_HISTORY_EXCLUDED_TOOLS:
             continue
-        if bool(step.result.changed):
-            return True
-    return False
+        if not bool(step.result.changed):
+            continue
+        out.append(step)
+    return out
+
+
+def _should_record_undo_history(step_results: list[VoicePlanStepResult], *, status: str) -> bool:
+    if str(status or "").strip().lower() in {"error"}:
+        return False
+    return bool(_undoable_step_results(step_results))
 
 
 def _push_undo_history_group(
@@ -1029,11 +1043,10 @@ def _push_undo_history_group(
     after_snapshot: dict[str, Any],
     max_groups: int = VOICE_HISTORY_MAX_GROUPS,
 ) -> None:
+    filtered_steps = _undoable_step_results(step_results)
     actions: list[dict[str, Any]] = []
-    for step in step_results:
+    for step in filtered_steps:
         tool = str(step.action.tool or "").strip()
-        if not tool or tool in _UNDO_HISTORY_EXCLUDED_TOOLS:
-            continue
         actions.append({"tool": tool, "args": dict(step.action.args or {})})
     if not actions:
         return
