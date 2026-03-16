@@ -20,9 +20,6 @@ class DeviceConfigTests(unittest.TestCase):
                 "language": "invalid",
                 "voice_locale": "fr-FR",
                 "timezone": "America/Toronto",
-                "hardware_target": "esp32-s3",
-                "board_profile": " sanxixing-esp32-s3-wroom-1 ",
-                "display_panel": "invalid-panel",
                 "auto_sync_enabled": 0,
                 "wifi_enabled": "1",
                 "bluetooth_enabled": "no",
@@ -33,9 +30,6 @@ class DeviceConfigTests(unittest.TestCase):
         self.assertEqual(cfg["language"], "en-US")
         self.assertEqual(cfg["voice_locale"], "fr-FR")
         self.assertEqual(cfg["timezone"], "America/Toronto")
-        self.assertEqual(cfg["hardware_target"], "esp32-s3")
-        self.assertEqual(cfg["board_profile"], "sanxixing-esp32-s3-wroom-1")
-        self.assertEqual(cfg["display_panel"], "waveshare-7.5-v2")
         self.assertFalse(cfg["auto_sync_enabled"])
         self.assertTrue(cfg["wifi_enabled"])
         self.assertFalse(cfg["bluetooth_enabled"])
@@ -55,9 +49,6 @@ class DeviceConfigTests(unittest.TestCase):
                 "language": "es-ES",
                 "voice_locale": "es-ES",
                 "timezone": "America/Toronto",
-                "hardware_target": "esp32-s3",
-                "board_profile": "sanxixing-esp32-s3-wroom-1",
-                "display_panel": "waveshare-7.5-v2",
                 "auto_sync_enabled": False,
                 "wifi_enabled": True,
                 "bluetooth_enabled": False,

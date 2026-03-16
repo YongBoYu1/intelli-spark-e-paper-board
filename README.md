@@ -5,15 +5,6 @@ It drives a Waveshare e-paper panel, renders a multi-screen UI navigated by a **
 
 > Design goals: product-grade structure (not demo-style), modular components, testable core logic, minimal hardware-specific code, and clean separation from third-party drivers.
 
-## ESP32-S3 Bring-Up Status
-
-ESP32-S3 migration is now tracked in:
-
-- `docs/ESP32_S3_PORTING.md`
-- `docs/issues/2026-03-16-esp32-s3-board-bringup.md`
-
-Important: the checked-in runtime is still Linux/Python-based today. The ESP32-S3 work is a bring-up track, not a completed firmware port.
-
 ---
 
 ## Current Prototype (Python) Quick Start
