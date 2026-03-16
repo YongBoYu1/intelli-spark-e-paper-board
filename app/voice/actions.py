@@ -573,7 +573,7 @@ def apply_voice_action(
                 shopping_msg = f"Already in shopping: {state.model.reminders[existing_idx].title}"
             else:
                 reminder = Reminder(
-                    rid=f"s-{int(time.time() * 1000)}",
+                    rid=_new_reminder_rid("s"),
                     title=title,
                     right="VOICE",
                     completed=False,
@@ -586,7 +586,7 @@ def apply_voice_action(
                 shopping_msg = f"Added to shopping: {title}"
         else:
             reminder = Reminder(
-                rid=f"s-{int(time.time() * 1000)}",
+                rid=_new_reminder_rid("s"),
                 title=title,
                 right="VOICE",
                 completed=False,
@@ -680,9 +680,9 @@ def apply_voice_action(
         # Clear is destructive, so it always requires physical confirmation.
         if policy.require_confirm:
             _set_pending_voice_confirmation(state, action)
-            return VoiceApplyResult(changed=False, status="confirm", message="Press click once within 4s to confirm clear shopping list")
+            return VoiceApplyResult(changed=False, status="confirm", message="Press click once within 4s to confirm clear reminders")
         removed = _clear_shopping_items(state)
-        return VoiceApplyResult(changed=removed > 0, status="done", message=f"Cleared shopping list ({removed})")
+        return VoiceApplyResult(changed=removed > 0, status="done", message=f"Cleared reminders ({removed})")
 
     if action.tool == "inventory_clear_all":
         policy = decide_voice_policy(action.tool, action.args).rule
@@ -752,7 +752,7 @@ def apply_voice_action(
             )
 
         reminder = Reminder(
-            rid=f"f-{int(time.time() * 1000)}",
+            rid=_new_reminder_rid("f"),
             title=title,
             right=_inventory_badge("restocked", effective_date),
             completed=False,
@@ -783,7 +783,7 @@ def apply_voice_action(
         # If not found, create a new entry (expires flows should surface on the board).
         if idx < 0:
             reminder = Reminder(
-                rid=f"f-{int(time.time() * 1000)}",
+                rid=_new_reminder_rid("f"),
                 title=title,
                 right=_expiry_badge(expiry_date),
                 completed=False,
@@ -1320,8 +1320,8 @@ def confirm_pending_voice_action(state: AppState, now: float | None = None) -> V
         removed = _clear_shopping_items(state)
         _clear_pending_voice_confirmation(state)
         if removed <= 0:
-            return VoiceApplyResult(changed=False, status="done", message="Shopping list already empty")
-        msg = f"Cleared shopping list ({removed})"
+            return VoiceApplyResult(changed=False, status="done", message="Reminders already empty")
+        msg = f"Cleared reminders ({removed})"
         _push_undo_history_from_confirm(
             state,
             action=VoiceAction(tool="shopping_clear_all", args=payload_args),
@@ -1417,6 +1417,11 @@ def _parse_remove_source(args: dict[str, Any], *, default: str = "reminders") ->
     if raw in {"reminders", "inventory"}:
         return raw
     return None
+
+
+def _new_reminder_rid(prefix: str) -> str:
+    kind = str(prefix or "r").strip().lower()[:1] or "r"
+    return f"{kind}-{uuid.uuid4().hex[:12]}"
 
 
 def _parse_memo_target(args: dict[str, Any]) -> dict[str, Any] | None:
@@ -1738,28 +1743,22 @@ def _is_shopping_list_item(r: Reminder) -> bool:
 
 
 def _inventory_badge(event_type: str, effective_date: str) -> str:
-    event_type = str(event_type or "used").lower()
-    if event_type in ("consumed", "used"):
-        prefix = "USED"
-    elif event_type in ("restocked",):
-        prefix = "RESTOCKED"
-    else:
-        prefix = "ADDED"
-
     d = (effective_date or "").strip()
     if not d:
-        return f"{prefix} TODAY"
+        return "TODAY"
 
     try:
         day = datetime.fromisoformat(d).date()
         today = datetime.now().date()
         if day == today:
-            return f"{prefix} TODAY"
+            return "TODAY"
         if (today - day).days == 1:
-            return f"{prefix} YESTERDAY"
-        return f"{prefix} {day.isoformat()}"
+            return "YESTERDAY"
+        if (day - today).days == 1:
+            return "TOMORROW"
+        return day.isoformat()
     except Exception:
-        return f"{prefix} {d[:14]}".strip()
+        return d[:14].strip()
 
 
 def _expiry_badge(expiry_date: str) -> str:

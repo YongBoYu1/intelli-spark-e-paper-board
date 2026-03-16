@@ -7,6 +7,7 @@ from unittest.mock import patch
 from app.core.state import AppState, DashboardModel, Reminder, Screen, WidgetMode
 from app.core.reducer import Back, reduce
 from app.voice.actions import (
+    _inventory_badge,
     VoiceAction,
     VoicePlan,
     apply_voice_action,
@@ -213,6 +214,19 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(result.status, "done")
         shopping_titles = [r.title.lower() for r in self.state.model.reminders if r.category == "shopping"]
         self.assertEqual(shopping_titles.count("eggs"), 1)
+
+    def test_shopping_add_generates_unique_rids_even_in_same_tick(self) -> None:
+        with patch("app.voice.actions.time.time", return_value=1000.1234):
+            apply_voice_action(self.state, VoiceAction(tool="shopping_add_item", args={"item_name": "eggs 2"}))
+            apply_voice_action(self.state, VoiceAction(tool="shopping_add_item", args={"item_name": "bacon"}))
+
+        rids = [
+            str(r.rid or "")
+            for r in self.state.model.reminders
+            if str(r.category or "") == "shopping" and str(r.title or "").lower() in {"eggs 2", "bacon"}
+        ]
+        self.assertEqual(len(rids), 2)
+        self.assertEqual(len(set(rids)), 2)
 
     def test_strong_shortage_shopping_add_does_not_remove_non_exact_inventory_match(self) -> None:
         action = VoiceAction(
@@ -475,11 +489,19 @@ class VoiceActionTests(unittest.TestCase):
         first = apply_voice_action(self.state, VoiceAction(tool="shopping_clear_all", args={}))
         self.assertFalse(first.changed)
         self.assertIn("confirm", first.message.lower())
+        self.assertIn("clear reminders", first.message.lower())
         confirmed = confirm_pending_voice_action(self.state)
         self.assertIsNotNone(confirmed)
         self.assertTrue(bool(confirmed and confirmed.changed))
+        self.assertEqual(confirmed.message, "Cleared reminders (2)")
         right_list_count = len([r for r in self.state.model.reminders if r.category != "fridge"])
         self.assertEqual(right_list_count, 0)
+
+    def test_inventory_badge_surfaces_date_without_event_prefix(self) -> None:
+        today = datetime.now().date().isoformat()
+        yesterday = (datetime.now().date() - timedelta(days=1)).isoformat()
+        self.assertEqual(_inventory_badge("restocked", today), "TODAY")
+        self.assertEqual(_inventory_badge("used", yesterday), "YESTERDAY")
 
     def test_clear_inventory_requires_confirm_and_then_clears(self) -> None:
         first = apply_voice_action(self.state, VoiceAction(tool="inventory_clear_all", args={}))
