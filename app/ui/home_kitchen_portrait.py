@@ -6,7 +6,7 @@ from PIL import ImageDraw
 
 from app.core.kitchen_queue import kitchen_queue_theme_key, kitchen_visible_task_indices
 from app.core.state import AppState
-from app.shared.draw import draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
+from app.shared.draw import draw_strikethrough, draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
 from app.ui.home_kitchen_geometry import home_portrait_header_focus_source_box
 from app.ui.weather_detail import _draw_weather_icon_pack
 
@@ -914,9 +914,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         draw.text((lx0, title_y), title, font=title_font, fill=ink)
 
         if item.completed:
-            tw = text_size(draw, title, title_font)[0]
-            sy = title_y + title_h // 2 + 1
-            draw.line((lx0, sy, lx0 + tw, sy), fill=ink, width=2)
+            draw_strikethrough(draw, title, lx0, title_y, title_font, fill=ink, width=2)
 
         inv_row_y += inv_row_h
 
@@ -988,9 +986,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         title_y = shop_row_y + max(0, (shop_row_h - title_h) // 2)
         draw.text((text_x, title_y), title, font=title_font, fill=ink)
         if item.completed:
-            tw = text_size(draw, title, title_font)[0]
-            sy = title_y + title_h // 2 + 1
-            draw.line((text_x, sy, text_x + tw, sy), fill=ink, width=2)
+            draw_strikethrough(draw, title, text_x, title_y, title_font, fill=ink, width=2)
 
         shop_row_y += shop_row_h
 
