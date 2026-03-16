@@ -27,6 +27,9 @@ def default_device_config() -> dict:
         "language": "en-US",
         "voice_locale": "en-US",
         "timezone": detect_local_timezone(),
+        "hardware_target": "linux-rpi",
+        "board_profile": "",
+        "display_panel": "waveshare-7.5-v2",
         "auto_sync_enabled": True,
         "wifi_enabled": False,
         "bluetooth_enabled": False,
@@ -74,6 +77,15 @@ def sanitize_device_config(raw: object) -> dict:
 
     tz_name = _clean_text(data.get("timezone")) or defaults["timezone"]
     out["timezone"] = tz_name
+    hardware_target = _clean_text(data.get("hardware_target")) or defaults["hardware_target"]
+    if hardware_target not in ("linux-rpi", "esp32-s3"):
+        hardware_target = defaults["hardware_target"]
+    out["hardware_target"] = hardware_target
+    out["board_profile"] = _clean_text(data.get("board_profile"))
+    display_panel = _clean_text(data.get("display_panel")) or defaults["display_panel"]
+    if display_panel not in ("waveshare-7.5-v2",):
+        display_panel = defaults["display_panel"]
+    out["display_panel"] = display_panel
     out["auto_sync_enabled"] = _coerce_bool(data.get("auto_sync_enabled"), defaults["auto_sync_enabled"])
     out["wifi_enabled"] = _coerce_bool(data.get("wifi_enabled"), defaults["wifi_enabled"])
     out["bluetooth_enabled"] = _coerce_bool(data.get("bluetooth_enabled"), defaults["bluetooth_enabled"])
