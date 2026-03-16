@@ -33,6 +33,7 @@ from app.core.reducer import (
     apply_onboarding_voice_demo_error,
     open_landing_welcome,
 )
+from app.data.family_board_store import load_memo_items_from_rows
 from app.data.location import resolve_dashboard_location
 from app.data.weather_api import resolve_weather_data
 from app.render.panel import build_panel_theme, quantize_for_panel
@@ -502,23 +503,7 @@ def load_model(repo_root):
         CalendarEvent("e3", "Team sync", "Mon 10:00 AM"),
     ]
 
-    memos = []
-    for i, m in enumerate(d.get("memos") or []):
-        memos.append(
-            MemoItem(
-                mid=str(m.get("id") or f"m{i}"),
-                text=str(m.get("text") or ""),
-                author=str(m.get("author") or ""),
-                timestamp=float(m.get("timestamp") or time.time()),
-                is_new=bool(m.get("isNew") or m.get("is_new") or False),
-            )
-        )
-    if not memos:
-        memos = [
-            MemoItem("m1", "Dinner is in the oven, heat at 180°C.", "Mom", time.time(), True),
-            MemoItem("m2", "Don't forget to walk the dog!", "Dad", time.time() - 3600, False),
-            MemoItem("m3", "Can someone pick up packages?", "Alex", time.time() - 7200, True),
-        ]
+    memos = load_memo_items_from_rows(d.get("memos") or [])
 
     return DashboardModel(
         location=location,

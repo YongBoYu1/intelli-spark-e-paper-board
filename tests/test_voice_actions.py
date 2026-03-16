@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import unittest
+from unittest.mock import patch
 
 from app.core.state import AppState, DashboardModel, Reminder, Screen, WidgetMode
 from app.core.reducer import Back, reduce
@@ -500,6 +501,56 @@ class VoiceActionTests(unittest.TestCase):
         self.assertTrue(m.changed)
         self.assertEqual(len(self.state.model.memos), before + 1)
         self.assertEqual(self.state.model.memos[0].text, "晚点回家")
+
+    def test_memo_add_defaults_author_and_resolves_expiry_bucket(self) -> None:
+        self.state.ui.device_timezone = "America/Toronto"
+
+        result = apply_voice_action(
+            self.state,
+            VoiceAction(tool="memo_add", args={"text": "Back late tonight", "expiration_bucket": "end_of_day"}),
+        )
+
+        self.assertTrue(result.changed)
+        memo = self.state.model.memos[0]
+        self.assertEqual(memo.author, "Voice")
+        self.assertEqual(memo.expiration_bucket, "end_of_day")
+        self.assertIsNotNone(memo.expires_at)
+        self.assertGreater(float(memo.expires_at or 0.0), memo.timestamp)
+
+    def test_memo_add_resolves_expires_in_seconds(self) -> None:
+        self.state.ui.device_timezone = "America/Toronto"
+
+        with patch("app.voice.actions.time.time", return_value=1000.0):
+            result = apply_voice_action(
+                self.state,
+                VoiceAction(tool="memo_add", args={"text": "Back late tonight", "expires_in_seconds": 7200}),
+            )
+
+        self.assertTrue(result.changed)
+        memo = self.state.model.memos[0]
+        self.assertEqual(memo.expires_at, 8200.0)
+        self.assertEqual(memo.expiration_bucket, "none")
+
+    def test_memo_add_resolves_exact_iso_expiry(self) -> None:
+        self.state.ui.device_timezone = "America/Toronto"
+
+        with patch("app.voice.actions.time.time", return_value=1000.0):
+            result = apply_voice_action(
+                self.state,
+                VoiceAction(
+                    tool="memo_add",
+                    args={"text": "Dinner is ready", "expires_at_iso": "1970-01-01T03:00:00+00:00"},
+                ),
+            )
+
+        self.assertTrue(result.changed)
+        memo = self.state.model.memos[0]
+        self.assertEqual(memo.expires_at, 10800.0)
+
+    def test_parse_memo_add_rejects_invalid_relative_expiry(self) -> None:
+        action = parse_voice_action({"tool": "memo_add", "args": {"text": "Dinner is ready", "expires_in_seconds": 0}})
+        self.assertEqual(action.tool, "no_action")
+        self.assertEqual(action.args.get("reason"), "invalid_memo_expiry")
 
     def test_timer_control_actions(self) -> None:
         apply_voice_action(self.state, VoiceAction(tool="timer_set", args={"duration_seconds": 120}))

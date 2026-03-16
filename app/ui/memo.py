@@ -132,7 +132,7 @@ def render_memo(image, state: AppState, fonts, theme: dict) -> None:
     outer_x1 = w - 24
 
     # Header
-    title = "MEMO"
+    title = "FAMILY BOARD"
     title_y = 14
     draw.text((outer_x0, title_y), title, font=title_font, fill=ink)
 
@@ -159,10 +159,10 @@ def render_memo(image, state: AppState, fonts, theme: dict) -> None:
     inner_y1 = h - 56
 
     if total <= 0:
-        draw.text((inner_x0, inner_y0 + 8), "NO MEMOS YET", font=author_font, fill=ink)
+        draw.text((inner_x0, inner_y0 + 8), "NO FAMILY NOTES YET", font=author_font, fill=ink)
         draw_text_spaced(
             draw,
-            'TRY VOICE: "ADD MEMO DINNER AT 7"',
+            'TRY VOICE: "LEAVE A NOTE DINNER IS READY"',
             inner_x0,
             inner_y0 + 44,
             meta_font,
@@ -233,6 +233,6 @@ def render_memo(image, state: AppState, fonts, theme: dict) -> None:
 
     # Footer
     footer_y = h - 40
-    footer_text_raw = "VOICE CMD: DELETE | ADD | MODIFY"
+    footer_text_raw = "VOICE CMD: ADD | DELETE | CLEAR"
     footer_text = truncate_text(draw, footer_text_raw, meta_font, max(80, outer_x1 - outer_x0))
     draw_text_spaced(draw, footer_text, outer_x0, footer_y, meta_font, spacing=meta_spacing, fill=muted)

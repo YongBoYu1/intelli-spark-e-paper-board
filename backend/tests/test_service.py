@@ -147,6 +147,56 @@ class VoiceServiceNormalizeTests(unittest.TestCase):
         self.assertEqual(action["args"]["text"], "Back late tonight")
         self.assertEqual(action["args"]["author"], "Alex")
 
+    def test_memo_add_normalization_keeps_supported_expiry_bucket(self) -> None:
+        raw = {
+            "tool": "memo_add",
+            "args": {
+                "content": "Back late tonight",
+                "expiration_bucket": "end_of_day",
+            },
+        }
+        action = normalize_action(raw, request_time="2026-02-20T10:00:00+08:00")
+        self.assertEqual(action["tool"], "memo_add")
+        self.assertEqual(action["args"]["author"], "Voice")
+        self.assertEqual(action["args"]["expiration_bucket"], "end_of_day")
+
+    def test_memo_add_normalization_accepts_expires_in_seconds(self) -> None:
+        raw = {
+            "tool": "memo_add",
+            "args": {
+                "content": "Back late tonight",
+                "expires_in_seconds": 7200,
+            },
+        }
+        action = normalize_action(raw, request_time="2026-02-20T10:00:00+08:00")
+        self.assertEqual(action["tool"], "memo_add")
+        self.assertEqual(action["args"]["expires_in_seconds"], 7200)
+        self.assertNotIn("expiration_bucket", action["args"])
+
+    def test_memo_add_normalization_accepts_exact_iso_expiry(self) -> None:
+        raw = {
+            "tool": "memo_add",
+            "args": {
+                "content": "Back late tonight",
+                "expires_at_iso": "2026-02-20T19:00:00+08:00",
+            },
+        }
+        action = normalize_action(raw, request_time="2026-02-20T10:00:00+08:00")
+        self.assertEqual(action["tool"], "memo_add")
+        self.assertEqual(action["args"]["expires_at_iso"], "2026-02-20T19:00:00+08:00")
+
+    def test_memo_add_normalization_rejects_invalid_exact_expiry(self) -> None:
+        raw = {
+            "tool": "memo_add",
+            "args": {
+                "content": "Back late tonight",
+                "expires_at_iso": "2026-02-20T07:00:00+08:00",
+            },
+        }
+        action = normalize_action(raw, request_time="2026-02-20T10:00:00+08:00")
+        self.assertEqual(action["tool"], "no_action")
+        self.assertEqual(action["args"]["reason"], "invalid_memo_expiry")
+
     def test_memo_target_author_normalization(self) -> None:
         raw = {"tool": "memo_delete", "args": {"target": "author", "author": "Dad"}}
         action = normalize_action(raw, request_time="2026-02-20T10:00:00+08:00")

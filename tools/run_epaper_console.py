@@ -48,6 +48,12 @@ from app.core.reducer import (
     open_landing_welcome,
 )
 from app.core.state import AppState, DashboardModel, Reminder, WeatherDay, CalendarEvent, MemoItem, Screen
+from app.data.family_board_store import (
+    family_board_store_payload,
+    load_family_board,
+    load_memo_items_from_rows,
+    save_family_board,
+)
 from app.data.location import resolve_dashboard_location
 from app.data.device_config import (
     detect_local_timezone,
@@ -459,23 +465,7 @@ def _load_model(repo_root: str) -> DashboardModel:
             CalendarEvent("e1", "Gym Session", "08:00", date_iso=tomorrow_iso),
         ]
 
-    memos = []
-    for i, m in enumerate(d.get("memos") or []):
-        memos.append(
-            MemoItem(
-                mid=str(m.get("id") or f"m{i}"),
-                text=str(m.get("text") or ""),
-                author=str(m.get("author") or ""),
-                timestamp=float(m.get("timestamp") or time.time()),
-                is_new=bool(m.get("isNew") or m.get("is_new") or False),
-            )
-        )
-    if not memos:
-        memos = [
-            MemoItem("m1", "Dinner is in the oven, heat at 180°C.", "Mom", time.time(), True),
-            MemoItem("m2", "Don't forget to walk the dog!", "Dad", time.time() - 3600, False),
-            MemoItem("m3", "Can someone pick up packages?", "Alex", time.time() - 7200, True),
-        ]
+    memos = load_memo_items_from_rows(d.get("memos") or [])
 
     return DashboardModel(
         location=location,
@@ -1615,6 +1605,11 @@ def main() -> int:
     state = AppState(model=_load_model(repo_root))
     device_config = load_device_config(repo_root)
     _apply_device_config_to_state(state, device_config)
+    state.model.memos = load_family_board(
+        repo_root,
+        fallback_memos=list(state.model.memos or []),
+        timezone_name=str(state.ui.device_timezone or "UTC"),
+    )
     state.ui.boot_started_at = time.time()
     state.ui.boot_min_show_s = 0.0
     state.ui.landing_rotate_seen = False
@@ -1647,6 +1642,8 @@ def main() -> int:
         state.ui.onboarding_step = "start"
     persisted_device_config = _device_config_from_state(state)
     save_device_config(repo_root, persisted_device_config)
+    persisted_family_board = family_board_store_payload(state.model.memos)
+    save_family_board(repo_root, state.model.memos)
     if not str(args.voice_api_url or "").strip():
         print("[warn] VOICE_API_URL not set. Voice flow will show network error until configured.")
 
@@ -2293,6 +2290,16 @@ def main() -> int:
                         print("[onboarding] device_config persisted")
                 except Exception as e:
                     print(f"[warn] failed to persist device config: {e}")
+
+            current_family_board = family_board_store_payload(state.model.memos)
+            if current_family_board != persisted_family_board:
+                try:
+                    save_family_board(repo_root, state.model.memos)
+                    persisted_family_board = current_family_board
+                    if refresh_debug:
+                        print("[family_board] memo store persisted")
+                except Exception as e:
+                    print(f"[warn] failed to persist family board: {e}")
 
             # Stage updates against the last committed frame.
             sig = _state_render_sig(state)

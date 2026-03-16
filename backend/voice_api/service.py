@@ -11,6 +11,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core.family_board import (
+    coerce_memo_expires_in_seconds,
+    normalize_memo_author,
+    normalize_memo_expiration_bucket,
+    normalize_memo_text,
+    parse_memo_expires_at_iso,
+)
 from backend.voice_api.correction_kb import get_correction_kb
 
 _ALLOWED_TOOLS = {
@@ -316,11 +323,50 @@ def normalize_action(raw_action: dict[str, Any] | None, *, request_time: str) ->
         return {"tool": tool, "args": {}}
 
     if tool == "memo_add":
-        text = str(args.get("text") or args.get("memo_text") or args.get("content") or "").strip()
+        text = normalize_memo_text(args.get("text") or args.get("memo_text") or args.get("content"))
         if not text:
             return _no_action("missing_memo_text")
-        author = str(args.get("author") or "Voice").strip() or "Voice"
-        return {"tool": "memo_add", "args": {"text": text[:240], "author": author[:24]}}
+        author = normalize_memo_author(args.get("author"), default="Voice")
+        out_args: dict[str, Any] = {"text": text[:240], "author": author[:24]}
+        expires_at_iso = str(args.get("expires_at_iso") or args.get("expires_at") or "").strip()
+        if expires_at_iso:
+            request_dt = _parse_request_time(request_time)
+            normalized_expires_at = expires_at_iso.replace("Z", "+00:00")
+            try:
+                parsed_input_dt = datetime.fromisoformat(normalized_expires_at)
+            except ValueError:
+                parsed_input_dt = None
+            parsed_expires_at = parse_memo_expires_at_iso(
+                expires_at_iso,
+                timezone_name=_timezone_name_from_request_time(request_time),
+            )
+            if parsed_expires_at is None or parsed_expires_at <= float(request_dt.timestamp()):
+                return _no_action("invalid_memo_expiry")
+            if parsed_input_dt is not None and parsed_input_dt.tzinfo is not None:
+                out_args["expires_at_iso"] = parsed_input_dt.isoformat()
+            else:
+                out_args["expires_at_iso"] = datetime.fromtimestamp(
+                    parsed_expires_at,
+                    tz=_effective_request_tzinfo(request_time),
+                ).isoformat()
+            return {"tool": "memo_add", "args": out_args}
+
+        has_exact_relative_expiry = any(key in args for key in ("expires_in_seconds", "ttl_seconds", "expires_in"))
+        expires_in_seconds = coerce_memo_expires_in_seconds(
+            args.get("expires_in_seconds") or args.get("ttl_seconds") or args.get("expires_in")
+        )
+        if expires_in_seconds is not None:
+            out_args["expires_in_seconds"] = expires_in_seconds
+            return {"tool": "memo_add", "args": out_args}
+        if has_exact_relative_expiry:
+            return _no_action("invalid_memo_expiry")
+
+        expiration_bucket = normalize_memo_expiration_bucket(
+            args.get("expiration_bucket") or args.get("expiration") or args.get("expiry_bucket")
+        )
+        if expiration_bucket != "none":
+            out_args["expiration_bucket"] = expiration_bucket
+        return {"tool": "memo_add", "args": out_args}
 
     if tool == "memo_delete":
         target = _normalize_memo_target(args)
@@ -1076,12 +1122,18 @@ def _tool_declarations(*, allowed_tools: set[str] | None = None) -> list[dict[st
         },
         {
                     "name": "memo_add",
-                    "description": "Add a message to the family board/memo panel",
+                    "description": "Add a short household announcement to the family board",
                     "parameters": {
                         "type": "OBJECT",
                         "properties": {
                             "text": {"type": "STRING"},
                             "author": {"type": "STRING"},
+                            "expires_in_seconds": {"type": "INTEGER"},
+                            "expires_at_iso": {"type": "STRING"},
+                            "expiration_bucket": {
+                                "type": "STRING",
+                                "enum": ["none", "1h", "3h", "6h", "12h", "24h", "end_of_day"],
+                            },
                         },
                         "required": ["text"],
                     },
@@ -1199,6 +1251,41 @@ def _coerce_positive_int(value: Any) -> int:
         return int(txt)
     except Exception:
         return 0
+
+
+def _parse_request_time(request_time: str) -> datetime:
+    txt = str(request_time or "").strip()
+    if txt:
+        normalized = txt.replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(normalized)
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc)
+
+
+def _effective_request_tzinfo(request_time: str):
+    return _parse_request_time(request_time).tzinfo or timezone.utc
+
+
+def _timezone_name_from_request_time(request_time: str) -> str:
+    dt = _parse_request_time(request_time)
+    tzinfo = dt.tzinfo
+    key = str(getattr(tzinfo, "key", "") or "").strip()
+    if key:
+        return key
+    offset = dt.utcoffset()
+    if offset is None:
+        return "UTC"
+    total_seconds = int(offset.total_seconds())
+    sign = "+" if total_seconds >= 0 else "-"
+    total_seconds = abs(total_seconds)
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    return f"{sign}{hours:02d}:{minutes:02d}"
 
 
 def _normalize_remove_source(args: dict[str, Any], *, default: str = "reminders") -> str | None:

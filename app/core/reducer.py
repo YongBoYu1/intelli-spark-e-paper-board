@@ -7,6 +7,7 @@ import time
 from typing import Optional
 
 from app.core.calendar_utils import event_indices_for_date
+from app.core.family_board import prune_expired_memos
 from app.core.kitchen_queue import (
     KITCHEN_FOCUS_CLOCK,
     KITCHEN_FOCUS_INVENTORY_ITEM,
@@ -1292,6 +1293,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
 
     if isinstance(event, Tick):
         now = event.now
+        prune_expired_memos(state, now=now)
         now_minute_bucket = int(float(now) // 60.0)
         minute_changed = int(state.ui.clock_minute_bucket or 0) != now_minute_bucket
         if minute_changed:
@@ -1376,6 +1378,7 @@ def reduce(state: AppState, event: Event, *, theme: Optional[dict] = None) -> Ap
         return state
 
     # Any non-tick event wakes the UI
+    prune_expired_memos(state, now=now)
     state.ui.idle = False
     state.ui.last_interaction_at = now
 

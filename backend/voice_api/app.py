@@ -233,6 +233,15 @@ def _summarize_action(action: dict[str, Any]) -> str:
         txt = str(args.get("text") or "").strip()
         if len(txt) > 18:
             txt = txt[:15] + "..."
+        expires_at_iso = str(args.get("expires_at_iso") or "").strip()
+        if expires_at_iso:
+            return f"memo_add(text={txt or '?'}, expires_at={expires_at_iso})"
+        expires_in_seconds = str(args.get("expires_in_seconds") or "").strip()
+        if expires_in_seconds:
+            return f"memo_add(text={txt or '?'}, expires_in={expires_in_seconds}s)"
+        bucket = str(args.get("expiration_bucket") or "").strip() or "none"
+        if bucket != "none":
+            return f"memo_add(text={txt or '?'}, expiration={bucket})"
         return f"memo_add(text={txt or '?'})"
     if tool == "memo_delete":
         target = str(args.get("target") or "latest").strip() or "latest"
