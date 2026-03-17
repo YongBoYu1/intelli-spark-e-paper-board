@@ -20,6 +20,7 @@ from app.render.refresh_policy import (
 from app.render.panel import build_panel_theme
 from app.shared.fonts import FontBook
 from app.ui.app import render_app
+import app.ui.home_kitchen as home_kitchen_module
 from app.ui.home_kitchen import render_home_kitchen
 from app.ui.home_kitchen_geometry import (
     home_landscape_header_focus_box,
@@ -58,6 +59,51 @@ def _diff_bbox(prev: Image.Image, curr: Image.Image) -> tuple[int, int, int, int
 
 
 class HomeKitchenFocusTests(unittest.TestCase):
+    def test_kitchen_visible_task_indices_preserve_duplicate_cached_rids(self) -> None:
+        state = AppState(
+            model=DashboardModel(
+                reminders=[
+                    Reminder(rid="s-dup", title="Eggs", category="shopping"),
+                    Reminder(rid="s-dup", title="Bacon", category="shopping"),
+                ]
+            )
+        )
+        state.ui.kitchen_visible_rids = ["s-dup", "s-dup"]
+        state.ui.kitchen_visible_theme_key = "3:5"
+        state.ui.kitchen_visible_reminders_version = 0
+        state.ui.reminders_version = 0
+
+        got = kitchen_visible_task_indices(state, {"b_inventory_max_rows": 3, "b_shopping_max_rows": 5})
+        self.assertEqual(got, [0, 1])
+
+    def test_home_family_board_empty_state_stays_quiet(self) -> None:
+        state = AppState(model=DashboardModel())
+        state.ui.screen = Screen.HOME
+        image = Image.new("L", (800, 480), 255)
+        fonts = _test_font_book()
+        theme = build_panel_theme({"home_variant": "kitchen"})
+        captured: list[str] = []
+        original_draw_text_spaced = home_kitchen_module.draw_text_spaced
+        original_text = ImageDraw.ImageDraw.text
+
+        def _capture_spaced(draw, text, *args, **kwargs):
+            captured.append(str(text))
+            return original_draw_text_spaced(draw, text, *args, **kwargs)
+
+        def _capture_text(self, xy, text, *args, **kwargs):
+            captured.append(str(text))
+            return original_text(self, xy, text, *args, **kwargs)
+
+        with patch("app.ui.home_kitchen.draw_text_spaced", new=_capture_spaced), patch(
+            "PIL.ImageDraw.ImageDraw.text",
+            new=_capture_text,
+        ):
+            render_home_kitchen(image, state, fonts, theme)
+
+        self.assertIn("FAMILY BOARD", captured)
+        self.assertNotIn("MOM", captured)
+        self.assertNotIn("No messages.", captured)
+
     def test_kitchen_focus_clamps_at_bottom_instead_of_wrapping(self) -> None:
         model = DashboardModel()
         model.reminders = [

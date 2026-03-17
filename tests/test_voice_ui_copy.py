@@ -27,7 +27,7 @@ class VoiceUiCopyTests(unittest.TestCase):
     def test_confirm_shows_natural_action_prompt(self) -> None:
         self.state.ui.voice_confirm_tool = "shopping_clear_all"
         got = _voice_summary_text(self.state, "CONFIRM", "", active=True)
-        self.assertEqual(got, "Clear shopping list? Enter")
+        self.assertEqual(got, "Clear reminders? Enter")
 
     def test_done_result_is_humanized(self) -> None:
         msg = "Result: Added to shopping: Milk"
@@ -46,4 +46,3 @@ class VoiceUiCopyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

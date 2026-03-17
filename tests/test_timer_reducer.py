@@ -323,6 +323,19 @@ class TimerReducerTests(unittest.TestCase):
         self.assertEqual(self.state.ui.memo_index, 0)
         self.assertEqual(self.state.ui.memo_last_rotated_at, 112.0)
 
+    def test_tick_prunes_expired_memos(self) -> None:
+        self.state.model.memos = [
+            MemoItem(mid="m1", text="fresh", author="Mom", timestamp=100.0, expires_at=120.0),
+            MemoItem(mid="m2", text="expired", author="Dad", timestamp=90.0, expires_at=99.0),
+        ]
+        self.state.ui.memo_index = 1
+
+        reduce(self.state, Tick(now=100.0), theme={})
+
+        self.assertEqual(len(self.state.model.memos), 1)
+        self.assertEqual(self.state.model.memos[0].mid, "m1")
+        self.assertEqual(self.state.ui.memo_index, 0)
+
     def test_tick_updates_clock_minute_bucket(self) -> None:
         self.state.ui.clock_minute_bucket = 100
 

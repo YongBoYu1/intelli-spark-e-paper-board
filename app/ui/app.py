@@ -190,7 +190,7 @@ def _voice_action_prompt(tool_name: str) -> str:
     if tool == "shopping_remove_item":
         return "Remove from shopping list"
     if tool == "shopping_clear_all":
-        return "Clear shopping list"
+        return "Clear reminders"
     if tool == "inventory_log_event":
         return "Update inventory"
     if tool == "inventory_set_expiry":
@@ -237,10 +237,14 @@ def _voice_short_result_text(text: str) -> str:
     if low.startswith("removed from inventory:"):
         item = txt.split(":", 1)[1].strip() if ":" in txt else ""
         return f"Removed {item}".strip()
+    if low.startswith("cleared reminders"):
+        return "Reminders cleared"
     if low.startswith("cleared shopping list"):
-        return "Shopping cleared"
+        return "Reminders cleared"
     if low.startswith("cleared inventory"):
         return "Inventory cleared"
+    if low.startswith("reminders already empty"):
+        return "Already empty"
     if low.startswith("shopping list already empty"):
         return "Already empty"
     if low.startswith("inventory already empty"):

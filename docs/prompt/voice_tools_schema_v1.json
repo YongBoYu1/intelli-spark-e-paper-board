@@ -223,7 +223,13 @@
           "required": ["text"],
           "properties": {
             "text": { "type": "string", "minLength": 1 },
-            "author": { "type": "string" }
+            "author": { "type": "string" },
+            "expires_in_seconds": { "type": "integer", "minimum": 1 },
+            "expires_at_iso": { "type": "string", "minLength": 1 },
+            "expiration_bucket": {
+              "type": "string",
+              "enum": ["none", "1h", "3h", "6h", "12h", "24h", "end_of_day"]
+            }
           },
           "additionalProperties": true
         }

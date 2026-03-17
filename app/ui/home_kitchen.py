@@ -12,7 +12,7 @@ from app.core.kitchen_queue import (
     kitchen_queue_theme_key,
 )
 from app.core.state import AppState
-from app.shared.draw import draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
+from app.shared.draw import draw_strikethrough, draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
 from app.ui.home_kitchen_geometry import home_landscape_header_focus_box
 from app.ui.weather_detail import _draw_weather_icon_pack
 
@@ -691,7 +691,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     memo = memos[memo_idx % len(memos)] if memos else None
 
     # Family members on the same row as the section title.
-    active_author = (memo.author if memo else "MOM").upper()
+    active_author = (memo.author if memo else "").upper()
     authors = []
     if active_author:
         authors.append(active_author)
@@ -778,7 +778,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
     draw.line((lx0, family_rule_y, lx1, family_rule_y), fill=ink, width=section_rule_w)
 
     quote_y_base = family_rule_y + int(t["b_quote_top_gap"])
-    quote = (memo.text.strip() if memo and memo.text else "No messages.")
+    quote = (memo.text.strip() if memo and memo.text else "")
 
     def _wrap_lines(text: str, width: int, quote_font):
         words = text.split(" ")
@@ -795,77 +795,78 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             out.append(cur)
         return out
 
-    max_quote_w = max(140, int((lx1 - lx0) * float(t["b_quote_max_w_ratio"])))
-    quote_bottom = posted_max_y - int(t["b_quote_bottom_gap"])
+    if quote:
+        max_quote_w = max(140, int((lx1 - lx0) * float(t["b_quote_max_w_ratio"])))
+        quote_bottom = posted_max_y - int(t["b_quote_bottom_gap"])
 
-    quote_size = int(t["b_quote_size"])
-    quote_min_size = int(t.get("b_quote_min_size", 20))
-    target_lines = max(2, int(t.get("b_quote_target_lines", 3)))
-    quote_font = f_quote
-    rendered_lines = []
-    qlh = 1
+        quote_size = int(t["b_quote_size"])
+        quote_min_size = int(t.get("b_quote_min_size", 20))
+        target_lines = max(2, int(t.get("b_quote_target_lines", 3)))
+        quote_font = f_quote
+        rendered_lines = []
+        qlh = 1
 
-    while quote_size >= quote_min_size:
-        quote_font = fonts.get("playfair_bold", _font_px(quote_size))
-        qh = text_size(draw, "Ag", quote_font)[1]
-        qlh = max(1, int(qh * float(t["b_quote_lh"])))
-        max_quote_lines = max(1, (quote_bottom - quote_y_base) // max(1, qlh))
+        while quote_size >= quote_min_size:
+            quote_font = fonts.get("playfair_bold", _font_px(quote_size))
+            qh = text_size(draw, "Ag", quote_font)[1]
+            qlh = max(1, int(qh * float(t["b_quote_lh"])))
+            max_quote_lines = max(1, (quote_bottom - quote_y_base) // max(1, qlh))
 
-        lines = _wrap_lines(quote, max_quote_w, quote_font)
-        # Short messages look too tiny/empty on panel; force a display-width wrap pass.
-        if len(lines) < target_lines and len(quote) >= 14:
-            lines_tight = _wrap_lines(
-                quote,
-                max(110, int(max_quote_w * float(t["b_quote_display_wrap_factor"]))),
-                quote_font,
-            )
-            if len(lines_tight) > len(lines):
-                lines = lines_tight
-            elif len(lines) == 1:
-                lines_short = _wrap_lines(
+            lines = _wrap_lines(quote, max_quote_w, quote_font)
+            # Short messages look too tiny/empty on panel; force a display-width wrap pass.
+            if len(lines) < target_lines and len(quote) >= 14:
+                lines_tight = _wrap_lines(
                     quote,
-                    max(120, int(max_quote_w * float(t["b_quote_short_wrap_factor"]))),
+                    max(110, int(max_quote_w * float(t["b_quote_display_wrap_factor"]))),
                     quote_font,
                 )
-                if len(lines_short) > len(lines):
-                    lines = lines_short
+                if len(lines_tight) > len(lines):
+                    lines = lines_tight
+                elif len(lines) == 1:
+                    lines_short = _wrap_lines(
+                        quote,
+                        max(120, int(max_quote_w * float(t["b_quote_short_wrap_factor"]))),
+                        quote_font,
+                    )
+                    if len(lines_short) > len(lines):
+                        lines = lines_short
 
-        if len(lines) <= max_quote_lines:
-            rendered_lines = lines
-            break
-        quote_size -= 1
+            if len(lines) <= max_quote_lines:
+                rendered_lines = lines
+                break
+            quote_size -= 1
 
-    if not rendered_lines:
-        # Fallback to minimum readable state when text is very long.
-        quote_font = fonts.get("playfair_bold", _font_px(quote_min_size))
-        qh = text_size(draw, "Ag", quote_font)[1]
-        qlh = max(1, int(qh * float(t["b_quote_lh"])))
-        max_quote_lines = max(1, (quote_bottom - quote_y_base) // max(1, qlh))
-        rendered_lines = _wrap_lines(quote, max_quote_w, quote_font)[:max_quote_lines]
+        if not rendered_lines:
+            # Fallback to minimum readable state when text is very long.
+            quote_font = fonts.get("playfair_bold", _font_px(quote_min_size))
+            qh = text_size(draw, "Ag", quote_font)[1]
+            qlh = max(1, int(qh * float(t["b_quote_lh"])))
+            max_quote_lines = max(1, (quote_bottom - quote_y_base) // max(1, qlh))
+            rendered_lines = _wrap_lines(quote, max_quote_w, quote_font)[:max_quote_lines]
 
-    quote_h = len(rendered_lines) * qlh
-    quote_y = quote_y_base
-    if len(rendered_lines) <= int(t.get("b_quote_balance_lines", 2)):
-        nominal_gap = int(t.get("b_posted_after_quote_gap", 10))
-        spare = posted_max_y - (quote_y_base + quote_h + nominal_gap)
-        if spare > 0:
-            shift = int(spare * float(t.get("b_quote_balance_ratio", 0.5)))
-            shift = min(int(t.get("b_quote_balance_max", 64)), shift)
-            if shift > 0:
-                quote_y += shift
+        quote_h = len(rendered_lines) * qlh
+        quote_y = quote_y_base
+        if len(rendered_lines) <= int(t.get("b_quote_balance_lines", 2)):
+            nominal_gap = int(t.get("b_posted_after_quote_gap", 10))
+            spare = posted_max_y - (quote_y_base + quote_h + nominal_gap)
+            if spare > 0:
+                shift = int(spare * float(t.get("b_quote_balance_ratio", 0.5)))
+                shift = min(int(t.get("b_quote_balance_max", 64)), shift)
+                if shift > 0:
+                    quote_y += shift
 
-    for i, ln in enumerate(rendered_lines):
-        draw.text((lx0, quote_y + i * qlh), ln, font=quote_font, fill=ink)
+        for i, ln in enumerate(rendered_lines):
+            draw.text((lx0, quote_y + i * qlh), ln, font=quote_font, fill=ink)
 
-    quote_end_y = quote_y + quote_h
-    posted_min_y = quote_end_y + int(t.get("b_posted_after_quote_gap", 10))
-    posted_cap_y = quote_end_y + int(t.get("b_posted_max_gap_from_quote", 60))
-    posted_text_y = min(posted_max_y, posted_cap_y)
-    if posted_text_y < posted_min_y:
-        posted_text_y = min(posted_max_y, posted_min_y)
-    if posted_label:
-        posted_x = max(lx0, lx1 - int(t.get("b_posted_right_inset", 6)) - posted_w)
-        draw.text((posted_x, posted_text_y), posted_label, font=f_posted, fill=ink)
+        quote_end_y = quote_y + quote_h
+        posted_min_y = quote_end_y + int(t.get("b_posted_after_quote_gap", 10))
+        posted_cap_y = quote_end_y + int(t.get("b_posted_max_gap_from_quote", 60))
+        posted_text_y = min(posted_max_y, posted_cap_y)
+        if posted_text_y < posted_min_y:
+            posted_text_y = min(posted_max_y, posted_min_y)
+        if posted_label:
+            posted_x = max(lx0, lx1 - int(t.get("b_posted_right_inset", 6)) - posted_w)
+            draw.text((posted_x, posted_text_y), posted_label, font=f_posted, fill=ink)
 
     # ---------------- Right Panel ----------------
     rx0 = split_x + 1
@@ -1117,10 +1118,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             )
 
         if item.completed:
-            # [E-INK] Strikethrough
-            tw = text_size(draw, title, title_font)[0]
-            sy = ty + th // 2 + 1
-            draw.line((inner_x0, sy, inner_x0 + tw, sy), fill=ink, width=2) 
+            draw_strikethrough(draw, title, inner_x0, ty, title_font, fill=ink, width=2)
 
         y += inv_row_h
 
@@ -1262,10 +1260,7 @@ def render_home_kitchen(image, state: AppState, fonts, theme: dict) -> None:
             draw.text((text_x + panel_item_shift, ty), title, font=title_font, fill=text_fill)
 
         if item.completed:
-            # [E-INK] Strikethrough
-            tw = text_size(draw, title, title_font)[0]
-            sy = ty + th // 2 + 1
-            draw.line((text_x, sy, text_x + tw, sy), fill=text_fill, width=2)
+            draw_strikethrough(draw, title, text_x, ty, title_font, fill=text_fill, width=2)
 
         y += shop_row_h
 

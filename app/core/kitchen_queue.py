@@ -67,13 +67,16 @@ def kitchen_visible_task_indices(state: AppState, theme: dict | None = None) -> 
         and cached_theme_key == kitchen_queue_theme_key(state, theme)
         and cached_reminders_version == current_reminders_version
     ):
-        rid_to_idx = {r.rid: i for i, r in enumerate(state.model.reminders)}
+        rid_to_indices: dict[str, list[int]] = {}
+        for i, reminder in enumerate(state.model.reminders):
+            rid = str(getattr(reminder, "rid", "") or "")
+            rid_to_indices.setdefault(rid, []).append(i)
         cached_idxs: list[int] = []
         for rid in cached_rids:
-            idx = rid_to_idx.get(rid)
-            if idx is None:
+            idxs = rid_to_indices.get(rid) or []
+            if not idxs:
                 continue
-            cached_idxs.append(idx)
+            cached_idxs.append(idxs.pop(0))
         if cached_idxs and len(cached_idxs) == len(cached_rids):
             return cached_idxs
 

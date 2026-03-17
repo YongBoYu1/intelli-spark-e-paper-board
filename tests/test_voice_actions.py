@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import unittest
+from unittest.mock import patch
 
 from app.core.state import AppState, DashboardModel, Reminder, Screen, WidgetMode
 from app.core.reducer import Back, reduce
 from app.voice.actions import (
+    _expiry_badge,
+    _inventory_badge,
     VoiceAction,
     VoicePlan,
     apply_voice_action,
@@ -212,6 +215,19 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(result.status, "done")
         shopping_titles = [r.title.lower() for r in self.state.model.reminders if r.category == "shopping"]
         self.assertEqual(shopping_titles.count("eggs"), 1)
+
+    def test_shopping_add_generates_unique_rids_even_in_same_tick(self) -> None:
+        with patch("app.voice.actions.time.time", return_value=1000.1234):
+            apply_voice_action(self.state, VoiceAction(tool="shopping_add_item", args={"item_name": "eggs 2"}))
+            apply_voice_action(self.state, VoiceAction(tool="shopping_add_item", args={"item_name": "bacon"}))
+
+        rids = [
+            str(r.rid or "")
+            for r in self.state.model.reminders
+            if str(r.category or "") == "shopping" and str(r.title or "").lower() in {"eggs 2", "bacon"}
+        ]
+        self.assertEqual(len(rids), 2)
+        self.assertEqual(len(set(rids)), 2)
 
     def test_strong_shortage_shopping_add_does_not_remove_non_exact_inventory_match(self) -> None:
         action = VoiceAction(
@@ -474,11 +490,40 @@ class VoiceActionTests(unittest.TestCase):
         first = apply_voice_action(self.state, VoiceAction(tool="shopping_clear_all", args={}))
         self.assertFalse(first.changed)
         self.assertIn("confirm", first.message.lower())
+        self.assertIn("clear reminders", first.message.lower())
         confirmed = confirm_pending_voice_action(self.state)
         self.assertIsNotNone(confirmed)
         self.assertTrue(bool(confirmed and confirmed.changed))
+        self.assertEqual(confirmed.message, "Cleared reminders (2)")
         right_list_count = len([r for r in self.state.model.reminders if r.category != "fridge"])
         self.assertEqual(right_list_count, 0)
+
+    def test_inventory_badge_surfaces_date_without_event_prefix(self) -> None:
+        now_utc = datetime.now(timezone.utc)
+        today = now_utc.date().isoformat()
+        yesterday = (now_utc.date() - timedelta(days=1)).isoformat()
+        self.assertEqual(_inventory_badge("restocked", today, timezone_name="UTC"), "TODAY")
+        self.assertEqual(_inventory_badge("used", yesterday, timezone_name="UTC"), "YESTERDAY")
+
+    def test_inventory_and_expiry_badges_use_configured_timezone_for_today(self) -> None:
+        now_utc = datetime(2026, 3, 17, 1, 30, tzinfo=timezone.utc)
+        self.assertEqual(
+            _inventory_badge(
+                "restocked",
+                "2026-03-16",
+                timezone_name="America/Toronto",
+                now=now_utc,
+            ),
+            "TODAY",
+        )
+        self.assertEqual(
+            _expiry_badge(
+                "2026-03-16",
+                timezone_name="America/Toronto",
+                now=now_utc,
+            ),
+            "EXP: TODAY",
+        )
 
     def test_clear_inventory_requires_confirm_and_then_clears(self) -> None:
         first = apply_voice_action(self.state, VoiceAction(tool="inventory_clear_all", args={}))
@@ -500,6 +545,56 @@ class VoiceActionTests(unittest.TestCase):
         self.assertTrue(m.changed)
         self.assertEqual(len(self.state.model.memos), before + 1)
         self.assertEqual(self.state.model.memos[0].text, "晚点回家")
+
+    def test_memo_add_defaults_author_and_resolves_expiry_bucket(self) -> None:
+        self.state.ui.device_timezone = "America/Toronto"
+
+        result = apply_voice_action(
+            self.state,
+            VoiceAction(tool="memo_add", args={"text": "Back late tonight", "expiration_bucket": "end_of_day"}),
+        )
+
+        self.assertTrue(result.changed)
+        memo = self.state.model.memos[0]
+        self.assertEqual(memo.author, "Voice")
+        self.assertEqual(memo.expiration_bucket, "end_of_day")
+        self.assertIsNotNone(memo.expires_at)
+        self.assertGreater(float(memo.expires_at or 0.0), memo.timestamp)
+
+    def test_memo_add_resolves_expires_in_seconds(self) -> None:
+        self.state.ui.device_timezone = "America/Toronto"
+
+        with patch("app.voice.actions.time.time", return_value=1000.0):
+            result = apply_voice_action(
+                self.state,
+                VoiceAction(tool="memo_add", args={"text": "Back late tonight", "expires_in_seconds": 7200}),
+            )
+
+        self.assertTrue(result.changed)
+        memo = self.state.model.memos[0]
+        self.assertEqual(memo.expires_at, 8200.0)
+        self.assertEqual(memo.expiration_bucket, "none")
+
+    def test_memo_add_resolves_exact_iso_expiry(self) -> None:
+        self.state.ui.device_timezone = "America/Toronto"
+
+        with patch("app.voice.actions.time.time", return_value=1000.0):
+            result = apply_voice_action(
+                self.state,
+                VoiceAction(
+                    tool="memo_add",
+                    args={"text": "Dinner is ready", "expires_at_iso": "1970-01-01T03:00:00+00:00"},
+                ),
+            )
+
+        self.assertTrue(result.changed)
+        memo = self.state.model.memos[0]
+        self.assertEqual(memo.expires_at, 10800.0)
+
+    def test_parse_memo_add_rejects_invalid_relative_expiry(self) -> None:
+        action = parse_voice_action({"tool": "memo_add", "args": {"text": "Dinner is ready", "expires_in_seconds": 0}})
+        self.assertEqual(action.tool, "no_action")
+        self.assertEqual(action.args.get("reason"), "invalid_memo_expiry")
 
     def test_timer_control_actions(self) -> None:
         apply_voice_action(self.state, VoiceAction(tool="timer_set", args={"duration_seconds": 120}))

@@ -4,13 +4,23 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 from typing import Any
 import time
 import uuid
 from zoneinfo import ZoneInfo
 
+from app.core.family_board import (
+    active_memos,
+    coerce_memo_expires_in_seconds,
+    normalize_memo_author,
+    normalize_memo_expiration_bucket,
+    normalize_memo_text,
+    parse_memo_expires_at_iso,
+    prune_expired_memos,
+    resolve_memo_expires_at,
+)
 from app.core.reducer import (
     _is_kitchen_variant,
     _resolved_home_variant,
@@ -147,6 +157,15 @@ def describe_voice_action(action: VoiceAction) -> str:
         txt = str(args.get("text") or "").strip()
         if len(txt) > 18:
             txt = txt[:15] + "..."
+        expires_at_iso = str(args.get("expires_at_iso") or "").strip()
+        if expires_at_iso:
+            return f"memo_add(text={txt or '?'}, expires_at={expires_at_iso})"
+        expires_in_seconds = coerce_memo_expires_in_seconds(args.get("expires_in_seconds"))
+        if expires_in_seconds is not None:
+            return f"memo_add(text={txt or '?'}, expires_in={expires_in_seconds}s)"
+        bucket = normalize_memo_expiration_bucket(args.get("expiration_bucket"))
+        if bucket != "none":
+            return f"memo_add(text={txt or '?'}, expiration={bucket})"
         return f"memo_add(text={txt or '?'})"
     if tool == "memo_delete":
         target = str(args.get("target") or "latest").strip() or "latest"
@@ -327,11 +346,41 @@ def _parse_single_voice_action(action: dict[str, Any] | None) -> VoiceAction:
         args = {}
 
     if tool == "memo_add":
-        text = str(args.get("text") or "").strip()
+        text = normalize_memo_text(args.get("text"))
         if not text:
             return VoiceAction("no_action", {"reason": "missing_memo_text"})
         args = dict(args)
         args["text"] = text
+        author = str(args.get("author") or "").strip()
+        if author:
+            args["author"] = normalize_memo_author(author)
+        else:
+            args.pop("author", None)
+        expires_at_iso = str(args.get("expires_at_iso") or args.get("expires_at") or "").strip()
+        if expires_at_iso:
+            if parse_memo_expires_at_iso(expires_at_iso, timezone_name="UTC") is None:
+                return VoiceAction("no_action", {"reason": "invalid_memo_expiry"})
+            args["expires_at_iso"] = expires_at_iso
+            args.pop("expires_in_seconds", None)
+            args.pop("expiration_bucket", None)
+        else:
+            has_exact_relative_expiry = any(key in args for key in ("expires_in_seconds", "ttl_seconds", "expires_in"))
+            expires_in_seconds = coerce_memo_expires_in_seconds(
+                args.get("expires_in_seconds") or args.get("ttl_seconds") or args.get("expires_in")
+            )
+            if expires_in_seconds is not None:
+                args["expires_in_seconds"] = expires_in_seconds
+                args.pop("expiration_bucket", None)
+            else:
+                if has_exact_relative_expiry:
+                    return VoiceAction("no_action", {"reason": "invalid_memo_expiry"})
+                expiration_bucket = normalize_memo_expiration_bucket(
+                    args.get("expiration_bucket") or args.get("expiration") or args.get("expiry_bucket")
+                )
+                if expiration_bucket != "none":
+                    args["expiration_bucket"] = expiration_bucket
+                else:
+                    args.pop("expiration_bucket", None)
 
     if tool == "memo_delete":
         target = _parse_memo_target(args)
@@ -483,6 +532,7 @@ def apply_voice_action(
     theme: dict[str, Any] | None = None,
 ) -> VoiceApplyResult:
     expire_pending_voice_confirmation(state)
+    prune_expired_memos(state, now=time.time())
 
     if action.tool == "no_action":
         _clear_pending_voice_confirmation(state)
@@ -523,7 +573,7 @@ def apply_voice_action(
                 shopping_msg = f"Already in shopping: {state.model.reminders[existing_idx].title}"
             else:
                 reminder = Reminder(
-                    rid=f"s-{int(time.time() * 1000)}",
+                    rid=_new_reminder_rid("s"),
                     title=title,
                     right="VOICE",
                     completed=False,
@@ -536,7 +586,7 @@ def apply_voice_action(
                 shopping_msg = f"Added to shopping: {title}"
         else:
             reminder = Reminder(
-                rid=f"s-{int(time.time() * 1000)}",
+                rid=_new_reminder_rid("s"),
                 title=title,
                 right="VOICE",
                 completed=False,
@@ -630,9 +680,9 @@ def apply_voice_action(
         # Clear is destructive, so it always requires physical confirmation.
         if policy.require_confirm:
             _set_pending_voice_confirmation(state, action)
-            return VoiceApplyResult(changed=False, status="confirm", message="Press click once within 4s to confirm clear shopping list")
+            return VoiceApplyResult(changed=False, status="confirm", message="Press click once within 4s to confirm clear reminders")
         removed = _clear_shopping_items(state)
-        return VoiceApplyResult(changed=removed > 0, status="done", message=f"Cleared shopping list ({removed})")
+        return VoiceApplyResult(changed=removed > 0, status="done", message=f"Cleared reminders ({removed})")
 
     if action.tool == "inventory_clear_all":
         policy = decide_voice_policy(action.tool, action.args).rule
@@ -674,7 +724,8 @@ def apply_voice_action(
 
         # added/restocked: update existing row if present, otherwise create a new fridge row.
         if idx >= 0:
-            right = _inventory_badge("restocked", effective_date)
+            badge_timezone = str(getattr(state.ui, "device_timezone", "UTC") or "UTC")
+            right = _inventory_badge("restocked", effective_date, timezone_name=badge_timezone)
             cur = state.model.reminders[idx]
             state.model.reminders[idx] = replace(
                 cur,
@@ -702,9 +753,13 @@ def apply_voice_action(
             )
 
         reminder = Reminder(
-            rid=f"f-{int(time.time() * 1000)}",
+            rid=_new_reminder_rid("f"),
             title=title,
-            right=_inventory_badge("restocked", effective_date),
+            right=_inventory_badge(
+                "restocked",
+                effective_date,
+                timezone_name=str(getattr(state.ui, "device_timezone", "UTC") or "UTC"),
+            ),
             completed=False,
             category="fridge",
             created_at=time.time(),
@@ -733,9 +788,12 @@ def apply_voice_action(
         # If not found, create a new entry (expires flows should surface on the board).
         if idx < 0:
             reminder = Reminder(
-                rid=f"f-{int(time.time() * 1000)}",
+                rid=_new_reminder_rid("f"),
                 title=title,
-                right=_expiry_badge(expiry_date),
+                right=_expiry_badge(
+                    expiry_date,
+                    timezone_name=str(getattr(state.ui, "device_timezone", "UTC") or "UTC"),
+                ),
                 completed=False,
                 category="fridge",
                 created_at=time.time(),
@@ -748,7 +806,10 @@ def apply_voice_action(
         cur = state.model.reminders[idx]
         state.model.reminders[idx] = replace(
             cur,
-            right=_expiry_badge(expiry_date),
+            right=_expiry_badge(
+                expiry_date,
+                timezone_name=str(getattr(state.ui, "device_timezone", "UTC") or "UTC"),
+            ),
             completed=False,
             created_at=time.time(),
         )
@@ -831,20 +892,35 @@ def apply_voice_action(
 
     if action.tool == "memo_add":
         _clear_pending_voice_confirmation(state)
-        txt = str(action.args.get("text") or "").strip()
+        txt = normalize_memo_text(action.args.get("text"))
         if not txt:
             return VoiceApplyResult(changed=False, status="error", message="Empty memo")
-        author = str(action.args.get("author") or "Voice").strip() or "Voice"
+        author = normalize_memo_author(action.args.get("author"), default="Voice")
+        now_ts = time.time()
+        expiration_bucket = normalize_memo_expiration_bucket(action.args.get("expiration_bucket"))
+        expires_at_iso = str(action.args.get("expires_at_iso") or "").strip()
+        expires_in_seconds = coerce_memo_expires_in_seconds(action.args.get("expires_in_seconds"))
+        resolved_expires_at = resolve_memo_expires_at(
+            expiration_bucket,
+            now=now_ts,
+            timezone_name=str(getattr(state.ui, "device_timezone", "UTC") or "UTC"),
+            expires_at_iso=expires_at_iso,
+            expires_in_seconds=expires_in_seconds,
+        )
+        if (expires_at_iso or expires_in_seconds is not None or expiration_bucket != "none") and resolved_expires_at is None:
+            return VoiceApplyResult(changed=False, status="done", message="Please use a future time for this family note.")
         memo = MemoItem(
-            mid=f"m-{int(time.time() * 1000)}",
+            mid=f"m-{int(now_ts * 1000)}",
             text=txt,
             author=author,
-            timestamp=time.time(),
+            timestamp=now_ts,
             is_new=True,
+            expiration_bucket=expiration_bucket,
+            expires_at=resolved_expires_at,
         )
         state.model.memos.insert(0, memo)
         state.ui.memo_index = 0
-        state.ui.memo_last_rotated_at = time.time()
+        state.ui.memo_last_rotated_at = now_ts
         return VoiceApplyResult(changed=True, status="done", message="Added memo")
 
     if action.tool == "memo_delete":
@@ -930,6 +1006,8 @@ def _format_no_action_feedback(reason: str) -> tuple[str, str]:
         return "done", "Please include the expiry date."
     if key in {"missing_memo_target"}:
         return "done", "Please specify which memo to edit."
+    if key in {"invalid_memo_expiry"}:
+        return "done", "Please use a clear future time for when the family note should disappear."
     if key in {"invalid_duration_seconds"}:
         return "done", "Please include a timer duration, like 10 minutes."
     if key in {"no_tool_to_stop_timer", "no_tool_to_pause_timer", "no_tool_to_resume_timer"}:
@@ -1253,8 +1331,8 @@ def confirm_pending_voice_action(state: AppState, now: float | None = None) -> V
         removed = _clear_shopping_items(state)
         _clear_pending_voice_confirmation(state)
         if removed <= 0:
-            return VoiceApplyResult(changed=False, status="done", message="Shopping list already empty")
-        msg = f"Cleared shopping list ({removed})"
+            return VoiceApplyResult(changed=False, status="done", message="Reminders already empty")
+        msg = f"Cleared reminders ({removed})"
         _push_undo_history_from_confirm(
             state,
             action=VoiceAction(tool="shopping_clear_all", args=payload_args),
@@ -1350,6 +1428,11 @@ def _parse_remove_source(args: dict[str, Any], *, default: str = "reminders") ->
     if raw in {"reminders", "inventory"}:
         return raw
     return None
+
+
+def _new_reminder_rid(prefix: str) -> str:
+    kind = str(prefix or "r").strip().lower()[:1] or "r"
+    return f"{kind}-{uuid.uuid4().hex[:12]}"
 
 
 def _parse_memo_target(args: dict[str, Any]) -> dict[str, Any] | None:
@@ -1670,38 +1753,43 @@ def _is_shopping_list_item(r: Reminder) -> bool:
     return str(r.category or "") != "fridge"
 
 
-def _inventory_badge(event_type: str, effective_date: str) -> str:
-    event_type = str(event_type or "used").lower()
-    if event_type in ("consumed", "used"):
-        prefix = "USED"
-    elif event_type in ("restocked",):
-        prefix = "RESTOCKED"
-    else:
-        prefix = "ADDED"
-
+def _inventory_badge(
+    event_type: str,
+    effective_date: str,
+    *,
+    timezone_name: str = "UTC",
+    now: datetime | None = None,
+) -> str:
     d = (effective_date or "").strip()
     if not d:
-        return f"{prefix} TODAY"
+        return "TODAY"
 
     try:
         day = datetime.fromisoformat(d).date()
-        today = datetime.now().date()
+        today = _today_for_badge(timezone_name, now=now)
         if day == today:
-            return f"{prefix} TODAY"
+            return "TODAY"
         if (today - day).days == 1:
-            return f"{prefix} YESTERDAY"
-        return f"{prefix} {day.isoformat()}"
-    except Exception:
-        return f"{prefix} {d[:14]}".strip()
+            return "YESTERDAY"
+        if (day - today).days == 1:
+            return "TOMORROW"
+        return day.isoformat()
+    except ValueError:
+        return d[:14].strip()
 
 
-def _expiry_badge(expiry_date: str) -> str:
+def _expiry_badge(
+    expiry_date: str,
+    *,
+    timezone_name: str = "UTC",
+    now: datetime | None = None,
+) -> str:
     d = str(expiry_date or "").strip()
     if not d:
         return "EXP"
     try:
         day = datetime.fromisoformat(d).date()
-        today = datetime.now().date()
+        today = _today_for_badge(timezone_name, now=now)
         delta = (day - today).days
         if delta == 0:
             return "EXP: TODAY"
@@ -1710,5 +1798,29 @@ def _expiry_badge(expiry_date: str) -> str:
         if delta > 1 and delta <= 9:
             return f"EXP: {delta} DAYS"
         return f"EXP: {day.isoformat()}"
-    except Exception:
+    except ValueError:
         return f"EXP: {d[:10]}".strip()
+
+
+def _today_for_badge(timezone_name: str, *, now: datetime | None = None):
+    tz = _resolve_badge_timezone(timezone_name)
+    current = now if now is not None else datetime.now(tz)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    else:
+        current = current.astimezone(tz)
+    return current.date()
+
+
+def _resolve_badge_timezone(timezone_name: str):
+    key = str(timezone_name or "").strip() or "UTC"
+    try:
+        return ZoneInfo(key)
+    except KeyError:
+        pass
+    if len(key) == 6 and key[0] in ("+", "-") and key[1:3].isdigit() and key[4:6].isdigit() and key[3] == ":":
+        sign = 1 if key[0] == "+" else -1
+        hours = int(key[1:3])
+        minutes = int(key[4:6])
+        return timezone(sign * timedelta(hours=hours, minutes=minutes))
+    return timezone.utc

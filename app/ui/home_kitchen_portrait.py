@@ -6,7 +6,7 @@ from PIL import ImageDraw
 
 from app.core.kitchen_queue import kitchen_queue_theme_key, kitchen_visible_task_indices
 from app.core.state import AppState
-from app.shared.draw import draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
+from app.shared.draw import draw_strikethrough, draw_text_spaced, rounded_rect, text_size, text_width_spaced, truncate_text
 from app.ui.home_kitchen_geometry import home_portrait_header_focus_source_box
 from app.ui.weather_detail import _draw_weather_icon_pack
 
@@ -572,7 +572,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     memo_idx = int(state.ui.memo_index or 0)
     memo = memos[memo_idx % len(memos)] if memos else None
 
-    active_author = (memo.author if memo else "MOM").upper()
+    active_author = (memo.author if memo else "").upper()
     authors = [active_author] if active_author else []
     for m_item in memos:
         a = (m_item.author or "").strip().upper()
@@ -615,7 +615,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     memo_rule_y = max(my0 + text_size(draw, "Ag", f_memo_title)[1], row_y + name_h + underline_gap + underline_w) + 6
     draw.line((mx0, memo_rule_y, mx1, memo_rule_y), fill=ink, width=section_rule_w)
 
-    quote = (memo.text.strip() if memo and memo.text else "No messages.")
+    quote = (memo.text.strip() if memo and memo.text else "")
     posted = _format_memo_posted((memo.timestamp if memo else None), t)
     posted_prefix = str(t.get("bp_posted_prefix") or "-").strip() or "-"
     posted_label_raw = f"{posted_prefix} {posted}" if posted else ""
@@ -628,7 +628,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
     quote_y0 = memo_rule_y + int(t["bp_quote_top_gap"])
     quote_y1 = memo_y1 - pad - posted_h - int(t["bp_quote_bottom_gap"])
     posted_bottom_y = memo_y1 - pad
-    if bool(t.get("bp_memo_box_enabled", True)):
+    if quote and bool(t.get("bp_memo_box_enabled", True)):
         box_x0, box_x1 = mx0, mx1
         box_y0 = memo_rule_y + int(t.get("bp_memo_box_gap_top", 10))
         box_y1 = memo_y1 - int(t.get("bp_memo_box_gap_bottom", 10))
@@ -654,47 +654,48 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
             quote_y0 = box_y0 + inner_y
             posted_bottom_y = box_y1 - inner_y
             quote_y1 = posted_bottom_y - posted_h - int(t["bp_quote_bottom_gap"])
-    quote_w = max(120, quote_x1 - quote_x0)
-    quote_size = int(t["bp_quote_size"])
-    quote_min = int(t["bp_quote_min_size"])
-    target_lines = max(1, int(t["bp_quote_target_lines"]))
-    rendered_lines: list[str] = []
-    quote_font = fonts.get("playfair_bold", _font_px(quote_size))
-    quote_line_h = text_size(draw, "Ag", quote_font)[1]
-
-    while quote_size >= quote_min:
+    if quote:
+        quote_w = max(120, quote_x1 - quote_x0)
+        quote_size = int(t["bp_quote_size"])
+        quote_min = int(t["bp_quote_min_size"])
+        target_lines = max(1, int(t["bp_quote_target_lines"]))
+        rendered_lines: list[str] = []
         quote_font = fonts.get("playfair_bold", _font_px(quote_size))
-        quote_line_h = max(1, int(text_size(draw, "Ag", quote_font)[1] * float(t["bp_quote_lh"])))
-        max_lines = max(1, (quote_y1 - quote_y0) // max(1, quote_line_h))
-        lines = _wrap_lines(draw, quote, quote_font, quote_w)
-        if len(lines) <= max_lines:
-            rendered_lines = lines
-            break
-        quote_size -= 1
+        quote_line_h = text_size(draw, "Ag", quote_font)[1]
 
-    if not rendered_lines:
-        quote_font = fonts.get("playfair_bold", _font_px(quote_min))
-        quote_line_h = max(1, int(text_size(draw, "Ag", quote_font)[1] * float(t["bp_quote_lh"])))
-        max_lines = max(1, (quote_y1 - quote_y0) // max(1, quote_line_h))
-        rendered_lines = _wrap_lines(draw, quote, quote_font, quote_w)[:max_lines]
+        while quote_size >= quote_min:
+            quote_font = fonts.get("playfair_bold", _font_px(quote_size))
+            quote_line_h = max(1, int(text_size(draw, "Ag", quote_font)[1] * float(t["bp_quote_lh"])))
+            max_lines = max(1, (quote_y1 - quote_y0) // max(1, quote_line_h))
+            lines = _wrap_lines(draw, quote, quote_font, quote_w)
+            if len(lines) <= max_lines:
+                rendered_lines = lines
+                break
+            quote_size -= 1
 
-    if len(rendered_lines) < target_lines and len(rendered_lines) == 1:
-        compact_w = max(120, int(quote_w * 0.9))
-        compact_lines = _wrap_lines(draw, quote, quote_font, compact_w)
-        if len(compact_lines) > len(rendered_lines):
-            rendered_lines = compact_lines
+        if not rendered_lines:
+            quote_font = fonts.get("playfair_bold", _font_px(quote_min))
+            quote_line_h = max(1, int(text_size(draw, "Ag", quote_font)[1] * float(t["bp_quote_lh"])))
+            max_lines = max(1, (quote_y1 - quote_y0) // max(1, quote_line_h))
+            rendered_lines = _wrap_lines(draw, quote, quote_font, quote_w)[:max_lines]
 
-    for i, ln in enumerate(rendered_lines):
-        y = quote_y0 + i * quote_line_h
-        if y + quote_line_h > quote_y1:
-            break
-        draw.text((quote_x0, y), ln, font=quote_font, fill=ink)
+        if len(rendered_lines) < target_lines and len(rendered_lines) == 1:
+            compact_w = max(120, int(quote_w * 0.9))
+            compact_lines = _wrap_lines(draw, quote, quote_font, compact_w)
+            if len(compact_lines) > len(rendered_lines):
+                rendered_lines = compact_lines
 
-    if posted_label:
-        posted_w = text_size(draw, posted_label, f_posted)[0]
-        posted_x = max(quote_x0, quote_x1 - int(t["bp_posted_right_inset"]) - posted_w)
-        posted_y = posted_bottom_y - posted_h
-        draw.text((posted_x, posted_y), posted_label, font=f_posted, fill=ink)
+        for i, ln in enumerate(rendered_lines):
+            y = quote_y0 + i * quote_line_h
+            if y + quote_line_h > quote_y1:
+                break
+            draw.text((quote_x0, y), ln, font=quote_font, fill=ink)
+
+        if posted_label:
+            posted_w = text_size(draw, posted_label, f_posted)[0]
+            posted_x = max(quote_x0, quote_x1 - int(t["bp_posted_right_inset"]) - posted_w)
+            posted_y = posted_bottom_y - posted_h
+            draw.text((posted_x, posted_y), posted_label, font=f_posted, fill=ink)
 
     # Lists
     lx0, lx1 = x0 + pad, x1 - pad
@@ -913,9 +914,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         draw.text((lx0, title_y), title, font=title_font, fill=ink)
 
         if item.completed:
-            tw = text_size(draw, title, title_font)[0]
-            sy = title_y + title_h // 2 + 1
-            draw.line((lx0, sy, lx0 + tw, sy), fill=ink, width=2)
+            draw_strikethrough(draw, title, lx0, title_y, title_font, fill=ink, width=2)
 
         inv_row_y += inv_row_h
 
@@ -987,9 +986,7 @@ def render_home_kitchen_portrait(image, state: AppState, fonts, theme: dict) -> 
         title_y = shop_row_y + max(0, (shop_row_h - title_h) // 2)
         draw.text((text_x, title_y), title, font=title_font, fill=ink)
         if item.completed:
-            tw = text_size(draw, title, title_font)[0]
-            sy = title_y + title_h // 2 + 1
-            draw.line((text_x, sy, text_x + tw, sy), fill=ink, width=2)
+            draw_strikethrough(draw, title, text_x, title_y, title_font, fill=ink, width=2)
 
         shop_row_y += shop_row_h
 

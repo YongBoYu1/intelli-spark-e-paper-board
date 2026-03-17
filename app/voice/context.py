@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.family_board import active_memos
 from app.core.state import AppState
 
 
@@ -29,7 +30,7 @@ def build_board_context(
             )
         return out
 
-    memos = list(getattr(state.model, "memos", []) or [])
+    memos = active_memos(list(getattr(state.model, "memos", []) or []))
     memo_items: list[dict[str, Any]] = []
     for m in memos[: max(0, int(max_memos))]:
         memo_items.append(

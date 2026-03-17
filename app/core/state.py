@@ -72,6 +72,8 @@ class MemoItem:
     author: str
     timestamp: float
     is_new: bool = False
+    expiration_bucket: str = "none"
+    expires_at: float | None = None
 
 
 @dataclass

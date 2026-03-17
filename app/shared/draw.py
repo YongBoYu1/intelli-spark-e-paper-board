@@ -52,6 +52,33 @@ def draw_text_spaced(draw, text, x, y, font, spacing=1, fill=0):
         cur_x += ch_w + (step if idx < len(text) - 1 else 0)
 
 
+def draw_strikethrough(draw, text, x, y, font, *, fill=0, width=2, y_ratio=0.56, y_offset=0.0):
+    txt = str(text or "")
+    if not txt:
+        return None
+    try:
+        bbox = draw.textbbox((_snap_px(x), _snap_px(y)), txt, font=font)
+    except AttributeError:
+        try:
+            font_bbox = font.getbbox(txt)
+            bbox = (
+                _snap_px(x) + int(font_bbox[0]),
+                _snap_px(y) + int(font_bbox[1]),
+                _snap_px(x) + int(font_bbox[2]),
+                _snap_px(y) + int(font_bbox[3]),
+            )
+        except AttributeError:
+            w, h = draw.textsize(txt, font=font)
+            bbox = (_snap_px(x), _snap_px(y), _snap_px(x) + w, _snap_px(y) + h)
+    if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
+        return None
+
+    line_y = _snap_px(bbox[1] + (bbox[3] - bbox[1]) * float(y_ratio) + float(y_offset))
+    line_y = max(int(bbox[1]), min(int(bbox[3]) - 1, line_y))
+    draw.line((bbox[0], line_y, bbox[2], line_y), fill=fill, width=max(1, int(width)))
+    return line_y
+
+
 def center_text_spaced(draw, text, font, box, spacing=1, fill=0):
     x0, y0, x1, y1 = box
     w = text_width_spaced(draw, text, font, spacing=spacing)

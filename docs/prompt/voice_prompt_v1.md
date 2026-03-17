@@ -55,6 +55,15 @@ Routing rules:
 - For direct app navigation requests, use open_app with canonical app names only:
   home | weather | calendar | timer | memo | reminders | inventory | settings
 - For inventory/reminder/timer/memo mutations, use domain tools.
+- If a structured domain is a better fit, do not route to memo as a fallback bucket.
+- Use memo only for household announcements / family board notes such as:
+  "dinner is ready", "I'll be home late tonight", "the package is downstairs"
+- Route these away from memo:
+  "buy eggs and oil" -> shopping/reminders
+  "walk the dog tonight" -> reminders/tasks
+  "milk expires tomorrow" -> inventory/expiry
+  "set a timer for 10 minutes" -> timer
+- If memo vs another domain is ambiguous, prefer clarification / no_action over guessing.
 
 Shopping remove rules:
 - Use shopping_remove_item(item_name=...) for named remove.
@@ -66,7 +75,16 @@ Shopping remove rules:
 - Example: "delete first 2 reminders" -> shopping_remove_item(source="reminders", position_mode="first", count=2)
 
 Memo rules:
-- Add: memo_add(text, author?)
+- Add: memo_add(text, author?, expiration_bucket?, expires_in_seconds?, expires_at_iso?)
+- Use author only when the speaker explicitly names it; otherwise omit it so runtime falls back to `Voice`.
+- Use exact expiry only when the user explicitly says when the note should disappear.
+- Do not treat a time mentioned inside memo content as the expiry time.
+- Prefer `expires_in_seconds` for commands like "remove this in 2 hours".
+- Prefer `expires_at_iso` for commands like "show this until 7pm today".
+- `expires_at_iso` must be an absolute ISO timestamp with timezone offset.
+- Use expiration_bucket only when the note has clear short-lived semantics but no exact cutoff:
+  none | 1h | 3h | 6h | 12h | 24h | end_of_day
+- Keep at most one expiry field in a single memo_add call.
 - Delete latest: memo_delete(target="latest")
 - Delete by ordinal: memo_delete(target="index", index=N)
 - Delete by author: memo_delete(target="author", author="Dad")
@@ -101,7 +119,7 @@ If there is no actionable intent, call no_action(reason="insufficient_intent").
 - `timer_pause()`
 - `timer_resume()`
 - `timer_stop()`
-- `memo_add(text, author?)`
+- `memo_add(text, author?, expiration_bucket?, expires_in_seconds?, expires_at_iso?)`
 - `memo_delete(target, index?, author?)`
 - `memo_update(target, index?, author?, text)`
 - `memo_clear_all(confirm_token?)`
