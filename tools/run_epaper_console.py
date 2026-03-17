@@ -1245,6 +1245,7 @@ def _apply_voice_payload(
 def _voice_interpret_job(
     *,
     api_url: str,
+    auth_token: str,
     audio_path: str,
     voice_locale: str,
     voice_timezone: str,
@@ -1260,6 +1261,7 @@ def _voice_interpret_job(
             meta=meta,
             timeout_s=float(voice_timeout_s),
             board_context=board_context,
+            auth_token=str(auth_token or ""),
         )
         return {
             "ok": True,
@@ -1301,6 +1303,7 @@ def _run_voice_flow(
     panel_gamma: float,
     panel_dither: bool,
     voice_api_url: str,
+    voice_api_token: str,
     voice_locale: str,
     voice_timezone: str,
     voice_timeout_s: float,
@@ -1387,6 +1390,7 @@ def _run_voice_flow(
             meta=meta,
             timeout_s=float(voice_timeout_s),
             board_context=build_board_context(state),
+            auth_token=str(voice_api_token or ""),
         )
         should_render_feedback, _ = _apply_voice_payload(
             state=state,
@@ -1557,6 +1561,11 @@ def main() -> int:
         help="Live weather refresh interval in hours (default: 12; at 12h it aligns to local 00:00/12:00; <=0 disables periodic refresh)",
     )
     parser.add_argument("--voice-api-url", default=os.environ.get("VOICE_API_URL", ""), help="Backend URL for POST /voice/interpret")
+    parser.add_argument(
+        "--voice-api-token",
+        default=os.environ.get("VOICE_API_TOKEN", ""),
+        help="Shared auth token sent as Authorization: Bearer <token>",
+    )
     parser.add_argument("--voice-locale", default=os.environ.get("VOICE_LOCALE", "en-US"), help="Locale sent to backend")
     parser.add_argument("--voice-timezone", default=os.environ.get("VOICE_TIMEZONE", "UTC"), help="Timezone sent to backend")
     parser.add_argument("--voice-timeout", type=float, default=float(os.environ.get("VOICE_TIMEOUT_S", "20")), help="Backend timeout seconds")
@@ -1841,6 +1850,7 @@ def main() -> int:
                     voice_job_future = voice_executor.submit(
                         _voice_interpret_job,
                         api_url=str(args.voice_api_url or ""),
+                        auth_token=str(args.voice_api_token or ""),
                         audio_path=audio,
                         voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
                         voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),
@@ -1882,6 +1892,7 @@ def main() -> int:
                     voice_job_future = voice_executor.submit(
                         _voice_interpret_job,
                         api_url=str(args.voice_api_url or ""),
+                        auth_token=str(args.voice_api_token or ""),
                         audio_path=audio,
                         voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
                         voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),
@@ -2027,6 +2038,7 @@ def main() -> int:
                                     voice_job_future = voice_executor.submit(
                                         _voice_interpret_job,
                                         api_url=str(args.voice_api_url or ""),
+                                        auth_token=str(args.voice_api_token or ""),
                                         audio_path=audio,
                                         voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
                                         voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),
@@ -2194,6 +2206,7 @@ def main() -> int:
                         voice_job_future = voice_executor.submit(
                             _voice_interpret_job,
                             api_url=str(args.voice_api_url or ""),
+                            auth_token=str(args.voice_api_token or ""),
                             audio_path=audio,
                             voice_locale=str(state.ui.voice_locale or args.voice_locale or "en-US"),
                             voice_timezone=str(state.ui.device_timezone or args.voice_timezone or "UTC"),

@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import threading
 import time
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.shared.env import load_repo_dotenv
@@ -56,9 +57,15 @@ def health() -> dict[str, str]:
 
 
 @app.post("/voice/interpret", response_model=VoiceInterpretResponse)
-def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
+def voice_interpret(
+    req: VoiceInterpretRequest,
+    request: Request = None,
+    authorization: str | None = Header(default=None),
+) -> VoiceInterpretResponse:
+    started_at = time.perf_counter()
     req_dict = req.model_dump()
     req_id = str(req_dict.get("request_id") or "").strip()
+    _verify_voice_api_auth(req_id=req_id, authorization=authorization, request=request)
     inflight_entry: dict[str, Any] | None = None
     is_leader = False
 
@@ -73,11 +80,17 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
                     _inflight_requests[req_id] = inflight_entry
                     is_leader = True
         if cached is not None:
+            duration_ms = _elapsed_ms(started_at)
             _log.info(
-                "voice_interpret cached request_id=%s action=%s transcript=%s",
+                "voice_interpret request_id=%s status=cached mode=%s locale=%s timezone=%s client=%s action=%s duration_ms=%s transcript=%s",
                 req_id,
+                _request_mode(req_dict),
+                _clip_log_text(str(req_dict.get("locale") or "")),
+                _clip_log_text(str(req_dict.get("timezone") or "")),
+                _request_client(request),
                 _summarize_action(dict(cached.get("action") or {})),
-                _clip_log_text(str(cached.get("transcript") or "")),
+                duration_ms,
+                _maybe_log_transcript(str(cached.get("transcript") or "")),
             )
             return VoiceInterpretResponse(
                 action=dict(cached.get("action") or {}),
@@ -101,11 +114,17 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
             action = dict(inflight_entry.get("action") or {})
             plan = dict(inflight_entry.get("plan") or {}) if isinstance(inflight_entry.get("plan"), dict) else None
             transcript = str(inflight_entry.get("transcript") or "")
+            duration_ms = _elapsed_ms(started_at)
             _log.info(
-                "voice_interpret inflight-reuse request_id=%s action=%s transcript=%s",
+                "voice_interpret request_id=%s status=inflight_reuse mode=%s locale=%s timezone=%s client=%s action=%s duration_ms=%s transcript=%s",
                 req_id,
+                _request_mode(req_dict),
+                _clip_log_text(str(req_dict.get("locale") or "")),
+                _clip_log_text(str(req_dict.get("timezone") or "")),
+                _request_client(request),
                 _summarize_action(action),
-                _clip_log_text(transcript),
+                duration_ms,
+                _maybe_log_transcript(transcript),
             )
             return VoiceInterpretResponse(action=action, plan=plan, transcript=transcript)
 
@@ -135,13 +154,71 @@ def voice_interpret(req: VoiceInterpretRequest) -> VoiceInterpretResponse:
                 inflight_entry["event"].set()
 
     _log.info(
-        "voice_interpret request_id=%s action=%s transcript=%s",
+        "voice_interpret request_id=%s status=ok mode=%s locale=%s timezone=%s client=%s action=%s duration_ms=%s transcript=%s",
         req_id or "<none>",
+        _request_mode(req_dict),
+        _clip_log_text(str(req_dict.get("locale") or "")),
+        _clip_log_text(str(req_dict.get("timezone") or "")),
+        _request_client(request),
         _summarize_action(action),
-        _clip_log_text(transcript),
+        _elapsed_ms(started_at),
+        _maybe_log_transcript(transcript),
     )
 
     return VoiceInterpretResponse(action=action, plan=plan, transcript=transcript)
+
+
+def _configured_voice_api_token() -> str:
+    return str(os.environ.get("VOICE_API_TOKEN") or "").strip()
+
+
+def _verify_voice_api_auth(*, req_id: str, authorization: str | None, request: Request | None) -> None:
+    expected = _configured_voice_api_token()
+    if not expected:
+        return
+
+    provided = _parse_bearer_token(authorization)
+    if provided and secrets.compare_digest(provided, expected):
+        return
+
+    _log.warning(
+        "voice_interpret request_id=%s status=unauthorized client=%s",
+        req_id or "<none>",
+        _request_client(request),
+    )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="missing_or_invalid_auth_token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _parse_bearer_token(authorization: str | None) -> str:
+    raw = str(authorization or "").strip()
+    if not raw:
+        return ""
+    if not raw.lower().startswith("bearer "):
+        return ""
+    return raw[7:].strip()
+
+
+def _request_client(request: Request | None) -> str:
+    if request is None or request.client is None:
+        return "<unknown>"
+    host = str(getattr(request.client, "host", "") or "").strip()
+    return host or "<unknown>"
+
+
+def _request_mode(req_dict: dict[str, Any]) -> str:
+    if str(req_dict.get("audio_base64") or "").strip():
+        return "audio"
+    if str(req_dict.get("transcript") or "").strip():
+        return "transcript"
+    return "empty"
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, int((time.perf_counter() - float(started_at)) * 1000))
 
 
 def _prune_idempotency_cache_locked(*, now_ts: float | None = None) -> None:
@@ -176,6 +253,13 @@ def _clip_log_text(text: str, max_len: int = 180) -> str:
     if len(txt) <= max_len:
         return txt
     return txt[: max_len - 3] + "..."
+
+
+def _maybe_log_transcript(text: str) -> str:
+    enabled = str(os.environ.get("VOICE_API_LOG_TRANSCRIPT", "0")).strip().lower() in {"1", "true", "yes"}
+    if not enabled:
+        return "<disabled>"
+    return _clip_log_text(text)
 
 
 def _summarize_action(action: dict[str, Any]) -> str:

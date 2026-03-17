@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 import unittest
+
+from fastapi.testclient import TestClient
 
 from backend.voice_api import app as voice_app
 
@@ -15,8 +18,12 @@ class VoiceApiAppCacheTests(unittest.TestCase):
         self._orig_max = voice_app._IDEMPOTENCY_CACHE_MAX_SIZE
         self._orig_wait_timeout = voice_app._IDEMPOTENCY_INFLIGHT_WAIT_TIMEOUT_S
         self._orig_interpret = voice_app.interpret_request_with_debug
+        self._orig_voice_api_token = os.environ.get("VOICE_API_TOKEN")
+        self._orig_log_transcript = os.environ.get("VOICE_API_LOG_TRANSCRIPT")
         voice_app._idempotency_cache.clear()
         voice_app._inflight_requests.clear()
+        os.environ.pop("VOICE_API_TOKEN", None)
+        os.environ.pop("VOICE_API_LOG_TRANSCRIPT", None)
 
     def tearDown(self) -> None:
         voice_app._idempotency_cache.clear()
@@ -27,6 +34,14 @@ class VoiceApiAppCacheTests(unittest.TestCase):
         voice_app._IDEMPOTENCY_CACHE_MAX_SIZE = self._orig_max
         voice_app._IDEMPOTENCY_INFLIGHT_WAIT_TIMEOUT_S = self._orig_wait_timeout
         voice_app.interpret_request_with_debug = self._orig_interpret
+        if self._orig_voice_api_token is None:
+            os.environ.pop("VOICE_API_TOKEN", None)
+        else:
+            os.environ["VOICE_API_TOKEN"] = self._orig_voice_api_token
+        if self._orig_log_transcript is None:
+            os.environ.pop("VOICE_API_LOG_TRANSCRIPT", None)
+        else:
+            os.environ["VOICE_API_LOG_TRANSCRIPT"] = self._orig_log_transcript
 
     def test_prune_idempotency_cache_evicts_expired_entries(self) -> None:
         voice_app._IDEMPOTENCY_CACHE_TTL_S = 10.0
@@ -137,6 +152,55 @@ class VoiceApiAppCacheTests(unittest.TestCase):
             transcript="hello",
         )
         self.assertEqual(req.locale, "en-US")
+
+    def test_health_endpoint_does_not_require_auth(self) -> None:
+        os.environ["VOICE_API_TOKEN"] = "shared-secret"
+        client = TestClient(voice_app.app)
+        resp = client.get("/health")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"status": "ok"})
+
+    def test_voice_interpret_rejects_missing_auth_when_token_is_configured(self) -> None:
+        os.environ["VOICE_API_TOKEN"] = "shared-secret"
+        client = TestClient(voice_app.app)
+        resp = client.post(
+            "/voice/interpret",
+            json={
+                "request_id": "voice-auth-missing",
+                "request_time": "2026-02-24T12:00:00+00:00",
+                "timezone": "UTC",
+                "locale": "en-US",
+                "transcript": "add milk",
+            },
+        )
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()["detail"], "missing_or_invalid_auth_token")
+
+    def test_voice_interpret_accepts_valid_bearer_token(self) -> None:
+        os.environ["VOICE_API_TOKEN"] = "shared-secret"
+        client = TestClient(voice_app.app)
+
+        def fake_interpret(req_dict):
+            return {
+                "action": {"tool": "shopping_add_item", "args": {"item_name": "milk"}},
+                "plan": {"actions": [{"tool": "shopping_add_item", "args": {"item_name": "milk"}}]},
+                "transcript": str(req_dict.get("transcript") or ""),
+            }
+
+        voice_app.interpret_request_with_debug = fake_interpret
+        resp = client.post(
+            "/voice/interpret",
+            headers={"Authorization": "Bearer shared-secret"},
+            json={
+                "request_id": "voice-auth-ok",
+                "request_time": "2026-02-24T12:00:00+00:00",
+                "timezone": "UTC",
+                "locale": "en-US",
+                "transcript": "add milk",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["action"]["tool"], "shopping_add_item")
 
 
 if __name__ == "__main__":
