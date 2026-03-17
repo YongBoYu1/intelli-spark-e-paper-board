@@ -58,9 +58,18 @@ def draw_strikethrough(draw, text, x, y, font, *, fill=0, width=2, y_ratio=0.56,
         return None
     try:
         bbox = draw.textbbox((_snap_px(x), _snap_px(y)), txt, font=font)
-    except Exception:
-        w, h = text_size(draw, txt, font)
-        bbox = (_snap_px(x), _snap_px(y), _snap_px(x) + w, _snap_px(y) + h)
+    except AttributeError:
+        try:
+            font_bbox = font.getbbox(txt)
+            bbox = (
+                _snap_px(x) + int(font_bbox[0]),
+                _snap_px(y) + int(font_bbox[1]),
+                _snap_px(x) + int(font_bbox[2]),
+                _snap_px(y) + int(font_bbox[3]),
+            )
+        except AttributeError:
+            w, h = draw.textsize(txt, font=font)
+            bbox = (_snap_px(x), _snap_px(y), _snap_px(x) + w, _snap_px(y) + h)
     if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
         return None
 

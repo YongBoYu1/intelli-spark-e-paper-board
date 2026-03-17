@@ -54,7 +54,7 @@ def load_family_board(
     try:
         with open(path, "r", encoding="utf-8") as f:
             parsed = json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, OSError):
         return active_memos(list(fallback_memos or []))
 
     rows = parsed.get("memos") if isinstance(parsed, dict) else None

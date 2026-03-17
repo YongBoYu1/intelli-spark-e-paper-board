@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import patch
 
 from app.core.state import AppState, DashboardModel, Reminder, Screen, WidgetMode
 from app.core.reducer import Back, reduce
 from app.voice.actions import (
+    _expiry_badge,
     _inventory_badge,
     VoiceAction,
     VoicePlan,
@@ -498,10 +499,31 @@ class VoiceActionTests(unittest.TestCase):
         self.assertEqual(right_list_count, 0)
 
     def test_inventory_badge_surfaces_date_without_event_prefix(self) -> None:
-        today = datetime.now().date().isoformat()
-        yesterday = (datetime.now().date() - timedelta(days=1)).isoformat()
-        self.assertEqual(_inventory_badge("restocked", today), "TODAY")
-        self.assertEqual(_inventory_badge("used", yesterday), "YESTERDAY")
+        now_utc = datetime.now(timezone.utc)
+        today = now_utc.date().isoformat()
+        yesterday = (now_utc.date() - timedelta(days=1)).isoformat()
+        self.assertEqual(_inventory_badge("restocked", today, timezone_name="UTC"), "TODAY")
+        self.assertEqual(_inventory_badge("used", yesterday, timezone_name="UTC"), "YESTERDAY")
+
+    def test_inventory_and_expiry_badges_use_configured_timezone_for_today(self) -> None:
+        now_utc = datetime(2026, 3, 17, 1, 30, tzinfo=timezone.utc)
+        self.assertEqual(
+            _inventory_badge(
+                "restocked",
+                "2026-03-16",
+                timezone_name="America/Toronto",
+                now=now_utc,
+            ),
+            "TODAY",
+        )
+        self.assertEqual(
+            _expiry_badge(
+                "2026-03-16",
+                timezone_name="America/Toronto",
+                now=now_utc,
+            ),
+            "EXP: TODAY",
+        )
 
     def test_clear_inventory_requires_confirm_and_then_clears(self) -> None:
         first = apply_voice_action(self.state, VoiceAction(tool="inventory_clear_all", args={}))

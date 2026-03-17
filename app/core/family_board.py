@@ -64,7 +64,7 @@ def parse_memo_expires_at_iso(value: object, *, timezone_name: str = "UTC") -> f
         dt = dt.replace(tzinfo=_resolve_timezone(timezone_name))
     try:
         return float(dt.timestamp())
-    except Exception:
+    except (OverflowError, OSError):
         return None
 
 
@@ -148,7 +148,7 @@ def _resolve_timezone(timezone_name: str):
     key = str(timezone_name or "").strip() or "UTC"
     try:
         return ZoneInfo(key)
-    except Exception:
+    except KeyError:
         pass
     if len(key) == 6 and key[0] in ("+", "-") and key[1:3].isdigit() and key[4:6].isdigit() and key[3] == ":":
         sign = 1 if key[0] == "+" else -1

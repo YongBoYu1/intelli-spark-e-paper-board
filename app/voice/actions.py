@@ -4,7 +4,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 from typing import Any
 import time
@@ -724,7 +724,8 @@ def apply_voice_action(
 
         # added/restocked: update existing row if present, otherwise create a new fridge row.
         if idx >= 0:
-            right = _inventory_badge("restocked", effective_date)
+            badge_timezone = str(getattr(state.ui, "device_timezone", "UTC") or "UTC")
+            right = _inventory_badge("restocked", effective_date, timezone_name=badge_timezone)
             cur = state.model.reminders[idx]
             state.model.reminders[idx] = replace(
                 cur,
@@ -754,7 +755,11 @@ def apply_voice_action(
         reminder = Reminder(
             rid=_new_reminder_rid("f"),
             title=title,
-            right=_inventory_badge("restocked", effective_date),
+            right=_inventory_badge(
+                "restocked",
+                effective_date,
+                timezone_name=str(getattr(state.ui, "device_timezone", "UTC") or "UTC"),
+            ),
             completed=False,
             category="fridge",
             created_at=time.time(),
@@ -785,7 +790,10 @@ def apply_voice_action(
             reminder = Reminder(
                 rid=_new_reminder_rid("f"),
                 title=title,
-                right=_expiry_badge(expiry_date),
+                right=_expiry_badge(
+                    expiry_date,
+                    timezone_name=str(getattr(state.ui, "device_timezone", "UTC") or "UTC"),
+                ),
                 completed=False,
                 category="fridge",
                 created_at=time.time(),
@@ -798,7 +806,10 @@ def apply_voice_action(
         cur = state.model.reminders[idx]
         state.model.reminders[idx] = replace(
             cur,
-            right=_expiry_badge(expiry_date),
+            right=_expiry_badge(
+                expiry_date,
+                timezone_name=str(getattr(state.ui, "device_timezone", "UTC") or "UTC"),
+            ),
             completed=False,
             created_at=time.time(),
         )
@@ -1742,14 +1753,20 @@ def _is_shopping_list_item(r: Reminder) -> bool:
     return str(r.category or "") != "fridge"
 
 
-def _inventory_badge(event_type: str, effective_date: str) -> str:
+def _inventory_badge(
+    event_type: str,
+    effective_date: str,
+    *,
+    timezone_name: str = "UTC",
+    now: datetime | None = None,
+) -> str:
     d = (effective_date or "").strip()
     if not d:
         return "TODAY"
 
     try:
         day = datetime.fromisoformat(d).date()
-        today = datetime.now().date()
+        today = _today_for_badge(timezone_name, now=now)
         if day == today:
             return "TODAY"
         if (today - day).days == 1:
@@ -1757,17 +1774,22 @@ def _inventory_badge(event_type: str, effective_date: str) -> str:
         if (day - today).days == 1:
             return "TOMORROW"
         return day.isoformat()
-    except Exception:
+    except ValueError:
         return d[:14].strip()
 
 
-def _expiry_badge(expiry_date: str) -> str:
+def _expiry_badge(
+    expiry_date: str,
+    *,
+    timezone_name: str = "UTC",
+    now: datetime | None = None,
+) -> str:
     d = str(expiry_date or "").strip()
     if not d:
         return "EXP"
     try:
         day = datetime.fromisoformat(d).date()
-        today = datetime.now().date()
+        today = _today_for_badge(timezone_name, now=now)
         delta = (day - today).days
         if delta == 0:
             return "EXP: TODAY"
@@ -1776,5 +1798,29 @@ def _expiry_badge(expiry_date: str) -> str:
         if delta > 1 and delta <= 9:
             return f"EXP: {delta} DAYS"
         return f"EXP: {day.isoformat()}"
-    except Exception:
+    except ValueError:
         return f"EXP: {d[:10]}".strip()
+
+
+def _today_for_badge(timezone_name: str, *, now: datetime | None = None):
+    tz = _resolve_badge_timezone(timezone_name)
+    current = now if now is not None else datetime.now(tz)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    else:
+        current = current.astimezone(tz)
+    return current.date()
+
+
+def _resolve_badge_timezone(timezone_name: str):
+    key = str(timezone_name or "").strip() or "UTC"
+    try:
+        return ZoneInfo(key)
+    except KeyError:
+        pass
+    if len(key) == 6 and key[0] in ("+", "-") and key[1:3].isdigit() and key[4:6].isdigit() and key[3] == ":":
+        sign = 1 if key[0] == "+" else -1
+        hours = int(key[1:3])
+        minutes = int(key[4:6])
+        return timezone(sign * timedelta(hours=hours, minutes=minutes))
+    return timezone.utc
