@@ -1297,12 +1297,14 @@ class Simulator(tk.Tk):
         try:
             locale = str(self.state.ui.voice_locale or "en-US")
             meta = build_request_meta(locale=locale, tz_name=_local_timezone_name())
+            auth_token = str(os.environ.get("VOICE_SIM_API_TOKEN", os.environ.get("VOICE_API_TOKEN", "")) or "").strip()
             payload = interpret_audio_via_backend(
                 api_url=api_url,
                 audio_path=audio_path,
                 meta=meta,
                 timeout_s=timeout_s,
                 board_context=build_board_context(self.state),
+                auth_token=auth_token,
             )
             if isinstance(payload, dict):
                 payload = dict(payload)

@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: fridge-ink-voice-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./backend/voice_api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: VOICE_API_TOKEN
+        sync: false
+      - key: VOICE_ENABLE_NO_ACTION_RETRY
+        value: "0"
+      - key: VOICE_API_LOG_TRANSCRIPT
+        value: "0"
+      - key: VOICE_API_VERBOSE_UPSTREAM
+        value: "0"

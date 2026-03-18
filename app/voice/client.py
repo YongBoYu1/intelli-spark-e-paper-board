@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from typing import Any
 from urllib import request, error
 
@@ -19,6 +20,7 @@ def interpret_audio_via_backend(
     meta: VoiceRequestMeta,
     timeout_s: float = 20.0,
     board_context: dict[str, Any] | None = None,
+    auth_token: str | None = None,
 ) -> dict[str, Any]:
     if not api_url:
         raise VoiceClientError("VOICE_API_URL is not configured")
@@ -40,7 +42,7 @@ def interpret_audio_via_backend(
     req = request.Request(
         api_url,
         data=body,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers=_build_request_headers(auth_token=auth_token),
         method="POST",
     )
 
@@ -67,6 +69,7 @@ def interpret_transcript_via_backend(
     meta: VoiceRequestMeta,
     timeout_s: float = 20.0,
     board_context: dict[str, Any] | None = None,
+    auth_token: str | None = None,
 ) -> dict[str, Any]:
     if not api_url:
         raise VoiceClientError("VOICE_API_URL is not configured")
@@ -85,7 +88,7 @@ def interpret_transcript_via_backend(
     req = request.Request(
         api_url,
         data=body,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers=_build_request_headers(auth_token=auth_token),
         method="POST",
     )
 
@@ -103,3 +106,11 @@ def interpret_transcript_via_backend(
         raise VoiceClientError(f"network error: {e.reason}") from e
     except json.JSONDecodeError as e:
         raise VoiceClientError("backend returned invalid JSON") from e
+
+
+def _build_request_headers(*, auth_token: str | None) -> dict[str, str]:
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    token = str(auth_token if auth_token is not None else os.environ.get("VOICE_API_TOKEN", "")).strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
