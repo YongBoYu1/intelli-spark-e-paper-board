@@ -14,7 +14,16 @@
 
 ---
 
-## 接线
+## 外设总览
+
+| 外设 | 接口 | GPIO |
+|------|------|------|
+| Waveshare 7.5" e-Paper V2 + Driver HAT rev2.3 | Bit-bang SPI | 4, 11, 12, 14, 21, 47 |
+| I2S MEMS 麦克风（NR0562） | I2S | 5, 6, 7 |
+
+---
+
+## 接线一：墨水屏（e-Paper + Driver HAT）
 
 HAT 通过 40-pin 排针与树莓派对接，这里用跳线单独引出各信号。
 **HAT 引脚编号 = 树莓派 40-pin 物理引脚编号。**
@@ -40,24 +49,29 @@ SANXIXING 板子默认 5V 引脚为**输入**（只接受外部 5V，不输出�
 ### HAT 40-pin 关键引脚位置
 
 ```
-Pin 17 [3.3V ]  [5V  ] Pin 18   ← 错，Pin编号从1开始
-─────────────────────────────────────────────────────
-Pin 19 [DIN  ]  [GND ] Pin 20
-Pin 21 [MISO*]  [DC  ] Pin 22   ← *MISO 不连接
-Pin 23 [CLK  ]  [CS  ] Pin 24
-```
-
-完整顺序（从 Pin 1 数）：
-
-```
 Pin  1 [3.3V ← VCC ]  [5V  ← 5V  ] Pin  2
 Pin  6 [GND  ← GND ]
 Pin 11 [RST  ← GPIO4]  [PWR ← 3V3 ] Pin 12
 Pin 18 [BUSY ← GPIO14]
 Pin 19 [DIN  ← GPIO11] [GND        ] Pin 20
-Pin 21 [MISO*         ] [DC  ← GPIO21] Pin 22
+Pin 21 [MISO*         ] [DC  ← GPIO21] Pin 22   ← *MISO 不连接
 Pin 23 [CLK  ← GPIO12] [CS  ← GPIO47] Pin 24
 ```
+
+---
+
+## 接线二：I2S MEMS 麦克风（NR0562）
+
+圆形小板，6 个引脚，数字 I2S 接口。L/R 直接接 GND（固定左声道，无需占用 GPIO）。
+
+| 麦克风引脚 | 功能 | ESP32-S3 |
+|-----------|------|----------|
+| VDD  | 电源（3.3V）        | 3V3      |
+| GND  | 地                  | GND      |
+| SCK  | I2S 位时钟 (BCLK)  | GPIO 5   |
+| WS   | I2S 字选择 (LRCLK) | GPIO 6   |
+| SD   | I2S 串行数据输出    | GPIO 7   |
+| L/R  | 声道选择            | GND（硬接，左声道）|
 
 ---
 
@@ -122,6 +136,24 @@ HAT 内置升压电路负责生成墨水屏所需的 ±15V 驱动电压，需要
 12. 0x12 Display Refresh → 等待 BUSY=1（约 3~15 秒）
 13. 0x02 Power Off
 ```
+
+---
+
+## GPIO 分配总表
+
+```
+GPIO  4  → EPD RST
+GPIO  5  → MIC SCK  (I2S BCLK)
+GPIO  6  → MIC WS   (I2S LRCLK)
+GPIO  7  → MIC SD   (I2S Data In)
+GPIO 11  → EPD DIN  (SPI MOSI)
+GPIO 12  → EPD CLK  (SPI CLK)
+GPIO 14  → EPD BUSY
+GPIO 21  → EPD DC
+GPIO 47  → EPD CS
+```
+
+其余 GPIO（1~3, 8~10, 13, 15~20, 22~46）可用于旋转编码器、Wi-Fi 等后续扩展。
 
 ---
 
