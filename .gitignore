@@ -43,3 +43,8 @@ docs/VOICE_PIPELINE_MVP.md
 
 # Voice runtime data
 backend/voice_api/data/
+
+# ESP-IDF local build output
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
