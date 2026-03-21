@@ -1,6 +1,7 @@
 // Bit-bang SPI diagnostic — bypasses ESP32 SPI peripheral entirely.
-// Wiring: VCC←3V3, GND←GND, DIN←GPIO11, CLK←GPIO12, CS←GPIO47,
-//         DC←GPIO21, RST←GPIO4, BUSY←GPIO14, PWR←3V3 (hardwired)
+// Wiring: VCC←3V3, 5V←5V, GND←GND,
+//         DIN←GPIO11, CLK←GPIO12, CS←GPIO47,
+//         DC←GPIO21, RST←GPIO4, BUSY←GPIO14, PWR←GPIO8
 
 #include <Arduino.h>
 
@@ -10,6 +11,7 @@
 #define PIN_DC    21
 #define PIN_RST    4
 #define PIN_BUSY  14
+#define PIN_PWR    8
 
 #define EPD_W  800u
 #define EPD_H  480u
@@ -92,12 +94,14 @@ void setup() {
   Serial.println("--- end self-test ---");
 
   // All pins as OUTPUT, no SPI.begin()
+  pinMode(PIN_PWR,   OUTPUT); digitalWrite(PIN_PWR,   HIGH);  // enable HAT boost converter
   pinMode(PIN_MOSI,  OUTPUT); digitalWrite(PIN_MOSI,  LOW);
   pinMode(PIN_SCLK,  OUTPUT); digitalWrite(PIN_SCLK,  LOW);
   pinMode(PIN_CS,    OUTPUT); digitalWrite(PIN_CS,    HIGH);
   pinMode(PIN_DC,    OUTPUT); digitalWrite(PIN_DC,    LOW);
   pinMode(PIN_RST,   OUTPUT); digitalWrite(PIN_RST,   HIGH);
   pinMode(PIN_BUSY,  INPUT);
+  delay(50);  // allow boost converter to stabilise
 
   // ── Reset ──────────────────────────────────────────────────────────────
   Serial.printf("BUSY before RST = %d\n", digitalRead(PIN_BUSY));
@@ -144,6 +148,7 @@ void setup() {
 
   bb_cmd(0x02);
   delay(300);
+  digitalWrite(PIN_PWR, LOW);   // disable HAT boost converter
   Serial.println("=== Done ===");
 }
 
