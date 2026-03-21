@@ -18,7 +18,7 @@
 
 | 外设 | 接口 | GPIO |
 |------|------|------|
-| Waveshare 7.5" e-Paper V2 + Driver HAT rev2.3 | Bit-bang SPI | 4, 11, 12, 14, 21, 47 |
+| Waveshare 7.5" e-Paper V2 + Driver HAT rev2.3 | Bit-bang SPI | 4, 8, 11, 12, 14, 21, 47 |
 | I2S MEMS 麦克风（NR0562） | I2S | 5, 6, 7 |
 
 ---
@@ -39,7 +39,7 @@ HAT 通过 40-pin 排针与树莓派对接，这里用跳线单独引出各信�
 | DC   | GPIO 21  | Pin 22     | 数据/命令选择 |
 | RST  | GPIO 4   | Pin 11     | 复位（低有效） |
 | BUSY | GPIO 14  | Pin 18     | 忙信号 |
-| PWR  | 3V3      | Pin 12     | HAT 电源使能 |
+| PWR  | **GPIO 8** | Pin 12   | HAT 升压电路使能（软件控制） |
 
 ### ESP32-S3 5V 输出说明
 
@@ -51,7 +51,7 @@ SANXIXING 板子默认 5V 引脚为**输入**（只接受外部 5V，不输出�
 ```
 Pin  1 [3.3V ← VCC ]  [5V  ← 5V  ] Pin  2
 Pin  6 [GND  ← GND ]
-Pin 11 [RST  ← GPIO4]  [PWR ← 3V3 ] Pin 12
+Pin 11 [RST  ← GPIO4]  [PWR ← GPIO8] Pin 12
 Pin 18 [BUSY ← GPIO14]
 Pin 19 [DIN  ← GPIO11] [GND        ] Pin 20
 Pin 21 [MISO*         ] [DC  ← GPIO21] Pin 22   ← *MISO 不连接
@@ -146,6 +146,7 @@ GPIO  4  → EPD RST
 GPIO  5  → MIC SCK  (I2S BCLK)
 GPIO  6  → MIC WS   (I2S LRCLK)
 GPIO  7  → MIC SD   (I2S Data In)
+GPIO  8  → EPD PWR  (升压电路使能，HIGH=开，LOW=关)
 GPIO 11  → EPD DIN  (SPI MOSI)
 GPIO 12  → EPD CLK  (SPI CLK)
 GPIO 14  → EPD BUSY
@@ -153,7 +154,23 @@ GPIO 21  → EPD DC
 GPIO 47  → EPD CS
 ```
 
-其余 GPIO（1~3, 8~10, 13, 15~20, 22~46）可用于旋转编码器、Wi-Fi 等后续扩展。
+其余 GPIO（1~3, 9~10, 13, 15~20, 22~46）可用于旋转编码器、Wi-Fi 等后续扩展。
+
+### PWR 说明
+
+PWR（HAT Pin 12）是升压电路的使能信号：
+- **HIGH** → 升压电路工作，面板可以刷新
+- **LOW** → 升压电路关闭，省电
+
+在树莓派上由 GPIO18 控制；在 ESP32-S3 上改用 GPIO 8，可在代码中随时开关：
+
+```cpp
+#define PIN_PWR 8
+pinMode(PIN_PWR, OUTPUT);
+digitalWrite(PIN_PWR, HIGH);  // 开启
+// ... 刷新完成后 ...
+digitalWrite(PIN_PWR, LOW);   // 关闭节能
+```
 
 ---
 
