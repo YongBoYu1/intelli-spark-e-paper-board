@@ -38,6 +38,5 @@ idf.py flash monitor
 - `platform/` owns clock and display glue.
 - `platform/board_config.*` is the future home for the ESP32-S3 pin map.
 
-The display implementation is intentionally a serial/logging stub for now in
-`main/platform/display.cpp`. Replace that file with the real Waveshare panel
-driver integration once the ESP32-S3 pin map and driver choice are frozen.
+`main/platform/display.cpp` contains the current ESP32-S3 + Waveshare 7.5" V2
+bit-bang display path used for hardware bring-up and runtime rendering.

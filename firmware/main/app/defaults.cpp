@@ -32,6 +32,15 @@ AppState make_state_from_defaults(
   state.landing.status = state.screen == Screen::Landing
                              ? "Rotate to choose language."
                              : "Opening Home from built-in defaults.";
+  state.onboarding.step_index = 0;
+  state.onboarding.start_focus_index = 0;
+  state.onboarding.qr_focus_index = 0;
+  state.onboarding.prefs_focus_index = 0;
+  state.onboarding.pair_token = "A1B2-C3D4";
+  state.onboarding.wifi_ssid = "";
+  state.onboarding.timezone = "America/Toronto";
+  state.onboarding.auto_sync_enabled = true;
+  state.onboarding.status = "";
   state.home.focused_index = 0;
   state.dashboard = defaults.dashboard;
   return state;

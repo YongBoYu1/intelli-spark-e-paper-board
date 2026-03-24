@@ -14,7 +14,6 @@ void Runtime::boot() {
   const auto defaults = make_factory_defaults();
   state_ = make_state_from_defaults(defaults, platform::monotonic_ms());
   display_.init();
-  display_.clear();
   render();
 }
 

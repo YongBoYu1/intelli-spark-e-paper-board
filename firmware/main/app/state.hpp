@@ -8,6 +8,7 @@ namespace fridge_ink::app {
 
 enum class Screen {
   Landing,
+  Onboarding,
   Home,
 };
 
@@ -33,6 +34,18 @@ struct HomeState {
   int focused_index{0};
 };
 
+struct OnboardingState {
+  std::size_t step_index{0};
+  std::size_t start_focus_index{0};
+  std::size_t qr_focus_index{0};
+  std::size_t prefs_focus_index{0};
+  std::string pair_token{"A1B2-C3D4"};
+  std::string wifi_ssid{};
+  std::string timezone{"America/Toronto"};
+  bool auto_sync_enabled{true};
+  std::string status{};
+};
+
 struct AppState {
   Screen screen{Screen::Landing};
   bool setup_completed{false};
@@ -41,6 +54,7 @@ struct AppState {
   std::uint64_t boot_started_ms{0};
   std::uint64_t last_tick_ms{0};
   LandingState landing{};
+  OnboardingState onboarding{};
   HomeState home{};
   DashboardSummary dashboard{};
 };

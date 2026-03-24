@@ -6,6 +6,8 @@ const char* screen_name(Screen screen) {
   switch (screen) {
     case Screen::Landing:
       return "landing";
+    case Screen::Onboarding:
+      return "onboarding";
     case Screen::Home:
       return "home";
   }
