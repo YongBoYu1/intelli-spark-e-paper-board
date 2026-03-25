@@ -170,9 +170,21 @@ class EpaperDisplay final : public Display {
     // Decide: partial or full refresh
     if (!first_present_done_ || !previous_frame_valid_) {
       if (in_partial_mode_) { restore_full_mode(); }
-      // Exp #13: Single refresh only, no pre-conditioning.
-      // DTM1=~image (inverted first frame) for maximum transition on every pixel.
-      // No clear cycle — avoids double-refresh waveform interference.
+      // Exp #14: Clear-to-white baseline (same as #12 which got deep black mid-cycle)
+      // then display content with DTM1=previous(0xFF) matching actual panel state.
+      if (!first_present_done_) {
+        ESP_LOGI(kTag, "First frame: clearing to all-white baseline...");
+        send_command(0x10);
+        send_fill_buffer(0x00, kPanelBufferSize);  // old = all-black (0=black)
+        send_command(0x13);
+        send_fill_buffer(0xFF, kPanelBufferSize);  // new = all-white (1=white)
+        send_command(0x12);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        (void)wait_until_idle("clear_white_0x12", kRefreshTimeoutMs);
+        previous_frame_.assign(kPanelBufferSize, 0xFF);
+        previous_frame_valid_ = true;
+        ESP_LOGI(kTag, "Baseline done. Now displaying content...");
+      }
       display_bitmap(image);
     } else {
       // Compute dirty region bounding box
@@ -381,17 +393,22 @@ class EpaperDisplay final : public Display {
   }
 
   bool init_panel_registers() {
-    // Using Python init_fast() mode — different waveform timing for better settle
-    ESP_LOGI(kTag, "Init panel (init_fast mode)...");
+    // Exp #14: Exact Python standard init() — no init_fast, no extras
+    ESP_LOGI(kTag, "Init panel (Python standard init)...");
 
-    // 0x00: Panel Setting — LUT from OTP, B/W mode
-    send_command(0x00);
-    send_data(0x1F);
+    // 0x06: Booster Soft Start (Python: 0x17, 0x17, 0x28, 0x17)
+    send_command(0x06);
+    send_data(0x17);
+    send_data(0x17);
+    send_data(0x28);
+    send_data(0x17);
 
-    // 0x50: VCOM and Data Interval
-    send_command(0x50);
-    send_data(0x10);
+    // 0x01: Power Setting (Python: 0x07, 0x07, 0x28, 0x17)
+    send_command(0x01);
     send_data(0x07);
+    send_data(0x07);
+    send_data(0x28);
+    send_data(0x17);
 
     // 0x04: Power ON
     ESP_LOGI(kTag, "Power ON (0x04)...");
@@ -401,20 +418,33 @@ class EpaperDisplay final : public Display {
       return false;
     }
 
-    // 0x06: Booster Soft Start — init_fast uses different params
-    send_command(0x06);
-    send_data(0x27);
-    send_data(0x27);
-    send_data(0x18);
-    send_data(0x17);
+    // 0x00: Panel Setting — LUT from OTP, B/W mode
+    send_command(0x00);
+    send_data(0x1F);
 
-    // 0xE0/0xE5: Enable fast refresh waveform timing
-    send_command(0xE0);
-    send_data(0x02);
-    send_command(0xE5);
-    send_data(0x5A);
+    // 0x61: Resolution — 800x480
+    send_command(0x61);
+    send_data(0x03);
+    send_data(0x20);
+    send_data(0x01);
+    send_data(0xE0);
 
-    // init_fast does NOT send 0x61/0x15/0x60 — relies on OTP defaults
+    // 0x15: Dual SPI — disabled
+    send_command(0x15);
+    send_data(0x00);
+
+    // 0x50: VCOM and Data Interval
+    send_command(0x50);
+    send_data(0x10);
+    send_data(0x07);
+
+    // 0x60: TCON
+    send_command(0x60);
+    send_data(0x22);
+
+    // NO 0x82 (VCOM override) — use OTP
+    // NO 0x30 (PLL override) — use OTP
+    // NO 0xE0/0xE5 — standard waveform, not fast
 
     panel_awake_ = true;
     return true;
