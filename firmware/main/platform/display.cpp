@@ -32,7 +32,7 @@ constexpr int kSpiClockHz = 4 * 1000 * 1000;  // Match Python RPi driver (was 2M
 constexpr size_t kSpiChunkBytes = 2048;
 constexpr size_t kFillChunkBytes = 256;
 constexpr bool kPowerOffAfterRefresh = false;
-constexpr bool kUseInvertedFirstFrame = false;
+constexpr bool kUseInvertedFirstFrame = true;
 constexpr int kUiDilateRadius = 0;
 
 gpio_num_t to_gpio_num(const int pin) {
@@ -170,14 +170,9 @@ class EpaperDisplay final : public Display {
     // Decide: partial or full refresh
     if (!first_present_done_ || !previous_frame_valid_) {
       if (in_partial_mode_) { restore_full_mode(); }
-      // Exp #16: establish a known all-white panel state first, then use a
-      // real white previous frame for the first content refresh.
-      if (!previous_frame_valid_) {
-        if (!establish_known_white_baseline()) {
-          ESP_LOGE(kTag, "Failed to establish known white baseline");
-          return;
-        }
-      }
+      // Exp #15: Exact Python approach — single refresh, DTM1=~image, no clear.
+      // Python: display(getbuffer(image)) → DTM1=~image, DTM2=image, 0x12.
+      // No pre-conditioning, no clear. Every pixel transitions.
       display_bitmap(image);
     } else {
       // Compute dirty region bounding box
@@ -473,32 +468,22 @@ class EpaperDisplay final : public Display {
     if (!wake_panel_if_needed()) {
       return false;
     }
-    if (!establish_known_white_baseline()) {
-      return false;
-    }
-    if (kPowerOffAfterRefresh) {
-      return power_off_panel();
-    }
-    return true;
-  }
-
-  bool establish_known_white_baseline() {
-    ESP_LOGI(kTag, "Establish known white baseline (DTM1=0x00, DTM2=0xFF)...");
-    if (!wake_panel_if_needed()) {
-      return false;
-    }
+    // Python Clear: DTM1=0xFF, DTM2=0x00 (creates transition to drive pixels)
     send_command(0x10);
-    send_fill_buffer(0x00, kPanelBufferSize);
-    send_command(0x13);
     send_fill_buffer(0xFF, kPanelBufferSize);
+    send_command(0x13);
+    send_fill_buffer(0x00, kPanelBufferSize);
     send_command(0x12);
     vTaskDelay(pdMS_TO_TICKS(100));
-    const bool ok = wait_until_idle("white_baseline_0x12", kRefreshTimeoutMs);
+    const bool ok = wait_until_idle("clear_0x12", kRefreshTimeoutMs);
     if (!ok) {
       return false;
     }
-    previous_frame_.assign(kPanelBufferSize, 0xFF);
+    previous_frame_.assign(kPanelBufferSize, 0x00);
     previous_frame_valid_ = true;
+    if (kPowerOffAfterRefresh) {
+      return power_off_panel();
+    }
     return true;
   }
 
@@ -525,8 +510,8 @@ class EpaperDisplay final : public Display {
         send_data_buffer(inverted.data(), kPanelBufferSize);
         ESP_LOGI(kTag, "Frame mode: old=~image (first frame), new=image");
       } else {
-        send_fill_buffer(0xFF, kPanelBufferSize);
-        ESP_LOGI(kTag, "Frame mode: old=0xFF white baseline, new=image");
+        send_fill_buffer(0x00, kPanelBufferSize);
+        ESP_LOGI(kTag, "Frame mode: old=0x00 baseline, new=image");
       }
     }
     send_command(0x13);
