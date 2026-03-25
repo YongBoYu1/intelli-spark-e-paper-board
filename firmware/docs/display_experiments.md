@@ -364,6 +364,57 @@ DTM2 (0x13): 0x00 * all
 
 ---
 
+## Experiment #15 — Python standard init + exact `DTM1=~image` still washes out on final settle
+**Date:** 2026-03-25
+**Branch:** `codex/issue-51-esp32-runtime-v0`
+**Commit:** `99b2a8a`
+**App version:** `exp/15-python-exact-dirty`
+**Changes:** Switched away from `init_fast()` and ran the exact Python-style standard init:
+- `0x06 17 17 28 17`
+- `0x01 07 07 28 17`
+- `0x04`
+- `0x00 1F`
+- `0x61 03 20 01 E0`
+- `0x15 00`
+- `0x50 10 07`
+- `0x60 22`
+
+**First-frame strategy:**
+- No clear
+- No pre-conditioning
+- `DTM1 = ~image`
+- `DTM2 = image`
+
+**Serial evidence:**
+```text
+display: Init panel (Python standard init)...
+display: Rendered bitmap stats: black_bits=89868 ratio=0.2340
+display: Frame mode: old=~image (first frame), new=image
+display: Refresh (0x12)...
+display: [0x12] done after 3620 ms BUSY=1
+```
+
+**Observed photo/video sequence:**
+1. Initial panel state: mostly blank / light
+2. Mid-refresh moment: landing page appears correct, with solid black fills and clean white regions
+3. Late refresh: screen darkens globally
+4. Final settle: washed gray / banded result
+
+**Result:** Standard init does **not** fix the problem. The same “momentarily correct, finally wrong” pattern still occurs.
+
+**Conclusion:** The root problem is **not specific to `init_fast()`**. Even under standard Python init, the first-frame `DTM1=~image` strategy can still produce a correct-looking mid-cycle image and then settle into a washed-out final state. This strongly suggests a mismatch between:
+- what `DTM1` claims the previous panel state was, and
+- what the panel state actually was at refresh start.
+
+**Next hypothesis:** Establish a known all-white panel state first, then send the first content frame with:
+- `previous_frame_ = 0xFF`
+- `DTM1 = 0xFF`
+- `DTM2 = image`
+
+This tests whether final settle improves when the LUT receives a **real** white→black / white→white transition, instead of a fake `~image` transition.
+
+---
+
 ## Reproducibility Notes
 
 **Problem:** Experiments #1-13 were done on a single dirty working tree without per-experiment commits. The exact code state for each experiment is NOT git-recoverable.
@@ -389,10 +440,10 @@ DTM2 (0x13): 0x00 * all
 | init_fast waveform mid-cycle reaches deep black | ⭐ High | Exp #12 photo evidence |
 | init_fast settle phase washes to gray | ⭐ High | Exp #12, #13 |
 | Pre-conditioning is NOT the main issue | ⚠️ Medium | Exp #13 same result without it |
+| Standard init still shows “mid-cycle correct, final gray” | ⭐ High | Exp #15 |
 
 ## Next Experiments Queue
 
-1. **Exp #14: Switch back to standard init() (NOT init_fast)** — standard waveform has different settle timing, may not have the aggressive discharge
-2. **Exp #15: Try Python's exact init() sequence** — use ONLY the commands Python sends, nothing extra, nothing less
-3. **Exp #16: Reset timing 200ms→20ms** — match Python exactly
-4. **Exp #17: Revert to 1=black convention** — since Exp #0.5 (embedded Python asset) looked good with the old convention, maybe the polarity change (Exp #10) introduced issues
+1. **Exp #16: Known-white first frame** — clear to all-white, set `previous_frame_=0xFF`, then first content frame uses `DTM1=0xFF`, `DTM2=image`
+2. **Exp #17: Reset timing 200ms→20ms** — match Python exactly
+3. **Exp #18: Revert to 1=black convention** — since Exp #0.5 (embedded Python asset) looked good with the old convention, maybe the polarity change (Exp #10) introduced issues
