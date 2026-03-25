@@ -170,21 +170,9 @@ class EpaperDisplay final : public Display {
     // Decide: partial or full refresh
     if (!first_present_done_ || !previous_frame_valid_) {
       if (in_partial_mode_) { restore_full_mode(); }
-      // Exp #14: Clear-to-white baseline (same as #12 which got deep black mid-cycle)
-      // then display content with DTM1=previous(0xFF) matching actual panel state.
-      if (!first_present_done_) {
-        ESP_LOGI(kTag, "First frame: clearing to all-white baseline...");
-        send_command(0x10);
-        send_fill_buffer(0x00, kPanelBufferSize);  // old = all-black (0=black)
-        send_command(0x13);
-        send_fill_buffer(0xFF, kPanelBufferSize);  // new = all-white (1=white)
-        send_command(0x12);
-        vTaskDelay(pdMS_TO_TICKS(100));
-        (void)wait_until_idle("clear_white_0x12", kRefreshTimeoutMs);
-        previous_frame_.assign(kPanelBufferSize, 0xFF);
-        previous_frame_valid_ = true;
-        ESP_LOGI(kTag, "Baseline done. Now displaying content...");
-      }
+      // Exp #15: Exact Python approach — single refresh, DTM1=~image, no clear.
+      // Python: display(getbuffer(image)) → DTM1=~image, DTM2=image, 0x12.
+      // No pre-conditioning, no clear. Every pixel transitions.
       display_bitmap(image);
     } else {
       // Compute dirty region bounding box
