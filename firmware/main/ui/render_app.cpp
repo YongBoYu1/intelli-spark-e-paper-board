@@ -5,20 +5,36 @@
 #include "ui/screens/landing_screen.hpp"
 #include "ui/screens/onboarding_screen.hpp"
 
+#include "esp_log.h"
+
+#include <vector>
+
 namespace fridge_ink::ui {
 
+namespace {
+constexpr const char* kTag = "render";
+}  // namespace
+
 void render_app(const app::AppState& state, platform::Display& display) {
+  ESP_LOGI(kTag, "render_app: screen=%s lang=%s",
+           app::screen_name(state.screen),
+           app::language_code(state.device_language));
+
+  std::vector<uint8_t> image;
+
   switch (state.screen) {
     case app::Screen::Landing:
-      display.present(make_landing_screen_frame(state));
-      return;
+      image = render_landing_bitmap(state);
+      break;
     case app::Screen::Onboarding:
-      display.present(make_onboarding_screen_frame(state));
-      return;
+      image = render_onboarding_bitmap(state);
+      break;
     case app::Screen::Home:
-      display.present(make_home_screen_frame(state));
-      return;
+      image = render_home_bitmap(state);
+      break;
   }
+
+  display.display_image(image);
 }
 
 }  // namespace fridge_ink::ui

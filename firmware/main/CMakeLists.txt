@@ -5,6 +5,7 @@ idf_component_register(
         "app/state.cpp"
         "app/reducer.cpp"
         "app/defaults.cpp"
+        "ui/draw.cpp"
         "ui/render_app.cpp"
         "ui/screens/landing_screen.cpp"
         "ui/screens/onboarding_screen.cpp"

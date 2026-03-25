@@ -3,9 +3,7 @@
 #include "app/state.hpp"
 
 namespace fridge_ink::platform {
-
 class Display;
-
 }  // namespace fridge_ink::platform
 
 namespace fridge_ink::ui {

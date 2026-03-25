@@ -1,10 +1,12 @@
 #pragma once
 
 #include "app/state.hpp"
-#include "platform/display.hpp"
+
+#include <cstdint>
+#include <vector>
 
 namespace fridge_ink::ui {
 
-platform::ScreenFrame make_onboarding_screen_frame(const app::AppState& state);
+std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state);
 
 }  // namespace fridge_ink::ui
