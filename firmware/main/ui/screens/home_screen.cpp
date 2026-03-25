@@ -13,7 +13,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   using platform::kPanelHeight;
   using platform::kPanelBufferSize;
 
-  std::vector<uint8_t> image(kPanelBufferSize, 0x00);  // white
+  std::vector<uint8_t> image(kPanelBufferSize, 0xFF);  // white (1=white, 0=black)
   draw_outline_rect(image, 12, 12, kPanelWidth - 12, kPanelHeight - 12, 3);
   draw_text_line(image, 40, 30, "HOME KITCHEN", 3, 28);
 

@@ -20,13 +20,14 @@ using platform::panel_font_assets::Glyph;
 
 // ── Pixel operations ─────────────────────────────────────────────────────────
 
+// Python convention: 0=black, 1=white (matching OTP LUT expectations)
 void set_black_pixel(std::vector<uint8_t>& image, const int x, const int y) {
   if (x < 0 || x >= kPanelWidth || y < 0 || y >= kPanelHeight) {
     return;
   }
   const int offset = (y * kPanelWidthBytes) + (x / 8);
   const uint8_t bit = static_cast<uint8_t>(0x80U >> (x % 8));
-  image[offset] = static_cast<uint8_t>(image[offset] | bit);
+  image[offset] = static_cast<uint8_t>(image[offset] & static_cast<uint8_t>(~bit));
 }
 
 void clear_pixel(std::vector<uint8_t>& image, const int x, const int y) {
@@ -35,7 +36,7 @@ void clear_pixel(std::vector<uint8_t>& image, const int x, const int y) {
   }
   const int offset = (y * kPanelWidthBytes) + (x / 8);
   const uint8_t bit = static_cast<uint8_t>(0x80U >> (x % 8));
-  image[offset] = static_cast<uint8_t>(image[offset] & static_cast<uint8_t>(~bit));
+  image[offset] = static_cast<uint8_t>(image[offset] | bit);
 }
 
 void fill_black_rect(
@@ -212,9 +213,10 @@ void draw_glyph(
     return;
   }
 
-  const int baseline_y = y + font.ascent;
+  // glyph.top is from Pillow getbbox(): offset from ascender line (y origin)
+  // y is the ascender line position passed by caller
   const int glyph_x0 = x + glyph.left;
-  const int glyph_y0 = baseline_y + glyph.top;
+  const int glyph_y0 = y + glyph.top;
   const int row_bytes = (glyph.width + 7) / 8;
   const std::uint8_t* bitmap = font.bitmap + glyph.bitmap_offset;
   for (int row = 0; row < glyph.height; ++row) {

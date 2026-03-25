@@ -28,7 +28,7 @@ constexpr int kPowerStabilizeMs = 50;
 constexpr int kPostRefreshDelayMs = 100;
 constexpr int kResetHighMs = 200;
 constexpr int kResetLowUs = 2000;
-constexpr int kSpiClockHz = 2 * 1000 * 1000;
+constexpr int kSpiClockHz = 4 * 1000 * 1000;  // Match Python RPi driver (was 2MHz)
 constexpr size_t kSpiChunkBytes = 2048;
 constexpr size_t kFillChunkBytes = 256;
 constexpr bool kPowerOffAfterRefresh = false;
@@ -60,9 +60,11 @@ bool is_black_pixel(const std::vector<uint8_t>& image, const int x, const int y)
 }
 
 std::size_t count_black_bits(const std::vector<uint8_t>& image) {
+  // Convention: 0=black, 1=white. Count ZERO bits.
   std::size_t count = 0;
   for (const uint8_t value : image) {
-    count += static_cast<std::size_t>(__builtin_popcount(static_cast<unsigned int>(value)));
+    count += static_cast<std::size_t>(__builtin_popcount(static_cast<unsigned int>(
+        static_cast<uint8_t>(~value))));
   }
   return count;
 }
@@ -167,7 +169,10 @@ class EpaperDisplay final : public Display {
 
     // Decide: partial or full refresh
     if (!first_present_done_ || !previous_frame_valid_) {
-      // First frame must be full refresh to establish clean baseline
+      if (in_partial_mode_) { restore_full_mode(); }
+      // Exp #13: Single refresh only, no pre-conditioning.
+      // DTM1=~image (inverted first frame) for maximum transition on every pixel.
+      // No clear cycle — avoids double-refresh waveform interference.
       display_bitmap(image);
     } else {
       // Compute dirty region bounding box
@@ -211,6 +216,7 @@ class EpaperDisplay final : public Display {
             partial_since_full_ >= kMaxPartialBeforeFull) {
           ESP_LOGI(kTag, "Full refresh (ratio=%.3f, partials_since=%d)",
                    dirty_ratio, partial_since_full_);
+          if (in_partial_mode_) { restore_full_mode(); }
           display_bitmap(image);
           partial_since_full_ = 0;
         } else {
@@ -221,6 +227,31 @@ class EpaperDisplay final : public Display {
       }
     }
     first_present_done_ = true;
+  }
+
+  void set_vcom_and_refresh(uint8_t vcom_value) override {
+    if (!hardware_ready_) {
+      return;
+    }
+    ESP_LOGI(kTag, "=== VCOM SWEEP: setting 0x82 = 0x%02X ===", vcom_value);
+
+    // Restore full mode if in partial
+    if (in_partial_mode_) {
+      restore_full_mode();
+    }
+
+    // Set VCOM register
+    send_command(0x82);
+    send_data(vcom_value);
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    // Force full refresh with current frame (invalidate previous to get max-contrast DTM1=~image)
+    previous_frame_valid_ = false;
+    if (!previous_frame_.empty()) {
+      display_bitmap(previous_frame_);
+    } else {
+      ESP_LOGW(kTag, "No previous frame to refresh with VCOM change");
+    }
   }
 
  private:
@@ -350,23 +381,17 @@ class EpaperDisplay final : public Display {
   }
 
   bool init_panel_registers() {
-    ESP_LOGI(kTag, "Init panel (hardware SPI, full init sequence)...");
+    // Using Python init_fast() mode — different waveform timing for better settle
+    ESP_LOGI(kTag, "Init panel (init_fast mode)...");
 
-    // 0x06: Booster Soft Start — needed on hardware SPI for proper voltage drive
-    send_command(0x06);
-    send_data(0x17);
-    send_data(0x17);
-    send_data(0x28);
-    send_data(0x17);
-    vTaskDelay(pdMS_TO_TICKS(10));
+    // 0x00: Panel Setting — LUT from OTP, B/W mode
+    send_command(0x00);
+    send_data(0x1F);
 
-    // 0x01: Power Setting
-    send_command(0x01);
+    // 0x50: VCOM and Data Interval
+    send_command(0x50);
+    send_data(0x10);
     send_data(0x07);
-    send_data(0x07);
-    send_data(0x3F);  // VDH: 15V
-    send_data(0x3F);  // VDL: -15V
-    vTaskDelay(pdMS_TO_TICKS(10));
 
     // 0x04: Power ON
     ESP_LOGI(kTag, "Power ON (0x04)...");
@@ -376,44 +401,20 @@ class EpaperDisplay final : public Display {
       return false;
     }
 
-    // 0x00: Panel Setting — LUT from OTP, B/W mode
-    send_command(0x00);
-    send_data(0x1F);
-    vTaskDelay(pdMS_TO_TICKS(10));
+    // 0x06: Booster Soft Start — init_fast uses different params
+    send_command(0x06);
+    send_data(0x27);
+    send_data(0x27);
+    send_data(0x18);
+    send_data(0x17);
 
-    // 0x61: Resolution — 800x480
-    send_command(0x61);
-    send_data(0x03);
-    send_data(0x20);
-    send_data(0x01);
-    send_data(0xE0);
-    vTaskDelay(pdMS_TO_TICKS(10));
+    // 0xE0/0xE5: Enable fast refresh waveform timing
+    send_command(0xE0);
+    send_data(0x02);
+    send_command(0xE5);
+    send_data(0x5A);
 
-    // 0x15: Dual SPI — disabled
-    send_command(0x15);
-    send_data(0x00);
-    vTaskDelay(pdMS_TO_TICKS(10));
-
-    // 0x82: VCOM voltage — tuned for good black contrast on this panel
-    send_command(0x82);
-    send_data(0x12);
-    vTaskDelay(pdMS_TO_TICKS(10));
-
-    // 0x30: PLL — 50Hz frame rate
-    send_command(0x30);
-    send_data(0x06);
-    vTaskDelay(pdMS_TO_TICKS(10));
-
-    // 0x50: VCOM and Data Interval
-    send_command(0x50);
-    send_data(0x10);
-    send_data(0x07);
-    vTaskDelay(pdMS_TO_TICKS(10));
-
-    // 0x60: TCON
-    send_command(0x60);
-    send_data(0x22);
-    vTaskDelay(pdMS_TO_TICKS(10));
+    // init_fast does NOT send 0x61/0x15/0x60 — relies on OTP defaults
 
     panel_awake_ = true;
     return true;
@@ -449,8 +450,9 @@ class EpaperDisplay final : public Display {
     if (!wake_panel_if_needed()) {
       return false;
     }
+    // Python Clear: DTM1=0xFF, DTM2=0x00 (creates transition to drive pixels)
     send_command(0x10);
-    send_fill_buffer(0x00, kPanelBufferSize);
+    send_fill_buffer(0xFF, kPanelBufferSize);
     send_command(0x13);
     send_fill_buffer(0x00, kPanelBufferSize);
     send_command(0x12);
@@ -511,14 +513,55 @@ class EpaperDisplay final : public Display {
     }
   }
 
+  // Switch panel into partial refresh mode (Python: init_part)
+  // Must be called before display_bitmap_partial; restores full mode after.
+  bool enter_partial_mode() {
+    ESP_LOGI(kTag, "Entering partial refresh mode (reset + init_part)...");
+    reset_panel();
+
+    // 0x00: Panel Setting
+    send_command(0x00);
+    send_data(0x1F);
+
+    // 0x04: Power ON
+    send_command(0x04);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (!wait_until_idle("part_0x04", kPowerOnTimeoutMs)) {
+      return false;
+    }
+
+    // 0xE0/0xE5: Enable partial refresh timing (critical!)
+    send_command(0xE0);
+    send_data(0x02);
+    send_command(0xE5);
+    send_data(0x6E);
+
+    in_partial_mode_ = true;
+    return true;
+  }
+
+  // Restore panel to full refresh mode after partial updates
+  bool restore_full_mode() {
+    ESP_LOGI(kTag, "Restoring full refresh mode...");
+    reset_panel();
+    in_partial_mode_ = false;
+    return init_panel_registers();
+  }
+
   void display_bitmap_partial(
       const std::vector<uint8_t>& image,
       int x0, int y0, int x1, int y1) {
     if (image.size() != static_cast<size_t>(kPanelBufferSize)) {
       return;
     }
-    if (!wake_panel_if_needed()) {
-      return;
+
+    // Switch to partial mode if not already there
+    if (!in_partial_mode_) {
+      if (!enter_partial_mode()) {
+        ESP_LOGE(kTag, "Failed to enter partial mode, falling back to full");
+        display_bitmap(image);
+        return;
+      }
     }
 
     // Align x to 8-pixel boundary
@@ -538,15 +581,15 @@ class EpaperDisplay final : public Display {
 
     ESP_LOGI(kTag, "Partial window: (%d,%d)-(%d,%d) %dx%d", x0, y0, x1, y1, w, h);
 
-    // Waveshare partial mode uses different VCOM setting
+    // VCOM setting for partial mode
     send_command(0x50);
     send_data(0xA9);
     send_data(0x07);
 
-    // Enter partial mode
+    // Enter partial window mode
     send_command(0x91);
 
-    // Set partial window
+    // Set partial window coordinates
     send_command(0x90);
     send_data(static_cast<uint8_t>(x0 >> 8));
     send_data(static_cast<uint8_t>(x0 & 0xFF));
@@ -558,7 +601,7 @@ class EpaperDisplay final : public Display {
     send_data(static_cast<uint8_t>((y1 - 1) & 0xFF));
     send_data(0x01);
 
-    // Waveshare sends only DTM2 with INVERTED data for partial
+    // DTM2 with inverted data for partial refresh
     send_command(0x13);
     begin_data_stream();
     std::array<uint8_t, kFillChunkBytes> inv_chunk{};
@@ -575,11 +618,6 @@ class EpaperDisplay final : public Display {
     send_command(0x12);
     vTaskDelay(pdMS_TO_TICKS(kPostRefreshDelayMs));
     (void)wait_until_idle("partial_0x12", kRefreshTimeoutMs);
-
-    // Restore full-refresh VCOM setting
-    send_command(0x50);
-    send_data(0x10);
-    send_data(0x07);
 
     // Update stored previous frame
     previous_frame_ = image;
@@ -667,6 +705,7 @@ class EpaperDisplay final : public Display {
   bool spi_ready_{false};
   bool first_present_done_{false};
   bool previous_frame_valid_{false};
+  bool in_partial_mode_{false};
   int partial_since_full_{0};
   std::vector<uint8_t> previous_frame_{};
   spi_device_handle_t spi_handle_{nullptr};

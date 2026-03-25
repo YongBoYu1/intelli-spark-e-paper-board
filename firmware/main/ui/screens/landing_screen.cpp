@@ -18,7 +18,7 @@ std::vector<uint8_t> render_landing_bitmap(const app::AppState& state) {
   const std::string lang_label = app::language_label(state.device_language);
   const std::string lang_code = app::language_code(state.device_language);
 
-  std::vector<uint8_t> image(kPanelBufferSize, 0x00);  // white
+  std::vector<uint8_t> image(kPanelBufferSize, 0xFF);  // white (1=white, 0=black)
 
   constexpr int margin = 24;
   constexpr int content_x0 = margin + 16;
@@ -81,9 +81,7 @@ std::vector<uint8_t> render_landing_bitmap(const app::AppState& state) {
   // ── Language selector ──────────────────────────────────────────────────
   const int language_label_y = voice_hint_y + 20;
   draw_text_line(image, content_x0, language_label_y, "Language", button_scale, 18);
-  // +40 instead of +26: compensates for glyph rendering offset (ascent added
-  // to glyph_y0 in draw_glyph shifts all text ~18px lower than expected)
-  const int chips_y0 = language_label_y + 40;
+  const int chips_y0 = language_label_y + 26;
   const int chip_gap_x = 10;
   const int chip_w = (content_w - (2 * chip_gap_x)) / 3;
   const int chip_h = 40;
@@ -127,9 +125,8 @@ std::vector<uint8_t> render_landing_bitmap(const app::AppState& state) {
   int button_y1 = kPanelHeight - margin - 18;
   int button_y0 = button_y1 - button_h;
   // Guard: ensure button is below chips with enough room for status text.
-  // Account for glyph ascent offset: text renders ~16px below its code y.
-  if (button_y0 < after_chips_y + 60) {
-    button_y0 = after_chips_y + 60;
+  if (button_y0 < after_chips_y + 44) {
+    button_y0 = after_chips_y + 44;
     button_y1 = button_y0 + button_h;
   }
   const int status_y = std::max(after_chips_y + 8, button_y0 - 32);
