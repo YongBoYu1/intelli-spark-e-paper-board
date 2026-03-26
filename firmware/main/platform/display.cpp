@@ -170,9 +170,33 @@ class EpaperDisplay final : public Display {
     // Decide: partial or full refresh
     if (!first_present_done_ || !previous_frame_valid_) {
       if (in_partial_mode_) { restore_full_mode(); }
-      // Exp #15: Exact Python approach — single refresh, DTM1=~image, no clear.
-      // Python: display(getbuffer(image)) → DTM1=~image, DTM2=image, 0x12.
-      // No pre-conditioning, no clear. Every pixel transitions.
+      // Exp #16: Python full first-frame strategy:
+      // 1. Clear() → DTM1=0xFF, DTM2=0x00 → panel driven to BLACK (0x00 state)
+      // 2. display() → DTM1=previous(0x00)=matches panel, DTM2=image
+      // Key insight: LUT phase D starts from all-black (phase C result),
+      // and DTM1=0x00 matches that state → phase D settles correctly.
+      // Exp #18a: CLEAN LUT TEST — clear to WHITE + DTM1=0xFF (true match)
+      // Goal: isolate whether OTP LUT waveform itself works when DTM1=actual state.
+      // 1. Clear to WHITE: DTM1=0x00, DTM2=0xFF → panel driven to 0xFF (all white)
+      // 2. Display: DTM1=0xFF (matches panel), DTM2=image
+      //    - White pixels: (1,1) no-op → already white, stay white ✓
+      //    - Black pixels: (1,0) transition → full driving to black ✓
+      // If this fails → LUT waveform itself is broken, not just DTM1 mismatch.
+      ESP_LOGI(kTag, "Exp #18a: clear-to-WHITE + DTM1=0xFF (true state match)");
+      if (!wake_panel_if_needed()) { return; }
+      // Step 1: Clear to white
+      send_command(0x10);
+      send_fill_buffer(0x00, kPanelBufferSize);   // DTM1 = 0x00
+      send_command(0x13);
+      send_fill_buffer(0xFF, kPanelBufferSize);   // DTM2 = 0xFF (white target)
+      send_command(0x12);
+      vTaskDelay(pdMS_TO_TICKS(100));
+      (void)wait_until_idle("clear_white_0x12", kRefreshTimeoutMs);
+      ESP_LOGI(kTag, "Panel cleared to WHITE. Now displaying with DTM1=0xFF...");
+      // Step 2: Set previous_frame to match actual panel state (all white = 0xFF)
+      previous_frame_.assign(kPanelBufferSize, 0xFF);
+      previous_frame_valid_ = true;
+      // Step 3: display_bitmap will use DTM1=previous(0xFF) = matches panel
       display_bitmap(image);
     } else {
       // Compute dirty region bounding box

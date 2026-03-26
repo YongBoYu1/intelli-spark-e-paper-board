@@ -390,9 +390,88 @@ DTM2 (0x13): 0x00 * all
 | init_fast settle phase washes to gray | ⭐ High | Exp #12, #13 |
 | Pre-conditioning is NOT the main issue | ⚠️ Medium | Exp #13 same result without it |
 
-## Next Experiments Queue
+## Experiment #14 — Standard Python init + clear-to-white + DTM1=previous
+**Date:** 2026-03-25
+**Tag:** `exp/14-standard-init-dirty`
+**Changes:** Switched from init_fast() back to Python's exact standard init(). Kept 0=black convention + clear-to-white baseline + DTM1=previous(0xFF).
+**Log:** 2 refreshes: clear_white_0x12 (3620ms) + content 0x12 (3620ms). No extra renders.
+**Result:** Same "correct mid-cycle, washed final" pattern:
+- Photo 1 (white): Clear-to-white baseline
+- Photo 2 (correct): Deep black, product quality! Same as Exp #12.
+- Photo 3 (black): Waveform intermediate phase — all black
+- Photo 4 (gray): Final settle — washed gray with vertical banding
+**User observed 5 phases during single 0x12:** white → correct image → black → correct image → gray settle
+**Conclusion:** Standard waveform has SAME 4-phase behavior as init_fast. The settle phase washes in both modes. This is an OTP LUT characteristic, not specific to init_fast.
+**Key insight:** The OTP LUT waveform has 4 internal phases: (A)drive-white → (B)drive-target → (C)drive-black → (D)drive-target-settle. Phase B shows correct image, Phase D overcorrects to gray. DTM1 is only valid for Phase B; by Phase D the panel state has changed and DTM1 no longer matches → wrong settle.
 
-1. **Exp #14: Switch back to standard init() (NOT init_fast)** — standard waveform has different settle timing, may not have the aggressive discharge
-2. **Exp #15: Try Python's exact init() sequence** — use ONLY the commands Python sends, nothing extra, nothing less
-3. **Exp #16: Reset timing 200ms→20ms** — match Python exactly
-4. **Exp #17: Revert to 1=black convention** — since Exp #0.5 (embedded Python asset) looked good with the old convention, maybe the polarity change (Exp #10) introduced issues
+---
+
+## Experiment #15 — Standard init + single refresh DTM1=~image (exact Python display())
+**Date:** 2026-03-25
+**Tag:** `exp/15-python-exact`
+**Changes:** Removed clear-to-white baseline entirely. Single refresh: DTM1=~image, DTM2=image. Exact replication of Python's `display(getbuffer(image))` call.
+**Log:** 1 refresh: "Frame mode: old=~image (first frame), new=image" → 3620ms
+**Result:** Same 4-phase pattern within single refresh:
+- Phase A: white screen
+- Phase B: correct deep black (mirrored? — may be photo angle)
+- Phase C: full black
+- Phase D: washed gray with vertical banding
+**Conclusion:** Even without pre-conditioning, the OTP LUT 4-phase waveform still washes the settle. Removing clear didn't help. This confirms the problem is in the LUT waveform itself, not in our clear/DTM1 strategy.
+
+---
+
+## Experiment #16 — Clear to BLACK + DTM1=0x00 (true match)
+**Date:** 2026-03-25
+**Changes:** clear_panel_once() drives to BLACK (DTM1=0xFF, DTM2=0x00). Then display with DTM1=previous_frame_=0x00 (matches actual black panel state).
+**Theory:** After clear-to-black, DTM1=0x00 truly matches panel. LUT Phase D starts from all-black (Phase C) → DTM1=0x00 matches → correct settle.
+**Result:** SAME pattern. Flash of correct, then gray settle.
+**User's analysis:** The real issue is that (DTM1=0, DTM2=0) "black stays black" gets ZERO driving — the LUT applies no waveform for no-change pixels. Black areas stay at whatever gray state the clear left them in.
+**Conclusion:** DTM1 matching isn't enough when (0,0) entries get zero driving.
+
+---
+
+## Experiment #17 — Clear to BLACK + force DTM1=~image
+**Date:** 2026-03-25
+**Changes:** After clear-to-black, set `previous_frame_valid_=false` to force display_bitmap to use DTM1=~image path. Combines clean baseline with full-transition driving.
+**Result:** Same pattern — correct mid-cycle, gray final settle.
+**Conclusion:** Clear + ~image combination doesn't fix it either. The LUT 4-phase waveform settle is the fundamental problem.
+
+---
+
+## Experiment #18a — CLEAN LUT TEST: Clear to WHITE + DTM1=0xFF (true state match)
+**Date:** 2026-03-25
+**Goal:** Isolate whether OTP LUT waveform ITSELF is broken when DTM1 perfectly matches actual panel state.
+**Setup:**
+1. Clear to white: DTM1=0x00, DTM2=0xFF → panel = all white (0xFF)
+2. Display: DTM1=0xFF (matches panel exactly), DTM2=image
+3. White pixels: (1,1) no-op → already white. Black pixels: (1,0) → full transition.
+**Log:** 2 refreshes: clear_white_0x12 (3620ms) + content 0x12 (3620ms)
+**Result:** SAME — correct mid-cycle, gray final settle. No improvement.
+**Conclusion:** ⭐ **LUT waveform itself is the problem.** Even with DTM1 perfectly matching actual panel state, the 4-phase OTP waveform's settle phase washes the image to gray. This is NOT a DTM1/old-frame mismatch issue.
+
+---
+
+## ⭐ DEFINITIVE CONCLUSION (as of Exp #18a)
+
+**Root cause: OTP LUT waveform settle phase overcorrects.**
+
+Evidence chain:
+1. Hardware works — Exp #0 full-black test produces deep black
+2. Framebuffer data is correct — Exp #12/#14 show correct deep black mid-waveform
+3. SPI transmission is correct — data reaches panel intact
+4. DTM1 matching doesn't help — Exp #16/#18a with perfect DTM1 match still wash out
+5. No extra refreshes — log confirms only intended 0x12 commands
+6. The 4-phase waveform (white→target→black→settle) shows correct image in Phase B but overcorrects in Phase D
+
+**The problem is inside the OTP LUT — the voltage/timing sequence burned into the panel.**
+
+**Why Python on RPi works:** Unknown. Same OTP, same panel. Possible differences:
+- RPi HAT power circuitry provides different voltage/current characteristics
+- RPi SPI driver timing/buffering differs subtly
+- RPi GPIO drive strength or edge timing affects waveform execution
+- Temperature or environmental difference during testing
+
+**Next directions:**
+1. **External LUT mode** (0x00=0x3F instead of 0x1F) — bypass OTP, provide custom waveform tables
+2. **Try on RPi with same panel** — verify Python still works, then compare SPI signals with logic analyzer
+3. **Accept current contrast for V0** — focus on renderer parity and UX, revisit contrast later with hardware tools
