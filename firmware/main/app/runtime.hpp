@@ -9,6 +9,12 @@ class Display;
 
 }  // namespace fridge_ink::platform
 
+namespace fridge_ink::ui {
+
+struct HomeDirtySnapshot;
+
+}  // namespace fridge_ink::ui
+
 namespace fridge_ink::app {
 
 class Runtime {
@@ -21,7 +27,7 @@ class Runtime {
   const AppState& state() const { return state_; }
 
  private:
-  void render();
+  void render(const ui::HomeDirtySnapshot* previous_home_snapshot = nullptr);
 
   platform::Display& display_;
   AppState state_{};

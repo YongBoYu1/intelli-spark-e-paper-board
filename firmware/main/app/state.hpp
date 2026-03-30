@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace fridge_ink::app {
 
@@ -10,6 +11,12 @@ enum class Screen {
   Landing,
   Onboarding,
   Home,
+  Menu,
+  Timer,
+  Calendar,
+  Weather,
+  Inventory,
+  Settings,
 };
 
 enum class Language {
@@ -22,6 +29,17 @@ struct DashboardSummary {
   std::string location{"Kitchen"};
   int battery_percent{84};
   int reminder_count{3};
+  std::string weather_condition{"Cloudy"};
+  int weather_temperature_c{4};
+  int weather_humidity_percent{62};
+  std::vector<std::string> inventory_items{};
+  std::vector<std::string> inventory_badges{};
+  std::vector<bool> inventory_completed{};
+  std::vector<std::string> reminder_items{};
+  std::vector<bool> reminder_completed{};
+  std::string family_memo_text{};
+  std::string family_memo_author{};
+  std::string family_memo_posted{};
 };
 
 struct LandingState {
@@ -32,6 +50,39 @@ struct LandingState {
 
 struct HomeState {
   int focused_index{0};
+  std::uint64_t clock_minute_bucket{0};
+  std::uint64_t clock_seed_monotonic_ms{0};
+  bool clock_is_real{false};
+  bool show_focus{false};
+};
+
+struct MenuState {
+  std::size_t focused_index{0};
+};
+
+struct TimerState {
+  bool running{false};
+  int minutes_remaining{12};
+};
+
+struct CalendarState {
+  int day_of_month{26};
+  std::string month_label{"March 2026"};
+};
+
+struct WeatherState {
+  int temperature_c{4};
+  std::string condition{"Cloudy"};
+};
+
+struct InventoryState {
+  int total_items{5};
+  int reminder_count{3};
+};
+
+struct SettingsState {
+  bool partial_refresh_enabled{true};
+  bool auto_sync_enabled{true};
 };
 
 struct OnboardingState {
@@ -56,6 +107,12 @@ struct AppState {
   LandingState landing{};
   OnboardingState onboarding{};
   HomeState home{};
+  MenuState menu{};
+  TimerState timer{};
+  CalendarState calendar{};
+  WeatherState weather{};
+  InventoryState inventory{};
+  SettingsState settings{};
   DashboardSummary dashboard{};
 };
 

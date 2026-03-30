@@ -26,6 +26,7 @@ constexpr int kPowerOffTimeoutMs = 10000;
 constexpr int kRefreshTimeoutMs = 25000;
 constexpr int kPowerStabilizeMs = 50;
 constexpr int kPostRefreshDelayMs = 100;
+constexpr int kMinRefreshGapMs = 120;
 constexpr int kResetHighMs = 200;
 constexpr int kResetLowUs = 2000;
 constexpr int kSpiClockHz = 4 * 1000 * 1000;  // Match Python RPi driver (was 2MHz)
@@ -37,6 +38,130 @@ constexpr int kUiDilateRadius = 0;
 
 gpio_num_t to_gpio_num(const int pin) {
   return static_cast<gpio_num_t>(pin);
+}
+
+DirtyRect clip_dirty_rect(const DirtyRect& rect) {
+  DirtyRect clipped = rect;
+  clipped.x0 = std::max(0, std::min(kPanelWidth, clipped.x0));
+  clipped.y0 = std::max(0, std::min(kPanelHeight, clipped.y0));
+  clipped.x1 = std::max(0, std::min(kPanelWidth, clipped.x1));
+  clipped.y1 = std::max(0, std::min(kPanelHeight, clipped.y1));
+  return clipped;
+}
+
+bool is_valid_dirty_rect(const DirtyRect& rect) {
+  return rect.x1 > rect.x0 && rect.y1 > rect.y0;
+}
+
+void wait_for_refresh_gap(int64_t& last_refresh_end_ms) {
+  if (last_refresh_end_ms <= 0) {
+    return;
+  }
+  const int64_t now_ms = esp_timer_get_time() / 1000;
+  const int64_t elapsed = now_ms - last_refresh_end_ms;
+  if (elapsed >= kMinRefreshGapMs) {
+    return;
+  }
+  vTaskDelay(pdMS_TO_TICKS(static_cast<int>(kMinRefreshGapMs - elapsed)));
+}
+
+bool rect_contains(
+    const DirtyRect& outer,
+    const DirtyRect& inner,
+    const int slack = 0) {
+  return inner.x0 >= (outer.x0 - slack) &&
+         inner.y0 >= (outer.y0 - slack) &&
+         inner.x1 <= (outer.x1 + slack) &&
+         inner.y1 <= (outer.y1 + slack);
+}
+
+DirtyRect merge_dirty_rects(const DirtyRect& a, const DirtyRect& b) {
+  return {
+      std::min(a.x0, b.x0),
+      std::min(a.y0, b.y0),
+      std::max(a.x1, b.x1),
+      std::max(a.y1, b.y1),
+  };
+}
+
+DirtyRect align_rect_for_partial(
+    const DirtyRect& rect,
+    const int width,
+    const int height,
+    const int pad = 2) {
+  DirtyRect expanded{
+      rect.x0 - pad,
+      rect.y0 - pad,
+      rect.x1 + pad,
+      rect.y1 + pad,
+  };
+  expanded = clip_dirty_rect(expanded);
+  expanded.x0 = (expanded.x0 / 8) * 8;
+  expanded.x1 = ((expanded.x1 + 7) / 8) * 8;
+  expanded.x0 = std::max(0, std::min(width, expanded.x0));
+  expanded.y0 = std::max(0, std::min(height, expanded.y0));
+  expanded.x1 = std::max(0, std::min(width, expanded.x1));
+  expanded.y1 = std::max(0, std::min(height, expanded.y1));
+  return expanded;
+}
+
+std::vector<DirtyRect> prepare_partial_rects(
+    const std::vector<DirtyRect>& rects,
+    const int width,
+    const int height,
+    const int pad = 2,
+    const int max_rects = 6,
+    const bool merge_overflow = true) {
+  std::vector<DirtyRect> aligned;
+  aligned.reserve(rects.size());
+
+  for (const DirtyRect& rect : rects) {
+    const DirtyRect clipped = align_rect_for_partial(rect, width, height, pad);
+    if (!is_valid_dirty_rect(clipped)) {
+      continue;
+    }
+    if (std::any_of(aligned.begin(), aligned.end(), [&](const DirtyRect& existing) {
+          return rect_contains(existing, clipped, 0);
+        })) {
+      continue;
+    }
+    aligned.erase(
+        std::remove_if(
+            aligned.begin(),
+            aligned.end(),
+            [&](const DirtyRect& existing) {
+              return rect_contains(clipped, existing, 0);
+            }),
+        aligned.end());
+    aligned.push_back(clipped);
+  }
+
+  if (aligned.empty()) {
+    return {};
+  }
+
+  std::sort(aligned.begin(), aligned.end(), [](const DirtyRect& a, const DirtyRect& b) {
+    const int area_a = (a.x1 - a.x0) * (a.y1 - a.y0);
+    const int area_b = (b.x1 - b.x0) * (b.y1 - b.y0);
+    if (a.y0 != b.y0) return a.y0 < b.y0;
+    if (a.x0 != b.x0) return a.x0 < b.x0;
+    return area_a < area_b;
+  });
+
+  const int max_n = std::max(1, max_rects);
+  if (static_cast<int>(aligned.size()) <= max_n) {
+    return aligned;
+  }
+  if (!merge_overflow) {
+    aligned.resize(static_cast<std::size_t>(max_n));
+    return aligned;
+  }
+
+  DirtyRect merged = aligned.front();
+  for (std::size_t i = 1; i < aligned.size(); ++i) {
+    merged = merge_dirty_rects(merged, aligned[i]);
+  }
+  return {merged};
 }
 
 // ── Image utility helpers (internal) ─────────────────────────────────────────
@@ -147,7 +272,9 @@ class EpaperDisplay final : public Display {
     (void)clear_panel_once();
   }
 
-  void display_image(const std::vector<uint8_t>& image_in) override {
+  void display_image(
+      const std::vector<uint8_t>& image_in,
+      const std::vector<DirtyRect>& dirty_hints) override {
     if (!hardware_ready_) {
       return;
     }
@@ -218,6 +345,96 @@ class EpaperDisplay final : public Display {
 
       if (dirty_y0 > dirty_y1) {
         ESP_LOGI(kTag, "No pixel change, skipping refresh");
+      } else if (!dirty_hints.empty()) {
+        std::vector<DirtyRect> clipped_hints;
+        clipped_hints.reserve(dirty_hints.size());
+        for (const DirtyRect& rect : dirty_hints) {
+          const DirtyRect clipped = clip_dirty_rect(rect);
+          if (!is_valid_dirty_rect(clipped)) {
+            continue;
+          }
+          clipped_hints.push_back(clipped);
+        }
+
+        const DirtyRect diff_rect{
+            dirty_x0_byte * 8,
+            dirty_y0,
+            (dirty_x1_byte + 1) * 8,
+            dirty_y1 + 1,
+        };
+        if (is_valid_dirty_rect(diff_rect)) {
+          clipped_hints.push_back(diff_rect);
+        }
+
+        if (clipped_hints.empty()) {
+          ESP_LOGI(kTag, "Dirty hints empty after clipping; skipping refresh");
+        } else {
+          const std::vector<DirtyRect> prepared_rects =
+              prepare_partial_rects(clipped_hints, kPanelWidth, kPanelHeight, 2, 6, true);
+          if (prepared_rects.empty()) {
+            ESP_LOGI(kTag, "Dirty hints empty after preparation; skipping refresh");
+            previous_frame_ = image;
+            previous_frame_valid_ = true;
+            return;
+          }
+
+          std::vector<DirtyRect> apply_rects = prepared_rects;
+          if (prepared_rects.size() > 1) {
+            DirtyRect merged = prepared_rects.front();
+            for (std::size_t i = 1; i < prepared_rects.size(); ++i) {
+              merged = merge_dirty_rects(merged, prepared_rects[i]);
+            }
+            apply_rects = {align_rect_for_partial(merged, kPanelWidth, kPanelHeight, 2)};
+          }
+
+          int hinted_pixels = 0;
+          int largest_pixels = 0;
+          for (const DirtyRect& rect : apply_rects) {
+            const int rect_pixels = (rect.x1 - rect.x0) * (rect.y1 - rect.y0);
+            hinted_pixels += rect_pixels;
+            largest_pixels = std::max(largest_pixels, rect_pixels);
+          }
+          const int total_pixels = kPanelWidth * kPanelHeight;
+          const float dirty_ratio =
+              static_cast<float>(hinted_pixels) / static_cast<float>(total_pixels);
+          const float largest_ratio =
+              static_cast<float>(largest_pixels) / static_cast<float>(total_pixels);
+
+          ESP_LOGI(
+              kTag,
+              "Dirty hints: raw=%u prepared=%u ratio=%.3f max_ratio=%.3f",
+              static_cast<unsigned>(clipped_hints.size()),
+              static_cast<unsigned>(apply_rects.size()),
+              dirty_ratio,
+              largest_ratio);
+
+          constexpr float kHintedFullAreaLimit = 0.75f;
+          constexpr std::size_t kMaxHintedRects = 6;
+          partial_since_full_++;
+          if (largest_ratio > kHintedFullAreaLimit ||
+              apply_rects.size() > kMaxHintedRects ||
+              partial_since_full_ >= 30) {
+            ESP_LOGI(kTag, "Full refresh from hinted update (ratio=%.3f, rects=%u)",
+                     dirty_ratio,
+                     static_cast<unsigned>(apply_rects.size()));
+            if (in_partial_mode_) {
+              restore_full_mode();
+            }
+            display_bitmap(image);
+            partial_since_full_ = 0;
+          } else {
+            for (const DirtyRect& rect : apply_rects) {
+              ESP_LOGI(
+                  kTag,
+                  "Partial refresh from hinted rect (%d,%d)-(%d,%d)",
+                  rect.x0,
+                  rect.y0,
+                  rect.x1,
+                  rect.y1);
+              display_bitmap_partial(image, rect.x0, rect.y0, rect.x1, rect.y1);
+            }
+          }
+        }
       } else {
         const int dirty_x0 = dirty_x0_byte * 8;
         const int dirty_x1 = (dirty_x1_byte + 1) * 8;
@@ -233,7 +450,7 @@ class EpaperDisplay final : public Display {
 
         // Force full refresh periodically to prevent ghosting buildup
         partial_since_full_++;
-        constexpr int kMaxPartialBeforeFull = 10;
+        constexpr int kMaxPartialBeforeFull = 30;
         constexpr float kPartialAreaLimit = 0.40f;
 
         if (dirty_ratio > kPartialAreaLimit ||
@@ -523,6 +740,7 @@ class EpaperDisplay final : public Display {
     if (!wake_panel_if_needed()) {
       return;
     }
+    wait_for_refresh_gap(last_refresh_end_ms_);
     send_command(0x10);
     if (previous_frame_valid_ &&
         previous_frame_.size() == static_cast<size_t>(kPanelBufferSize)) {
@@ -550,6 +768,7 @@ class EpaperDisplay final : public Display {
 
     previous_frame_ = image;
     previous_frame_valid_ = true;
+    last_refresh_end_ms_ = esp_timer_get_time() / 1000;
     if (kPowerOffAfterRefresh) {
       (void)power_off_panel();
     }
@@ -605,6 +824,7 @@ class EpaperDisplay final : public Display {
         return;
       }
     }
+    wait_for_refresh_gap(last_refresh_end_ms_);
 
     // Align x to 8-pixel boundary
     x0 = (x0 / 8) * 8;
@@ -664,6 +884,7 @@ class EpaperDisplay final : public Display {
     // Update stored previous frame
     previous_frame_ = image;
     previous_frame_valid_ = true;
+    last_refresh_end_ms_ = esp_timer_get_time() / 1000;
   }
 
   // ── SPI transport ────────────────────────────────────────────────────────
@@ -749,6 +970,7 @@ class EpaperDisplay final : public Display {
   bool previous_frame_valid_{false};
   bool in_partial_mode_{false};
   int partial_since_full_{0};
+  int64_t last_refresh_end_ms_{0};
   std::vector<uint8_t> previous_frame_{};
   spi_device_handle_t spi_handle_{nullptr};
 };

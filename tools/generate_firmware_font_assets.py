@@ -25,6 +25,7 @@ class FontSpec:
 
 
 FONT_SPECS = (
+    FontSpec("kFontInterBlack36", "inter_black_36", "Inter-Black.ttf", 36),
     FontSpec("kFontInterBlack29", "inter_black_29", "Inter-Black.ttf", 29),
     FontSpec("kFontInterMedium18", "inter_medium_18", "Inter-Medium.ttf", 18),
     FontSpec("kFontInterBold18", "inter_bold_18", "Inter-Bold.ttf", 18),

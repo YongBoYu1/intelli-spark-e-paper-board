@@ -6,6 +6,13 @@
 
 namespace fridge_ink::platform {
 
+struct DirtyRect {
+  int x0{0};
+  int y0{0};
+  int x1{0};
+  int y1{0};
+};
+
 class Display {
  public:
   virtual ~Display() = default;
@@ -16,7 +23,9 @@ class Display {
   /// Push a rendered framebuffer to the e-paper panel.
   /// The image must be kPanelBufferSize bytes (800×480 / 8 = 48000).
   /// Internally handles dirty-region detection and partial vs full refresh.
-  virtual void display_image(const std::vector<uint8_t>& image) = 0;
+  virtual void display_image(
+      const std::vector<uint8_t>& image,
+      const std::vector<DirtyRect>& dirty_hints = {}) = 0;
 
   /// Diagnostic: set VCOM voltage register (0x82) and force full refresh.
   /// Used for VCOM sweep experiments. Value is the raw register byte.

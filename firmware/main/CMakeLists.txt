@@ -10,6 +10,8 @@ idf_component_register(
         "ui/screens/landing_screen.cpp"
         "ui/screens/onboarding_screen.cpp"
         "ui/screens/home_screen.cpp"
+        "ui/screens/menu_screen.cpp"
+        "ui/screens/placeholder_screen.cpp"
         "platform/board_config.cpp"
         "platform/display.cpp"
         "platform/clock.cpp"

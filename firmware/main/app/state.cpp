@@ -10,6 +10,18 @@ const char* screen_name(Screen screen) {
       return "onboarding";
     case Screen::Home:
       return "home";
+    case Screen::Menu:
+      return "menu";
+    case Screen::Timer:
+      return "timer";
+    case Screen::Calendar:
+      return "calendar";
+    case Screen::Weather:
+      return "weather";
+    case Screen::Inventory:
+      return "inventory";
+    case Screen::Settings:
+      return "settings";
   }
   return "landing";
 }
