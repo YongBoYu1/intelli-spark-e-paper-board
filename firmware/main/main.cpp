@@ -128,6 +128,7 @@ extern "C" void app_main(void) {
     }
 
     const std::uint64_t now_ms = fridge_ink::platform::monotonic_ms();
+    runtime.flush_deferred(now_ms);
     if ((now_ms - last_tick_ms) >= kRuntimeTickMs) {
       runtime.dispatch(fridge_ink::app::Event::Tick(now_ms));
       last_tick_ms = now_ms;

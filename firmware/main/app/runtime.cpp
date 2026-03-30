@@ -9,13 +9,17 @@
 
 namespace fridge_ink::app {
 
+namespace {
+constexpr std::uint64_t kHomeFocusMinRenderGapMs = 120;
+}
+
 Runtime::Runtime(platform::Display& display) : display_(display) {}
 
 void Runtime::boot() {
   const auto defaults = make_factory_defaults();
   state_ = make_state_from_defaults(defaults, platform::monotonic_ms());
   display_.init();
-  render();
+  render_now();
 }
 
 void Runtime::dispatch(const Event& event) {
@@ -54,9 +58,47 @@ void Runtime::dispatch(const Event& event) {
       state_.landing.status != old_status ||
       state_.onboarding.status != old_ob_status;
 
-  if (changed) {
-    render(&previous_home_snapshot);
+  if (!changed) {
+    return;
   }
+
+  if (should_defer_render(event, old_screen)) {
+    queue_render(previous_home_snapshot);
+    return;
+  }
+
+  const ui::HomeDirtySnapshot* effective_previous =
+      pending_render_ ? &pending_previous_home_snapshot_ : &previous_home_snapshot;
+  render_now(effective_previous);
+}
+
+void Runtime::flush_deferred(const std::uint64_t now_ms) {
+  if (!pending_render_) {
+    return;
+  }
+  if ((now_ms - last_render_ms_) < kHomeFocusMinRenderGapMs) {
+    return;
+  }
+  render_now(&pending_previous_home_snapshot_);
+}
+
+bool Runtime::should_defer_render(const Event& event, const Screen old_screen) const {
+  return event.type == EventType::Rotate &&
+         old_screen == Screen::Home &&
+         state_.screen == Screen::Home;
+}
+
+void Runtime::queue_render(const ui::HomeDirtySnapshot& previous_home_snapshot) {
+  if (!pending_render_) {
+    pending_previous_home_snapshot_ = previous_home_snapshot;
+    pending_render_ = true;
+  }
+}
+
+void Runtime::render_now(const ui::HomeDirtySnapshot* previous_home_snapshot) {
+  pending_render_ = false;
+  render(previous_home_snapshot);
+  last_render_ms_ = platform::monotonic_ms();
 }
 
 void Runtime::render(const ui::HomeDirtySnapshot* previous_home_snapshot) {

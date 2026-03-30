@@ -363,7 +363,17 @@ class EpaperDisplay final : public Display {
             dirty_y1 + 1,
         };
         if (is_valid_dirty_rect(diff_rect)) {
-          clipped_hints.push_back(diff_rect);
+          if (clipped_hints.empty()) {
+            clipped_hints.push_back(diff_rect);
+          } else {
+            DirtyRect merged_hints = clipped_hints.front();
+            for (std::size_t i = 1; i < clipped_hints.size(); ++i) {
+              merged_hints = merge_dirty_rects(merged_hints, clipped_hints[i]);
+            }
+            if (!rect_contains(merged_hints, diff_rect, 4)) {
+              clipped_hints.push_back(diff_rect);
+            }
+          }
         }
 
         if (clipped_hints.empty()) {

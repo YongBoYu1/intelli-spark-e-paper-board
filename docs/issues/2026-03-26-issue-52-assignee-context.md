@@ -103,6 +103,23 @@ Primary behavior references:
 - `app/ui/list_unified.py`
 - `app/ui/settings.py`
 
+This source-of-truth rule applies to more than static UI structure.
+
+For `#52`, Python owns:
+
+- screen layout and visual hierarchy
+- focus order and focus visibility rules
+- rotate / click / tick interaction semantics
+- Home dirty-rect intent and refresh-policy reasoning
+- UX behavior expectations during interactive navigation
+
+ESP32/C++ is allowed to adapt only the final driver-side execution details that Python does not express directly
+(for example: SPI writes, panel window commands, byte alignment, or panel busy waits).
+It is not allowed to invent a second product behavior model.
+
+If C++ behavior diverges from Python and the divergence is not strictly required by the panel driver,
+that divergence should be treated as a bug, not as a design choice.
+
 Important product docs to read before large changes:
 
 - `docs/SETTINGS_V1.md`
@@ -147,6 +164,16 @@ Only after behavior is in place:
 - port per-screen visual structure
 - reduce the gap between Python renderer and C++ renderer
 - use Python `app/ui/onboarding.py::landing_layout_metrics()` as the landing-page layout baseline instead of preserving the current hand-written approximation in `landing_screen.cpp`
+- treat Python refresh/interaction behavior as part of parity, not just the static pixels
+
+## Current checkpoint
+
+As of the current checkpoint:
+
+- Home visual structure is mostly migrated into C++
+- Home interaction and partial-refresh UX are not close to done
+- the main remaining blocker is the firmware display execution path in `firmware/main/platform/display.cpp`
+- current work should be described as `Home visual migration mostly present; Home interactive refresh path still unstable`
 
 ## Suggested First Slice For Assignment
 
