@@ -59,21 +59,21 @@ ProductDefaults make_factory_defaults() {
   defaults.setup_completed = true;
   defaults.device_language = Language::EnUs;
   defaults.voice_locale = Language::EnUs;
-  defaults.dashboard.location = "";
+  defaults.dashboard.location = "Toronto";
   defaults.dashboard.battery_percent = 84;
-  defaults.dashboard.reminder_count = 3;
-  defaults.dashboard.weather_condition = "Cloudy";
-  defaults.dashboard.weather_temperature_c = 4;
-  defaults.dashboard.weather_humidity_percent = 62;
+  defaults.dashboard.reminder_count = 7;
+  defaults.dashboard.weather_condition = "Rainy";
+  defaults.dashboard.weather_temperature_c = 17;
+  defaults.dashboard.weather_humidity_percent = 100;
   defaults.dashboard.inventory_items = {
-      "Milk",
-      "Eggs",
-      "Spinach",
+      "Fresh Milk",
+      "Leftover Pizza",
+      "Marinated Chicken",
   };
   defaults.dashboard.inventory_badges = {
-      "STOCKED",
-      "LOW",
-      "LOW",
+      "EXP 3D",
+      "ADD YDAY",
+      "USE TNITE",
   };
   defaults.dashboard.inventory_completed = {
       false,
@@ -81,19 +81,26 @@ ProductDefaults make_factory_defaults() {
       false,
   };
   defaults.dashboard.reminder_items = {
-      "Buy fruit",
-      "Call landlord",
-      "Rotate leftovers",
+      "Doctor Appointment",
+      "Yoghurt Expires",
+      "Morning Yoga",
+      "Buy Milk",
+      "Trash Day",
+      "Pay Rent",
+      "Call Mom",
   };
   defaults.dashboard.reminder_completed = {
       false,
       false,
       false,
+      false,
+      false,
+      false,
+      false,
   };
-  defaults.dashboard.family_memo_text =
-      "Use spinach before Friday. Yogurt is on the back shelf.";
-  defaults.dashboard.family_memo_author = "MOM";
-  defaults.dashboard.family_memo_posted = "- Fri 08:10";
+  defaults.dashboard.family_memo_text.clear();
+  defaults.dashboard.family_memo_author.clear();
+  defaults.dashboard.family_memo_posted.clear();
   return defaults;
 }
 

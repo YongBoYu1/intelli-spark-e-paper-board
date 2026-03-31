@@ -10,7 +10,7 @@ namespace {
 
 constexpr int kMenuItemCount = 6;
 constexpr int kHomeInventoryVisibleMax = 3;
-constexpr int kHomeReminderVisibleMax = 5;
+constexpr int kHomeReminderVisibleMax = 4;
 constexpr std::size_t kOnboardingStepCount = 4;
 constexpr std::time_t kValidWallClockThreshold = 1700000000;
 constexpr std::array<const char*, 4> kTimezoneChoices = {
@@ -26,6 +26,7 @@ constexpr std::array<const char*, kOnboardingStepCount> kOnboardingStepTitles = 
     "Voice Guide"};
 
 enum class HomeFocusTargetKind {
+  None,
   Clock,
   Weather,
   InventoryItem,
@@ -33,7 +34,7 @@ enum class HomeFocusTargetKind {
 };
 
 struct HomeFocusTarget {
-  HomeFocusTargetKind kind{HomeFocusTargetKind::Clock};
+  HomeFocusTargetKind kind{HomeFocusTargetKind::None};
   int item_index{-1};
 };
 
@@ -70,8 +71,8 @@ void clamp_home_focus(AppState& state) {
 
 HomeFocusTarget home_focus_target(const AppState& state) {
   const int focused_index = std::max(0, state.home.focused_index);
-  if (focused_index <= 0) {
-    return {};
+  if (focused_index == 0) {
+    return {HomeFocusTargetKind::Clock, -1};
   }
   if (focused_index == 1) {
     return {HomeFocusTargetKind::Weather, -1};
@@ -88,7 +89,16 @@ HomeFocusTarget home_focus_target(const AppState& state) {
     return {HomeFocusTargetKind::ReminderItem, pos};
   }
 
-  return {};
+  return {HomeFocusTargetKind::None, -1};
+}
+
+void ensure_completion_flags(
+    std::vector<bool>& completed,
+    const std::size_t item_count) {
+  if (completed.size() >= item_count) {
+    return;
+  }
+  completed.resize(item_count, false);
 }
 
 void enter_onboarding_start(AppState& state) {
@@ -343,6 +353,8 @@ void handle_click(AppState& state) {
     state.home.show_focus = true;
     const HomeFocusTarget target = home_focus_target(state);
     switch (target.kind) {
+      case HomeFocusTargetKind::None:
+        return;
       case HomeFocusTargetKind::Clock:
         state.screen = Screen::Calendar;
         return;
@@ -350,6 +362,9 @@ void handle_click(AppState& state) {
         state.screen = Screen::Weather;
         return;
       case HomeFocusTargetKind::InventoryItem:
+        ensure_completion_flags(
+            state.dashboard.inventory_completed,
+            state.dashboard.inventory_items.size());
         if (target.item_index >= 0 &&
             target.item_index < static_cast<int>(state.dashboard.inventory_completed.size())) {
           state.dashboard.inventory_completed[static_cast<std::size_t>(target.item_index)] =
@@ -357,6 +372,9 @@ void handle_click(AppState& state) {
         }
         return;
       case HomeFocusTargetKind::ReminderItem:
+        ensure_completion_flags(
+            state.dashboard.reminder_completed,
+            state.dashboard.reminder_items.size());
         if (target.item_index >= 0 &&
             target.item_index < static_cast<int>(state.dashboard.reminder_completed.size())) {
           state.dashboard.reminder_completed[static_cast<std::size_t>(target.item_index)] =
