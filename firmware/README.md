@@ -83,10 +83,11 @@ python tools/generate_firmware_panel_assets.py   # → assets/*.raw (if needed)
 
 - **Issue #51** (this runtime): **PAUSED** — display settle/contrast blocker.
   - Runtime structure, interaction, and display bring-up are functional.
-  - The blocker is **final settled full-refresh quality**, not boot flow.
-  - Mid-refresh photos show a correct high-contrast image, but the OTP LUT settle phase still washes it to gray with vertical banding.
+  - Current pause baseline is on the host-LUT path (not OTP), with UI usable but still showing a light gray artifact around rows that contain content.
+  - Recent OTP fallback test in this branch produced overall white-wash behavior, so it is not the selected freeze baseline.
+  - This blocker is in panel drive/waveform quality, not reducer/render flow.
   - Freeze `#51` from a **clean working tree** only; do not use a dirty display experiment state as the shared base for `#52`.
-  - See `firmware/docs/display_experiments.md` for the full experiment log and conclusions.
+  - See `firmware/docs/display_experiments.md` (especially Exp #19) for detailed notes and current baseline switches.
 - **Issue #52** (behavior migration): starts from #51 freeze baseline.
   - Migrates Python state machine / renderer to C++.
   - Should stay focused on behavior/state/render migration.

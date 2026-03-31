@@ -26,143 +26,97 @@ constexpr int kPowerOffTimeoutMs = 10000;
 constexpr int kRefreshTimeoutMs = 25000;
 constexpr int kPowerStabilizeMs = 50;
 constexpr int kPostRefreshDelayMs = 100;
-constexpr int kMinRefreshGapMs = 120;
-constexpr int kResetHighMs = 200;
+constexpr int kResetHighMs = 20;
 constexpr int kResetLowUs = 2000;
 constexpr int kSpiClockHz = 4 * 1000 * 1000;  // Match Python RPi driver (was 2MHz)
 constexpr size_t kSpiChunkBytes = 2048;
 constexpr size_t kFillChunkBytes = 256;
 constexpr bool kPowerOffAfterRefresh = false;
-constexpr bool kUseInvertedFirstFrame = true;
+constexpr bool kUseInvertedOldBufferForFullRefresh = true;
 constexpr int kUiDilateRadius = 0;
+constexpr bool kEnablePartialRefresh = false;
+// Experimental: use Waveshare host-LUT profile (Arduino epd7in5_V2) instead of OTP LUT.
+constexpr bool kUseHostLutWaveformProfile = true;
+// Match Waveshare epd7in5_V2_old host-LUT path by default.
+constexpr bool kUseHostLutDualPlaneRefresh = true;
+constexpr bool kUseHostLutEvsRegister = true;
+constexpr uint8_t kHostLutDataIntervalFirstByte = 0x10;
+constexpr uint8_t kHostLutDataIntervalSecondByte = 0x07;
+constexpr uint8_t kHostLutEvsRegisterValue = 0x02;
+constexpr uint8_t kHostLutVcomDc = 0x18;
+constexpr bool kUseHostLutOptRegister = true;
+constexpr uint8_t kHostLutOptXon = 0x00;
+constexpr uint8_t kHostLutOptValue = 0x00;
+constexpr bool kUseHostLutWhitePrecleanPass = false;
+constexpr int kHostLutFullRefreshPasses = 1;
+constexpr bool kUseHostLutWhiteBoostPass = false;
+// Align dual-plane payload order with Waveshare EPD_7in5_V2_old.c:
+//   0x10 <- image, 0x13 <- ~image
+constexpr bool kUseHostLutLegacyPlaneOrder = false;
+// Enable command/data timing trace for RPi-vs-ESP32 waveform comparison.
+constexpr bool kEnableDisplayTraceLogs = true;
+constexpr bool kBusyPollWithStatusCommand = true;
+// UI framebuffer follows Python convention: 0=black, 1=white.
+constexpr bool kFramebufferBlackBitIsZero = true;
+// Some panel batches behave as 1=black at transport level. Keep this explicit.
+constexpr bool kPanelBlackBitIsZero = false;
 
 gpio_num_t to_gpio_num(const int pin) {
   return static_cast<gpio_num_t>(pin);
 }
 
-DirtyRect clip_dirty_rect(const DirtyRect& rect) {
-  DirtyRect clipped = rect;
-  clipped.x0 = std::max(0, std::min(kPanelWidth, clipped.x0));
-  clipped.y0 = std::max(0, std::min(kPanelHeight, clipped.y0));
-  clipped.x1 = std::max(0, std::min(kPanelWidth, clipped.x1));
-  clipped.y1 = std::max(0, std::min(kPanelHeight, clipped.y1));
-  return clipped;
+constexpr uint8_t kFramebufferBlackFill = kFramebufferBlackBitIsZero ? 0x00 : 0xFF;
+constexpr uint8_t kFramebufferWhiteFill = kFramebufferBlackBitIsZero ? 0xFF : 0x00;
+
+constexpr uint8_t map_framebuffer_byte_to_panel(const uint8_t value) {
+  if constexpr (kFramebufferBlackBitIsZero == kPanelBlackBitIsZero) {
+    return value;
+  }
+  return static_cast<uint8_t>(~value);
 }
 
-bool is_valid_dirty_rect(const DirtyRect& rect) {
-  return rect.x1 > rect.x0 && rect.y1 > rect.y0;
+constexpr uint8_t panel_black_fill_byte() {
+  return map_framebuffer_byte_to_panel(kFramebufferBlackFill);
 }
 
-void wait_for_refresh_gap(int64_t& last_refresh_end_ms) {
-  if (last_refresh_end_ms <= 0) {
-    return;
-  }
-  const int64_t now_ms = esp_timer_get_time() / 1000;
-  const int64_t elapsed = now_ms - last_refresh_end_ms;
-  if (elapsed >= kMinRefreshGapMs) {
-    return;
-  }
-  vTaskDelay(pdMS_TO_TICKS(static_cast<int>(kMinRefreshGapMs - elapsed)));
+constexpr uint8_t panel_white_fill_byte() {
+  return map_framebuffer_byte_to_panel(kFramebufferWhiteFill);
 }
 
-bool rect_contains(
-    const DirtyRect& outer,
-    const DirtyRect& inner,
-    const int slack = 0) {
-  return inner.x0 >= (outer.x0 - slack) &&
-         inner.y0 >= (outer.y0 - slack) &&
-         inner.x1 <= (outer.x1 + slack) &&
-         inner.y1 <= (outer.y1 + slack);
-}
+constexpr std::array<uint8_t, 42> kHostLutVcom{
+    0x00, 0x32, 0x32, 0x00, 0x00, 0x01, 0x00, 0x0A, 0x0A, 0x00, 0x00, 0x00,
+    0x00, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
 
-DirtyRect merge_dirty_rects(const DirtyRect& a, const DirtyRect& b) {
-  return {
-      std::min(a.x0, b.x0),
-      std::min(a.y0, b.y0),
-      std::max(a.x1, b.x1),
-      std::max(a.y1, b.y1),
-  };
-}
+constexpr std::array<uint8_t, 42> kHostLutWw{
+    0x60, 0x32, 0x32, 0x00, 0x00, 0x01, 0x60, 0x0A, 0x0A, 0x00, 0x00, 0x00,
+    0x80, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
 
-DirtyRect align_rect_for_partial(
-    const DirtyRect& rect,
-    const int width,
-    const int height,
-    const int pad = 2) {
-  DirtyRect expanded{
-      rect.x0 - pad,
-      rect.y0 - pad,
-      rect.x1 + pad,
-      rect.y1 + pad,
-  };
-  expanded = clip_dirty_rect(expanded);
-  expanded.x0 = (expanded.x0 / 8) * 8;
-  expanded.x1 = ((expanded.x1 + 7) / 8) * 8;
-  expanded.x0 = std::max(0, std::min(width, expanded.x0));
-  expanded.y0 = std::max(0, std::min(height, expanded.y0));
-  expanded.x1 = std::max(0, std::min(width, expanded.x1));
-  expanded.y1 = std::max(0, std::min(height, expanded.y1));
-  return expanded;
-}
+constexpr std::array<uint8_t, 42> kHostLutBw{
+    0x60, 0x32, 0x32, 0x00, 0x00, 0x01, 0x60, 0x0A, 0x0A, 0x00, 0x00, 0x00,
+    0x80, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
 
-std::vector<DirtyRect> prepare_partial_rects(
-    const std::vector<DirtyRect>& rects,
-    const int width,
-    const int height,
-    const int pad = 2,
-    const int max_rects = 6,
-    const bool merge_overflow = true) {
-  std::vector<DirtyRect> aligned;
-  aligned.reserve(rects.size());
+constexpr std::array<uint8_t, 42> kHostLutWb{
+    0x90, 0x32, 0x32, 0x00, 0x00, 0x01, 0x60, 0x0A, 0x0A, 0x00, 0x00, 0x00,
+    0x40, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
 
-  for (const DirtyRect& rect : rects) {
-    const DirtyRect clipped = align_rect_for_partial(rect, width, height, pad);
-    if (!is_valid_dirty_rect(clipped)) {
-      continue;
-    }
-    if (std::any_of(aligned.begin(), aligned.end(), [&](const DirtyRect& existing) {
-          return rect_contains(existing, clipped, 0);
-        })) {
-      continue;
-    }
-    aligned.erase(
-        std::remove_if(
-            aligned.begin(),
-            aligned.end(),
-            [&](const DirtyRect& existing) {
-              return rect_contains(clipped, existing, 0);
-            }),
-        aligned.end());
-    aligned.push_back(clipped);
-  }
-
-  if (aligned.empty()) {
-    return {};
-  }
-
-  std::sort(aligned.begin(), aligned.end(), [](const DirtyRect& a, const DirtyRect& b) {
-    const int area_a = (a.x1 - a.x0) * (a.y1 - a.y0);
-    const int area_b = (b.x1 - b.x0) * (b.y1 - b.y0);
-    if (a.y0 != b.y0) return a.y0 < b.y0;
-    if (a.x0 != b.x0) return a.x0 < b.x0;
-    return area_a < area_b;
-  });
-
-  const int max_n = std::max(1, max_rects);
-  if (static_cast<int>(aligned.size()) <= max_n) {
-    return aligned;
-  }
-  if (!merge_overflow) {
-    aligned.resize(static_cast<std::size_t>(max_n));
-    return aligned;
-  }
-
-  DirtyRect merged = aligned.front();
-  for (std::size_t i = 1; i < aligned.size(); ++i) {
-    merged = merge_dirty_rects(merged, aligned[i]);
-  }
-  return {merged};
-}
+constexpr std::array<uint8_t, 42> kHostLutBb{
+    0x90, 0x32, 0x32, 0x00, 0x00, 0x01, 0x60, 0x0A, 0x0A, 0x00, 0x00, 0x00,
+    0x40, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
 
 // ── Image utility helpers (internal) ─────────────────────────────────────────
 
@@ -172,7 +126,11 @@ void set_black_pixel_raw(std::vector<uint8_t>& image, const int x, const int y) 
   }
   const int offset = (y * kPanelWidthBytes) + (x / 8);
   const uint8_t bit = static_cast<uint8_t>(0x80U >> (x % 8));
-  image[offset] = static_cast<uint8_t>(image[offset] | bit);
+  if constexpr (kFramebufferBlackBitIsZero) {
+    image[offset] = static_cast<uint8_t>(image[offset] & static_cast<uint8_t>(~bit));
+  } else {
+    image[offset] = static_cast<uint8_t>(image[offset] | bit);
+  }
 }
 
 bool is_black_pixel(const std::vector<uint8_t>& image, const int x, const int y) {
@@ -181,25 +139,25 @@ bool is_black_pixel(const std::vector<uint8_t>& image, const int x, const int y)
   }
   const int offset = (y * kPanelWidthBytes) + (x / 8);
   const uint8_t bit = static_cast<uint8_t>(0x80U >> (x % 8));
+  if constexpr (kFramebufferBlackBitIsZero) {
+    return (image[offset] & bit) == 0;
+  }
   return (image[offset] & bit) != 0;
 }
 
 std::size_t count_black_bits(const std::vector<uint8_t>& image) {
-  // Convention: 0=black, 1=white. Count ZERO bits.
+  // Count black bits using framebuffer convention.
   std::size_t count = 0;
   for (const uint8_t value : image) {
-    count += static_cast<std::size_t>(__builtin_popcount(static_cast<unsigned int>(
-        static_cast<uint8_t>(~value))));
+    if constexpr (kFramebufferBlackBitIsZero) {
+      count += static_cast<std::size_t>(__builtin_popcount(static_cast<unsigned int>(
+          static_cast<uint8_t>(~value))));
+    } else {
+      count += static_cast<std::size_t>(
+          __builtin_popcount(static_cast<unsigned int>(value)));
+    }
   }
   return count;
-}
-
-std::vector<uint8_t> make_inverted_image(const std::vector<uint8_t>& image) {
-  std::vector<uint8_t> out = image;
-  for (uint8_t& value : out) {
-    value = static_cast<uint8_t>(~value);
-  }
-  return out;
 }
 
 std::vector<uint8_t> dilate_black_pixels(const std::vector<uint8_t>& source, const int radius) {
@@ -279,6 +237,8 @@ class EpaperDisplay final : public Display {
       return;
     }
 
+    (void)dirty_hints;
+
     auto image = image_in;
 
     const std::size_t black_bits = count_black_bits(image);
@@ -297,33 +257,7 @@ class EpaperDisplay final : public Display {
     // Decide: partial or full refresh
     if (!first_present_done_ || !previous_frame_valid_) {
       if (in_partial_mode_) { restore_full_mode(); }
-      // Exp #16: Python full first-frame strategy:
-      // 1. Clear() → DTM1=0xFF, DTM2=0x00 → panel driven to BLACK (0x00 state)
-      // 2. display() → DTM1=previous(0x00)=matches panel, DTM2=image
-      // Key insight: LUT phase D starts from all-black (phase C result),
-      // and DTM1=0x00 matches that state → phase D settles correctly.
-      // Exp #18a: CLEAN LUT TEST — clear to WHITE + DTM1=0xFF (true match)
-      // Goal: isolate whether OTP LUT waveform itself works when DTM1=actual state.
-      // 1. Clear to WHITE: DTM1=0x00, DTM2=0xFF → panel driven to 0xFF (all white)
-      // 2. Display: DTM1=0xFF (matches panel), DTM2=image
-      //    - White pixels: (1,1) no-op → already white, stay white ✓
-      //    - Black pixels: (1,0) transition → full driving to black ✓
-      // If this fails → LUT waveform itself is broken, not just DTM1 mismatch.
-      ESP_LOGI(kTag, "Exp #18a: clear-to-WHITE + DTM1=0xFF (true state match)");
-      if (!wake_panel_if_needed()) { return; }
-      // Step 1: Clear to white
-      send_command(0x10);
-      send_fill_buffer(0x00, kPanelBufferSize);   // DTM1 = 0x00
-      send_command(0x13);
-      send_fill_buffer(0xFF, kPanelBufferSize);   // DTM2 = 0xFF (white target)
-      send_command(0x12);
-      vTaskDelay(pdMS_TO_TICKS(100));
-      (void)wait_until_idle("clear_white_0x12", kRefreshTimeoutMs);
-      ESP_LOGI(kTag, "Panel cleared to WHITE. Now displaying with DTM1=0xFF...");
-      // Step 2: Set previous_frame to match actual panel state (all white = 0xFF)
-      previous_frame_.assign(kPanelBufferSize, 0xFF);
-      previous_frame_valid_ = true;
-      // Step 3: display_bitmap will use DTM1=previous(0xFF) = matches panel
+      ESP_LOGI(kTag, "First frame: direct full refresh");
       display_bitmap(image);
     } else {
       // Compute dirty region bounding box
@@ -345,106 +279,6 @@ class EpaperDisplay final : public Display {
 
       if (dirty_y0 > dirty_y1) {
         ESP_LOGI(kTag, "No pixel change, skipping refresh");
-      } else if (!dirty_hints.empty()) {
-        std::vector<DirtyRect> clipped_hints;
-        clipped_hints.reserve(dirty_hints.size());
-        for (const DirtyRect& rect : dirty_hints) {
-          const DirtyRect clipped = clip_dirty_rect(rect);
-          if (!is_valid_dirty_rect(clipped)) {
-            continue;
-          }
-          clipped_hints.push_back(clipped);
-        }
-
-        const DirtyRect diff_rect{
-            dirty_x0_byte * 8,
-            dirty_y0,
-            (dirty_x1_byte + 1) * 8,
-            dirty_y1 + 1,
-        };
-        if (is_valid_dirty_rect(diff_rect)) {
-          if (clipped_hints.empty()) {
-            clipped_hints.push_back(diff_rect);
-          } else {
-            DirtyRect merged_hints = clipped_hints.front();
-            for (std::size_t i = 1; i < clipped_hints.size(); ++i) {
-              merged_hints = merge_dirty_rects(merged_hints, clipped_hints[i]);
-            }
-            if (!rect_contains(merged_hints, diff_rect, 4)) {
-              clipped_hints.push_back(diff_rect);
-            }
-          }
-        }
-
-        if (clipped_hints.empty()) {
-          ESP_LOGI(kTag, "Dirty hints empty after clipping; skipping refresh");
-        } else {
-          const std::vector<DirtyRect> prepared_rects =
-              prepare_partial_rects(clipped_hints, kPanelWidth, kPanelHeight, 2, 6, true);
-          if (prepared_rects.empty()) {
-            ESP_LOGI(kTag, "Dirty hints empty after preparation; skipping refresh");
-            previous_frame_ = image;
-            previous_frame_valid_ = true;
-            return;
-          }
-
-          std::vector<DirtyRect> apply_rects = prepared_rects;
-          if (prepared_rects.size() > 1) {
-            DirtyRect merged = prepared_rects.front();
-            for (std::size_t i = 1; i < prepared_rects.size(); ++i) {
-              merged = merge_dirty_rects(merged, prepared_rects[i]);
-            }
-            apply_rects = {align_rect_for_partial(merged, kPanelWidth, kPanelHeight, 2)};
-          }
-
-          int hinted_pixels = 0;
-          int largest_pixels = 0;
-          for (const DirtyRect& rect : apply_rects) {
-            const int rect_pixels = (rect.x1 - rect.x0) * (rect.y1 - rect.y0);
-            hinted_pixels += rect_pixels;
-            largest_pixels = std::max(largest_pixels, rect_pixels);
-          }
-          const int total_pixels = kPanelWidth * kPanelHeight;
-          const float dirty_ratio =
-              static_cast<float>(hinted_pixels) / static_cast<float>(total_pixels);
-          const float largest_ratio =
-              static_cast<float>(largest_pixels) / static_cast<float>(total_pixels);
-
-          ESP_LOGI(
-              kTag,
-              "Dirty hints: raw=%u prepared=%u ratio=%.3f max_ratio=%.3f",
-              static_cast<unsigned>(clipped_hints.size()),
-              static_cast<unsigned>(apply_rects.size()),
-              dirty_ratio,
-              largest_ratio);
-
-          constexpr float kHintedFullAreaLimit = 0.75f;
-          constexpr std::size_t kMaxHintedRects = 6;
-          partial_since_full_++;
-          if (largest_ratio > kHintedFullAreaLimit ||
-              apply_rects.size() > kMaxHintedRects ||
-              partial_since_full_ >= 30) {
-            ESP_LOGI(kTag, "Full refresh from hinted update (ratio=%.3f, rects=%u)",
-                     dirty_ratio,
-                     static_cast<unsigned>(apply_rects.size()));
-            if (in_partial_mode_) {
-              restore_full_mode();
-            }
-            display_bitmap(image);
-            partial_since_full_ = 0;
-          } else {
-            for (const DirtyRect& rect : apply_rects) {
-              ESP_LOGI(
-                  kTag,
-                  "Partial refresh from hinted rect (%d,%d)-(%d,%d)",
-                  rect.x0,
-                  rect.y0,
-                  rect.x1,
-                  rect.y1);
-              display_bitmap_partial(image, rect.x0, rect.y0, rect.x1, rect.y1);
-            }
-          }
-        }
       } else {
         const int dirty_x0 = dirty_x0_byte * 8;
         const int dirty_x1 = (dirty_x1_byte + 1) * 8;
@@ -460,13 +294,18 @@ class EpaperDisplay final : public Display {
 
         // Force full refresh periodically to prevent ghosting buildup
         partial_since_full_++;
-        constexpr int kMaxPartialBeforeFull = 30;
+        constexpr int kMaxPartialBeforeFull = 10;
         constexpr float kPartialAreaLimit = 0.40f;
 
-        if (dirty_ratio > kPartialAreaLimit ||
+        if (!kEnablePartialRefresh ||
+            dirty_ratio > kPartialAreaLimit ||
             partial_since_full_ >= kMaxPartialBeforeFull) {
-          ESP_LOGI(kTag, "Full refresh (ratio=%.3f, partials_since=%d)",
-                   dirty_ratio, partial_since_full_);
+          ESP_LOGI(
+              kTag,
+              "Full refresh (partial_enabled=%d, ratio=%.3f, partials_since=%d)",
+              static_cast<int>(kEnablePartialRefresh),
+              dirty_ratio,
+              partial_since_full_);
           if (in_partial_mode_) { restore_full_mode(); }
           display_bitmap(image);
           partial_since_full_ = 0;
@@ -506,6 +345,59 @@ class EpaperDisplay final : public Display {
   }
 
  private:
+  void init_trace_epoch_if_needed() {
+    if (trace_epoch_ms_ == 0) {
+      trace_epoch_ms_ = esp_timer_get_time() / 1000;
+    }
+  }
+
+  int64_t trace_elapsed_ms() const {
+    const int64_t now_ms = esp_timer_get_time() / 1000;
+    return now_ms - trace_epoch_ms_;
+  }
+
+  void trace_command(const uint8_t command) {
+    if (!kEnableDisplayTraceLogs) {
+      return;
+    }
+    init_trace_epoch_if_needed();
+    ESP_LOGI(
+        kTag,
+        "[trace %04u +%lldms] CMD 0x%02X",
+        static_cast<unsigned>(++trace_seq_),
+        static_cast<long long>(trace_elapsed_ms()),
+        static_cast<unsigned>(command));
+  }
+
+  void trace_data(const uint8_t data) {
+    if (!kEnableDisplayTraceLogs) {
+      return;
+    }
+    init_trace_epoch_if_needed();
+    ESP_LOGI(
+        kTag,
+        "[trace %04u +%lldms] DAT 0x%02X <= 0x%02X",
+        static_cast<unsigned>(++trace_seq_),
+        static_cast<long long>(trace_elapsed_ms()),
+        static_cast<unsigned>(last_command_),
+        static_cast<unsigned>(data));
+  }
+
+  void trace_stream(const char* label, const size_t len) {
+    if (!kEnableDisplayTraceLogs) {
+      return;
+    }
+    init_trace_epoch_if_needed();
+    ESP_LOGI(
+        kTag,
+        "[trace %04u +%lldms] %s 0x%02X len=%u",
+        static_cast<unsigned>(++trace_seq_),
+        static_cast<long long>(trace_elapsed_ms()),
+        label,
+        static_cast<unsigned>(last_command_),
+        static_cast<unsigned>(len));
+  }
+
   // ── GPIO / SPI initialization ────────────────────────────────────────────
 
   bool init_gpio() {
@@ -606,6 +498,9 @@ class EpaperDisplay final : public Display {
   bool wait_until_idle(const char* label, const int timeout_ms) {
     const int64_t start_ms = esp_timer_get_time() / 1000;
     int64_t last_log_ms = -1000;
+    if (kBusyPollWithStatusCommand) {
+      send_command(0x71);
+    }
     int busy_level = gpio_get_level(to_gpio_num(board_.display_pins.busy));
     while (busy_level == 0) {
       const int64_t now_ms = esp_timer_get_time() / 1000;
@@ -620,7 +515,10 @@ class EpaperDisplay final : public Display {
                  label, static_cast<long long>(elapsed), busy_level);
         last_log_ms = elapsed;
       }
-      vTaskDelay(pdMS_TO_TICKS(100));
+      if (kBusyPollWithStatusCommand) {
+        send_command(0x71);
+      }
+      vTaskDelay(pdMS_TO_TICKS(20));
       busy_level = gpio_get_level(to_gpio_num(board_.display_pins.busy));
     }
     vTaskDelay(pdMS_TO_TICKS(20));
@@ -632,6 +530,10 @@ class EpaperDisplay final : public Display {
   }
 
   bool init_panel_registers() {
+    if (kUseHostLutWaveformProfile) {
+      return init_panel_registers_host_lut();
+    }
+
     // Exp #14: Exact Python standard init() — no init_fast, no extras
     ESP_LOGI(kTag, "Init panel (Python standard init)...");
 
@@ -689,6 +591,89 @@ class EpaperDisplay final : public Display {
     return true;
   }
 
+  bool init_panel_registers_host_lut() {
+    // Based on Waveshare Arduino epd7in5_V2 external-LUT profile.
+    ESP_LOGI(kTag, "Init panel (host LUT / external waveform profile)...");
+
+    send_command(0x01);  // POWER SETTING
+    send_data(0x17);
+    send_data(0x17);  // VGH/VGL
+    send_data(0x3F);  // VDH
+    send_data(0x11);  // VDL/related
+
+    send_command(0x82);  // VCOM DC
+    send_data(kHostLutVcomDc);
+
+    if (kUseHostLutOptRegister) {
+      send_command(0x2A);  // LUT Option
+      send_data(kHostLutOptXon);
+      send_data(kHostLutOptValue);
+    }
+
+    send_command(0x06);  // Booster Soft Start
+    send_data(0x27);
+    send_data(0x27);
+    send_data(0x2F);
+    send_data(0x17);
+
+    send_command(0x30);  // OSC
+    send_data(0x06);
+
+    send_command(0x04);  // POWER ON
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (!wait_until_idle("0x04_host_lut", kPowerOnTimeoutMs)) {
+      return false;
+    }
+
+    send_command(0x00);  // PANEL SETTING: external LUT
+    send_data(0x3F);
+
+    send_command(0x61);  // Resolution 800x480
+    send_data(0x03);
+    send_data(0x20);
+    send_data(0x01);
+    send_data(0xE0);
+
+    send_command(0x15);  // Dual SPI disabled
+    send_data(0x00);
+
+    send_command(0x50);  // VCOM and Data Interval
+    send_data(kHostLutDataIntervalFirstByte);
+    send_data(kHostLutDataIntervalSecondByte);
+
+    if (kUseHostLutEvsRegister) {
+      send_command(0x52);
+      send_data(kHostLutEvsRegisterValue);
+    }
+
+    send_command(0x60);  // TCON
+    send_data(0x22);
+
+    send_command(0x65);  // Resolution setting extension
+    send_data(0x00);
+    send_data(0x00);
+    send_data(0x00);
+    send_data(0x00);
+
+    load_host_lut();
+
+    panel_awake_ = true;
+    return true;
+  }
+
+  void load_host_lut() {
+    send_command(0x20);  // LUT VCOM
+    send_data_buffer(kHostLutVcom.data(), kHostLutVcom.size());
+    send_command(0x21);  // LUT WW
+    send_data_buffer(kHostLutWw.data(), kHostLutWw.size());
+    send_command(0x22);  // LUT BW
+    send_data_buffer(kHostLutBw.data(), kHostLutBw.size());
+    send_command(0x23);  // LUT WB
+    send_data_buffer(kHostLutWb.data(), kHostLutWb.size());
+    send_command(0x24);  // LUT BB
+    send_data_buffer(kHostLutBb.data(), kHostLutBb.size());
+  }
+
   bool wake_panel_if_needed() {
     if (panel_awake_) {
       return true;
@@ -719,7 +704,9 @@ class EpaperDisplay final : public Display {
     if (!wake_panel_if_needed()) {
       return false;
     }
-    // Python Clear: DTM1=0xFF, DTM2=0x00 (creates transition to drive pixels)
+    // Match Waveshare Python epd7in5_V2.Clear() exactly:
+    //   0x10 <- 0xFF
+    //   0x13 <- 0x00
     send_command(0x10);
     send_fill_buffer(0xFF, kPanelBufferSize);
     send_command(0x13);
@@ -730,8 +717,8 @@ class EpaperDisplay final : public Display {
     if (!ok) {
       return false;
     }
-    previous_frame_.assign(kPanelBufferSize, 0x00);
-    previous_frame_valid_ = true;
+    // Do not assume previous frame state after panel clear.
+    previous_frame_valid_ = false;
     if (kPowerOffAfterRefresh) {
       return power_off_panel();
     }
@@ -750,24 +737,96 @@ class EpaperDisplay final : public Display {
     if (!wake_panel_if_needed()) {
       return;
     }
-    wait_for_refresh_gap(last_refresh_end_ms_);
+
+    if (kUseHostLutWaveformProfile) {
+      if (kUseHostLutWhitePrecleanPass) {
+        // Pre-clean to white to remove residual tint in white background regions.
+        if (kUseHostLutDualPlaneRefresh) {
+          send_command(0x10);
+          send_fill_buffer(panel_black_fill_byte(), kPanelBufferSize);
+        }
+        send_command(0x13);
+        send_fill_buffer(panel_white_fill_byte(), kPanelBufferSize);
+        ESP_LOGI(kTag, "Host LUT preclean pass (to white)...");
+        send_command(0x12);
+        vTaskDelay(pdMS_TO_TICKS(kPostRefreshDelayMs));
+        if (!wait_until_idle("0x12_host_lut_preclean", kRefreshTimeoutMs)) {
+          return;
+        }
+      }
+
+      const int passes = std::max(1, kHostLutFullRefreshPasses);
+      for (int pass = 0; pass < passes; ++pass) {
+        // Host-LUT dual-plane payload order.
+        // Legacy order (Waveshare old.c): 0x10=image, 0x13=~image.
+        // Non-legacy order:              0x10=~image, 0x13=image.
+        const bool old_plane_invert = !kUseHostLutLegacyPlaneOrder;
+        const bool new_plane_invert = kUseHostLutLegacyPlaneOrder;
+        if (kUseHostLutDualPlaneRefresh) {
+          send_command(0x10);
+          send_data_buffer_framebuffer(image.data(), kPanelBufferSize, old_plane_invert);
+          ESP_LOGI(
+              kTag,
+              "Host LUT frame mode: old=%s, new=%s",
+              old_plane_invert ? "~image" : "image",
+              new_plane_invert ? "~image" : "image");
+        }
+        send_command(0x13);
+        send_data_buffer_framebuffer(image.data(), kPanelBufferSize, new_plane_invert);
+
+        ESP_LOGI(
+            kTag,
+            "Refresh (0x12, host LUT, dual_plane=%d, pass=%d/%d)...",
+            static_cast<int>(kUseHostLutDualPlaneRefresh),
+            pass + 1,
+            passes);
+        send_command(0x12);
+        vTaskDelay(pdMS_TO_TICKS(kPostRefreshDelayMs));
+        if (!wait_until_idle("0x12_host_lut", kRefreshTimeoutMs)) {
+          return;
+        }
+      }
+
+      if (kUseHostLutWhiteBoostPass) {
+        // White-boost pass: force old frame to black so white pixels get stronger (black->white)
+        // driving, while black pixels remain stable (black->black).
+        const bool new_plane_invert = kUseHostLutLegacyPlaneOrder;
+        if (kUseHostLutDualPlaneRefresh) {
+          send_command(0x10);
+          send_fill_buffer(panel_black_fill_byte(), kPanelBufferSize);
+        }
+        send_command(0x13);
+        send_data_buffer_framebuffer(image.data(), kPanelBufferSize, new_plane_invert);
+        ESP_LOGI(kTag, "Host LUT white-boost pass...");
+        send_command(0x12);
+        vTaskDelay(pdMS_TO_TICKS(kPostRefreshDelayMs));
+        if (!wait_until_idle("0x12_host_lut_white_boost", kRefreshTimeoutMs)) {
+          return;
+        }
+      }
+
+      previous_frame_ = image;
+      previous_frame_valid_ = true;
+      if (kPowerOffAfterRefresh) {
+        (void)power_off_panel();
+      }
+      return;
+    }
+
     send_command(0x10);
-    if (previous_frame_valid_ &&
-        previous_frame_.size() == static_cast<size_t>(kPanelBufferSize)) {
-      send_data_buffer(previous_frame_.data(), kPanelBufferSize);
+    if (kUseInvertedOldBufferForFullRefresh) {
+      send_data_buffer_framebuffer(image.data(), kPanelBufferSize, true);
+      ESP_LOGI(kTag, "Frame mode: old=~image, new=image");
+    } else if (previous_frame_valid_ &&
+               previous_frame_.size() == static_cast<size_t>(kPanelBufferSize)) {
+      send_data_buffer_framebuffer(previous_frame_.data(), kPanelBufferSize, false);
       ESP_LOGI(kTag, "Frame mode: old=previous, new=image");
     } else {
-      if (kUseInvertedFirstFrame) {
-        const auto inverted = make_inverted_image(image);
-        send_data_buffer(inverted.data(), kPanelBufferSize);
-        ESP_LOGI(kTag, "Frame mode: old=~image (first frame), new=image");
-      } else {
-        send_fill_buffer(0x00, kPanelBufferSize);
-        ESP_LOGI(kTag, "Frame mode: old=0x00 baseline, new=image");
-      }
+      send_fill_buffer(panel_black_fill_byte(), kPanelBufferSize);
+      ESP_LOGI(kTag, "Frame mode: old=black baseline, new=image");
     }
     send_command(0x13);
-    send_data_buffer(image.data(), kPanelBufferSize);
+    send_data_buffer_framebuffer(image.data(), kPanelBufferSize, false);
 
     ESP_LOGI(kTag, "Refresh (0x12)...");
     send_command(0x12);
@@ -778,7 +837,6 @@ class EpaperDisplay final : public Display {
 
     previous_frame_ = image;
     previous_frame_valid_ = true;
-    last_refresh_end_ms_ = esp_timer_get_time() / 1000;
     if (kPowerOffAfterRefresh) {
       (void)power_off_panel();
     }
@@ -834,7 +892,6 @@ class EpaperDisplay final : public Display {
         return;
       }
     }
-    wait_for_refresh_gap(last_refresh_end_ms_);
 
     // Align x to 8-pixel boundary
     x0 = (x0 / 8) * 8;
@@ -873,16 +930,17 @@ class EpaperDisplay final : public Display {
     send_data(static_cast<uint8_t>((y1 - 1) & 0xFF));
     send_data(0x01);
 
-    // DTM2 with inverted data for partial refresh
+    // DTM2 payload for partial refresh (same polarity conversion as full refresh)
     send_command(0x13);
+    trace_stream("PART_FB", static_cast<size_t>(w_bytes * h));
     begin_data_stream();
-    std::array<uint8_t, kFillChunkBytes> inv_chunk{};
+    std::array<uint8_t, kFillChunkBytes> panel_chunk{};
     for (int row = y0; row < y1; ++row) {
       const int src_offset = row * kPanelWidthBytes + (x0 / 8);
       for (int b = 0; b < w_bytes; ++b) {
-        inv_chunk[b] = static_cast<uint8_t>(~image[src_offset + b]);
+        panel_chunk[b] = map_framebuffer_byte_to_panel(image[src_offset + b]);
       }
-      spi_write_bytes(inv_chunk.data(), w_bytes);
+      spi_write_bytes(panel_chunk.data(), w_bytes);
     }
     end_data_stream();
 
@@ -894,7 +952,6 @@ class EpaperDisplay final : public Display {
     // Update stored previous frame
     previous_frame_ = image;
     previous_frame_valid_ = true;
-    last_refresh_end_ms_ = esp_timer_get_time() / 1000;
   }
 
   // ── SPI transport ────────────────────────────────────────────────────────
@@ -903,6 +960,8 @@ class EpaperDisplay final : public Display {
     if (!spi_ready_) {
       return;
     }
+    last_command_ = command;
+    trace_command(command);
     ESP_ERROR_CHECK(gpio_set_level(to_gpio_num(board_.display_pins.dc), 0));
     ESP_ERROR_CHECK(gpio_set_level(to_gpio_num(board_.display_pins.cs), 0));
     spi_write_bytes(&command, 1);
@@ -913,6 +972,7 @@ class EpaperDisplay final : public Display {
     if (!spi_ready_) {
       return;
     }
+    trace_data(data);
     ESP_ERROR_CHECK(gpio_set_level(to_gpio_num(board_.display_pins.dc), 1));
     ESP_ERROR_CHECK(gpio_set_level(to_gpio_num(board_.display_pins.cs), 0));
     spi_write_bytes(&data, 1);
@@ -923,8 +983,34 @@ class EpaperDisplay final : public Display {
     if (!spi_ready_ || data == nullptr || len == 0) {
       return;
     }
+    trace_stream("BUF", len);
     begin_data_stream();
     spi_write_bytes(data, len);
+    end_data_stream();
+  }
+
+  void send_data_buffer_framebuffer(
+      const uint8_t* data, const size_t len, const bool invert_framebuffer_bits) {
+    if (!spi_ready_ || data == nullptr || len == 0) {
+      return;
+    }
+    trace_stream(invert_framebuffer_bits ? "FB_INV" : "FB", len);
+    std::array<uint8_t, kFillChunkBytes> converted_chunk{};
+    begin_data_stream();
+    size_t sent = 0;
+    while (sent < len) {
+      const size_t chunk = std::min(converted_chunk.size(), len - sent);
+      for (size_t i = 0; i < chunk; ++i) {
+        uint8_t framebuffer_value = data[sent + i];
+        if (invert_framebuffer_bits) {
+          framebuffer_value = static_cast<uint8_t>(~framebuffer_value);
+        }
+        const uint8_t panel_value = map_framebuffer_byte_to_panel(framebuffer_value);
+        converted_chunk[i] = panel_value;
+      }
+      spi_write_bytes(converted_chunk.data(), chunk);
+      sent += chunk;
+    }
     end_data_stream();
   }
 
@@ -932,6 +1018,7 @@ class EpaperDisplay final : public Display {
     if (!spi_ready_ || len == 0) {
       return;
     }
+    trace_stream(value == panel_white_fill_byte() ? "FILL_WHITE" : "FILL", len);
     std::array<uint8_t, kFillChunkBytes> fill_chunk{};
     fill_chunk.fill(value);
     begin_data_stream();
@@ -980,7 +1067,9 @@ class EpaperDisplay final : public Display {
   bool previous_frame_valid_{false};
   bool in_partial_mode_{false};
   int partial_since_full_{0};
-  int64_t last_refresh_end_ms_{0};
+  int64_t trace_epoch_ms_{0};
+  uint32_t trace_seq_{0};
+  uint8_t last_command_{0};
   std::vector<uint8_t> previous_frame_{};
   spi_device_handle_t spi_handle_{nullptr};
 };

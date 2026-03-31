@@ -475,3 +475,46 @@ Evidence chain:
 1. **External LUT mode** (0x00=0x3F instead of 0x1F) — bypass OTP, provide custom waveform tables
 2. **Try on RPi with same panel** — verify Python still works, then compare SPI signals with logic analyzer
 3. **Accept current contrast for V0** — focus on renderer parity and UX, revisit contrast later with hardware tools
+
+---
+
+## Experiment #19 — Host LUT path re-open (Issue #51 follow-up)
+**Date:** 2026-03-30
+**Branch:** `codex/51-pause-base`
+**Goal:** Compare Waveshare official C/C++ host-LUT samples against current ESP32 path, then lock a pause baseline.
+
+### What was compared
+1. Raspberry Pi C (OTP path): `EPD_7in5_V2.c`
+2. Raspberry Pi C old (host LUT path): `EPD_7in5_V2_old.c`
+3. Arduino C++ host LUT sample: `epd7in5_V2.cpp`
+4. ESP32 driver path: `firmware/main/platform/display.cpp`
+
+### Key implementation updates in this round
+1. Added explicit host-LUT init/profile path:
+   - `0x00=0x3F`, `0x20..0x24` LUT upload, optional `0x2A`, `0x52`, `0x65`
+2. Added explicit framebuffer/panel polarity mapping:
+   - `kFramebufferBlackBitIsZero`, `kPanelBlackBitIsZero`, byte mapping helper
+3. Added host-LUT tuning switches:
+   - dual-plane write mode, preclean/boost passes, data interval and EVS params
+4. Added trace and busy polling parity hooks:
+   - optional `0x71` polling and command/data trace logs
+5. UI readability adjustments:
+   - footer/status rows use black-filled containers + inverted text in current UI pages
+
+### Repeated observed behavior (user-verified)
+1. Blank lines can remain clean white.
+2. Rows containing text/button content show light gray wash in nearby white background.
+3. OTP fallback test (`kUseHostLutWaveformProfile=false`) in this branch run produced overall white-wash behavior (not acceptable as pause baseline).
+4. Small changes in `0x50/0x52` and preclean/boost did not materially remove the line-level gray artifact.
+
+### Current pause baseline (kept in code)
+1. `kUseHostLutWaveformProfile=true`
+2. `kUseHostLutDualPlaneRefresh=true`
+3. `kUseHostLutWhitePrecleanPass=false`
+4. `0x50: 0x10, 0x07`
+5. `0x52: 0x02`
+
+### Practical conclusion for Issue #51
+1. The remaining artifact is now a **drive-path / waveform quality** issue, not a page-layout bug.
+2. Current baseline is intentionally frozen for now to avoid further churn.
+3. Future work should be instrumented and isolated (single-variable + photo/log pairing) before reopening aggressive waveform tuning.
