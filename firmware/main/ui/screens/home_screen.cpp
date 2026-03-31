@@ -3,6 +3,7 @@
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
 #include "ui/panel_font_assets_generated.hpp"
+#include "ui/weather_icon_assets_generated.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -39,76 +40,6 @@ constexpr const char* kMicMask16[] = {
     ".....######.....",
     ".....######.....",
     "................",
-};
-
-constexpr const char* kCloudMask32[] = {
-    "................................",
-    "................................",
-    "................................",
-    "...................#####........",
-    ".................#########......",
-    "........######.####.....####....",
-    "......###########.........###...",
-    ".....###......#............##...",
-    "....##......................##..",
-    "...##.......................##..",
-    "...##........................##.",
-    "..##.........................##.",
-    "..##.........................##.",
-    "..##.........................##.",
-    "..##.........................##.",
-    "..##.........................#..",
-    "..###.......................###.",
-    ".##..........................###",
-    ".##...........................##",
-    "##.............................#",
-    "##.............................#",
-    "##.............................#",
-    "##.............................#",
-    "##.............................#",
-    ".##...........................##",
-    ".##..........................###",
-    "..###....#............#.....###.",
-    "...#########........##########..",
-    ".....####.####....####.#####....",
-    "............########............",
-    ".............######.............",
-    "................................",
-};
-
-constexpr const char* kSunMask32[] = {
-    "..............##................",
-    "..............##................",
-    "..............##................",
-    "....#.........##................",
-    "...###........##..........#.....",
-    "....###.......##.........###....",
-    ".....###................###.....",
-    "......###..............###......",
-    ".......#.....######...###.......",
-    "............########...#........",
-    "..........####....####..........",
-    "..........##........##..........",
-    ".........##..........##.........",
-    "........###..........###........",
-    "........##............##........",
-    "######..##............##........",
-    "######..##............##..######",
-    "........##............##..######",
-    "........###..........###........",
-    ".........##..........##.........",
-    "..........##........##..........",
-    "..........####....####..........",
-    "........#...########............",
-    ".......###...######.....#.......",
-    "......###..............###......",
-    ".....###................###.....",
-    "....###.........##.......###....",
-    ".....#..........##........###...",
-    "................##.........#....",
-    "................##..............",
-    "................##..............",
-    "................##..............",
 };
 
 struct ClockSnapshot {
@@ -589,6 +520,18 @@ void draw_mask_icon_32(
   }
 }
 
+std::string normalize_weather_icon_key(std::string value) {
+  value = trim_copy(value);
+  for (char& ch : value) {
+    if (ch >= 'A' && ch <= 'Z') {
+      ch = static_cast<char>(ch - ('A' - 'a'));
+    } else if (ch == '-' || ch == ' ') {
+      ch = '_';
+    }
+  }
+  return value;
+}
+
 std::string right_fit(const std::string& value, const int scale, const int width_px) {
   return truncate_text_px(uppercase_copy(value), scale, width_px);
 }
@@ -652,12 +595,34 @@ void draw_weather_icon(
     const int x0,
     const int y0,
     const std::string& weather_condition) {
-  const std::string lower = trim_copy(weather_condition);
-  if (lower.find("sun") != std::string::npos || lower.find("clear") != std::string::npos) {
-    draw_mask_icon_32(image, x0, y0, kSunMask32);
-    return;
+  using namespace weather_icon_assets;
+
+  const std::string key = normalize_weather_icon_key(weather_condition);
+  const char* const* rows = kKickstandCloudThin32;
+
+  if (key.find("partly") != std::string::npos) {
+    rows = kKickstandPartlySunnyThin32;
+  } else if (key.find("clear") != std::string::npos || key.find("sun") != std::string::npos) {
+    rows = kKickstandSunThin32;
+  } else if (key.find("rain") != std::string::npos || key.find("drizzle") != std::string::npos) {
+    rows = kKickstandRainThin32;
+  } else if (key.find("snow") != std::string::npos) {
+    rows = kKickstandSnowThin32;
+  } else if (key.find("storm") != std::string::npos || key.find("thunder") != std::string::npos) {
+    rows = kKickstandStormThin32;
+  } else if (key.find("haze") != std::string::npos || key.find("fog") != std::string::npos) {
+    rows = kKickstandHazeThin32;
+  } else if (key.find("hail") != std::string::npos) {
+    rows = kKickstandHailThin32;
+  } else if (key.find("moon") != std::string::npos || key.find("night") != std::string::npos) {
+    rows = kKickstandMoonThin32;
+  } else if (key.find("sunrise") != std::string::npos || key.find("dawn") != std::string::npos) {
+    rows = kKickstandSunriseThin32;
+  } else if (key.find("tornado") != std::string::npos) {
+    rows = kKickstandTornadoThin32;
   }
-  draw_mask_icon_32(image, x0, y0, kCloudMask32);
+
+  draw_mask_icon_32(image, x0, y0, rows);
 }
 
 void draw_mic_icon(std::vector<uint8_t>& image, const int x0, const int y0) {
