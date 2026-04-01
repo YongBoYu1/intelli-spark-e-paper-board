@@ -16,7 +16,7 @@ struct HomeDirtySnapshot {
   int inventory_count{0};
   int reminder_count{0};
   std::array<bool, 3> inventory_completed{};
-  std::array<bool, 4> reminder_completed{};
+  std::array<bool, 5> reminder_completed{};
 };
 
 std::vector<uint8_t> render_home_bitmap(const app::AppState& state);

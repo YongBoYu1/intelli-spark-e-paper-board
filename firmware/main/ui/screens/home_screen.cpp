@@ -50,7 +50,7 @@ struct ClockSnapshot {
 };
 
 constexpr int kInventoryVisibleMax = 3;
-constexpr int kReminderVisibleMax = 4;
+constexpr int kReminderVisibleMax = 5;
 
 enum class HomeFocusKind {
   Clock,
@@ -921,15 +921,16 @@ void draw_family_board(
     const int top_y,
     const int bottom_y,
     const app::DashboardSummary& dashboard) {
-  const BitmapFont& header_font = platform::panel_font_assets::kFontJetBold13;
-  draw_text_with_font(image, x0, top_y, "FAMILY BOARD", header_font);
+  const BitmapFont& label_font = platform::panel_font_assets::kFontJetExtraBold16;
+  const BitmapFont& meta_font = platform::panel_font_assets::kFontJetBold13;
+  draw_text_with_font(image, x0, top_y, "FAMILY BOARD", label_font);
   if (!dashboard.family_memo_author.empty()) {
     draw_right_aligned_text_with_font(
         image,
         x1,
         top_y,
         uppercase_copy(dashboard.family_memo_author),
-        header_font);
+        meta_font);
   }
   draw_section_rule(image, x0, x1, top_y + 18);
 
@@ -945,7 +946,7 @@ void draw_family_board(
         x1,
         bottom_y - 18,
         uppercase_copy(dashboard.family_memo_posted),
-        header_font);
+        meta_font);
   }
 }
 
@@ -1026,8 +1027,9 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   const std::string weather = right_fit(state.dashboard.weather_condition, 1, weather_col_w);
   const std::string humidity =
       "HUM " + std::to_string(state.dashboard.weather_humidity_percent) + "%";
+  const BitmapFont& weather_meta_font = platform::panel_font_assets::kFontJetBold15;
   const int weather_desc_w =
-      text_width_with_font(uppercase_copy(weather), platform::panel_font_assets::kFontJetBold13);
+      text_width_with_font(uppercase_copy(weather), weather_meta_font);
   const int icon_center_x = weather_right - (weather_desc_w / 2);
   const int weather_icon_x = std::max(
       weather_left,
@@ -1036,7 +1038,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
           icon_center_x - (metrics.weather_icon_size / 2)));
 
   const BitmapFont& time_font = platform::panel_font_assets::kFontInterBlack84;
-  const BitmapFont& weekday_font = platform::panel_font_assets::kFontInterBold17;
+  const BitmapFont& weekday_font = platform::panel_font_assets::kFontInterSemiBold15;
   const BitmapFont& date_font = platform::panel_font_assets::kFontInterBold18;
   const int time_y = top_y - 24;
   draw_text_with_font(
@@ -1085,7 +1087,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
     draw_degree_mark(image, temp_x + text_width_with_font(temp, temp_font) + 2, top_y + 8, 6);
   }
   if (!location.empty()) {
-    const BitmapFont& city_font = platform::panel_font_assets::kFontJetBold13;
+    const BitmapFont& city_font = platform::panel_font_assets::kFontInterSemiBold13;
     const int city_h = text_height_with_font(uppercase_copy(location), city_font);
     const int city_top = std::max(outer_y0 + 4, (top_y - 2) - city_h - 6);
     const int city_y = baseline_y_for_top_with_font(
@@ -1110,13 +1112,13 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       weather_right,
       metrics.weather_desc_y,
       uppercase_copy(weather),
-      platform::panel_font_assets::kFontJetBold13);
+      weather_meta_font);
   draw_right_aligned_text_with_font(
       image,
       weather_right,
       metrics.weather_humidity_y,
       uppercase_copy(humidity),
-      platform::panel_font_assets::kFontJetBold13);
+      weather_meta_font);
 
   const int family_title_y = metrics.family_rule_y - 18;
   const int voice_margin = 14;

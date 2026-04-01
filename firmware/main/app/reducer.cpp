@@ -10,7 +10,7 @@ namespace {
 
 constexpr int kMenuItemCount = 6;
 constexpr int kHomeInventoryVisibleMax = 3;
-constexpr int kHomeReminderVisibleMax = 4;
+constexpr int kHomeReminderVisibleMax = 5;
 constexpr std::uint64_t kHomeCompletedHideGraceMs = 15000;
 constexpr std::uint64_t kHomeCompletedHideSettleMs = 600;
 constexpr std::size_t kOnboardingStepCount = 4;
