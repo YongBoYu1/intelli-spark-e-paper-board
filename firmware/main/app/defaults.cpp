@@ -2,6 +2,7 @@
 
 #include "esp_app_desc.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <string>
@@ -112,18 +113,15 @@ std::uint64_t app_build_minute_bucket() {
       __DATE__,
       __TIME__,
       kDefaultTimezone);
-  if (from_translation_unit > 0) {
-    return from_translation_unit;
-  }
-
   const esp_app_desc_t* app_desc = esp_app_get_description();
   if (app_desc == nullptr) {
-    return 0;
+    return from_translation_unit;
   }
-  return minute_bucket_from_build_stamp(
+  const std::uint64_t from_app_desc = minute_bucket_from_build_stamp(
       app_desc->date,
       app_desc->time,
       kDefaultTimezone);
+  return std::max(from_translation_unit, from_app_desc);
 }
 
 std::uint64_t current_minute_bucket(bool* is_real) {

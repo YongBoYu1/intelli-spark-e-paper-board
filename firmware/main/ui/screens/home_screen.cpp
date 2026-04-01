@@ -1037,7 +1037,8 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
           weather_right - metrics.weather_icon_size,
           icon_center_x - (metrics.weather_icon_size / 2)));
 
-  const BitmapFont& time_font = platform::panel_font_assets::kFontInterBlack84;
+  const BitmapFont& time_flow_font = platform::panel_font_assets::kFontInterBlack84;
+  const BitmapFont& time_display_font = platform::panel_font_assets::kFontInterBlack87;
   const BitmapFont& weekday_font = platform::panel_font_assets::kFontInterSemiBold15;
   const BitmapFont& date_font = platform::panel_font_assets::kFontInterBold18;
   const int time_y = top_y - 24;
@@ -1046,10 +1047,12 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       left_x0,
       time_y,
       clock.time_label,
-      time_font);
-  const TextVerticalBounds time_bounds = text_vertical_bounds_with_font(clock.time_label, time_font);
-  const int time_bottom = time_y + (time_bounds.valid ? time_bounds.bottom : time_font.line_height);
-  const int weekday_y = time_bottom + 13;
+      time_display_font);
+  const TextVerticalBounds time_flow_bounds =
+      text_vertical_bounds_with_font(clock.time_label, time_flow_font);
+  const int time_flow_bottom =
+      top_y + (time_flow_bounds.valid ? time_flow_bounds.bottom : time_flow_font.line_height);
+  const int weekday_y = time_flow_bottom + 13;
   if (clock.valid) {
     draw_text_with_font_spaced(
         image,
