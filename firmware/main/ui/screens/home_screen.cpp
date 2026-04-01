@@ -1028,7 +1028,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
         left_x0,
         top_y + 92,
         weekday,
-        platform::panel_font_assets::kFontJetBold13,
+        platform::panel_font_assets::kFontInterBold17,
         4);
     draw_text_with_font(
         image,

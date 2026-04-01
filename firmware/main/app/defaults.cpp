@@ -108,18 +108,22 @@ std::uint64_t minute_bucket_from_build_stamp(
 }
 
 std::uint64_t app_build_minute_bucket() {
+  const std::uint64_t from_translation_unit = minute_bucket_from_build_stamp(
+      __DATE__,
+      __TIME__,
+      kDefaultTimezone);
+  if (from_translation_unit > 0) {
+    return from_translation_unit;
+  }
+
   const esp_app_desc_t* app_desc = esp_app_get_description();
   if (app_desc == nullptr) {
     return 0;
   }
-  const std::uint64_t from_app_desc = minute_bucket_from_build_stamp(
+  return minute_bucket_from_build_stamp(
       app_desc->date,
       app_desc->time,
       kDefaultTimezone);
-  if (from_app_desc > 0) {
-    return from_app_desc;
-  }
-  return minute_bucket_from_build_stamp(__DATE__, __TIME__, kDefaultTimezone);
 }
 
 std::uint64_t current_minute_bucket(bool* is_real) {
