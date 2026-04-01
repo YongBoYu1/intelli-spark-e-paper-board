@@ -169,7 +169,7 @@ HomeLandscapeMetrics home_landscape_metrics() {
   const int hum_h = approx_font_height(15, 0.86, 12);
   metrics.weather_icon_size =
       std::max(12, static_cast<int>(std::lround(34.0 * 1.35)));
-  const int city_y = std::max(metrics.oy0 + 8, metrics.weather_top + 1);
+  const int city_y = std::max(metrics.oy0 + 4, metrics.weather_top - city_h - 6);
   metrics.weather_city_y = city_y;
   metrics.weather_desc_y = metrics.weather_top + temp_h + 21;
   metrics.weather_icon_y = metrics.weather_desc_y + desc_h + 10;
@@ -348,6 +348,7 @@ ClockSnapshot resolve_clock_snapshot(
     const std::uint64_t minute_bucket,
     const std::string& timezone_name,
     const bool clock_is_real) {
+  (void)clock_is_real;
   ClockSnapshot snapshot;
   if (minute_bucket == 0) {
     return snapshot;
@@ -367,32 +368,25 @@ ClockSnapshot resolve_clock_snapshot(
     tzset();
     active_tz = posix;
   };
-  if (clock_is_real) {
-    apply_posix_timezone(timezone_name);
-  }
+  apply_posix_timezone(timezone_name);
   const std::time_t now = static_cast<std::time_t>(minute_bucket * 60ULL);
 
   std::tm local_tm{};
 #if defined(_WIN32)
-  if (clock_is_real) {
-    localtime_s(&local_tm, &now);
-  } else {
-    gmtime_s(&local_tm, &now);
-  }
+  localtime_s(&local_tm, &now);
 #else
-  if (clock_is_real) {
-    localtime_r(&now, &local_tm);
-  } else {
-    gmtime_r(&now, &local_tm);
-  }
+  localtime_r(&now, &local_tm);
 #endif
 
   std::ostringstream time_out;
   time_out << std::put_time(&local_tm, "%H:%M");
   std::ostringstream weekday_out;
   weekday_out << std::put_time(&local_tm, "%A");
+  std::ostringstream month_out;
+  month_out << std::put_time(&local_tm, "%B");
   std::ostringstream date_out;
-  date_out << std::put_time(&local_tm, "%B %d, %Y");
+  date_out << month_out.str() << " " << local_tm.tm_mday << ", "
+           << (1900 + local_tm.tm_year);
 
   snapshot.valid = true;
   snapshot.time_label = time_out.str();
@@ -526,6 +520,26 @@ void draw_text_with_font(
     draw_glyph_with_font(image, cx, y, ch, font, black);
     cx += font.glyphs[glyph_index(ch)].advance;
     ++drawn;
+  }
+}
+
+void draw_text_with_font_spaced(
+    std::vector<uint8_t>& image,
+    const int x,
+    const int y,
+    const std::string& text,
+    const BitmapFont& font,
+    const int spacing,
+    const bool black = true) {
+  int cx = x;
+  bool first = true;
+  for (const char ch : text) {
+    if (!first) {
+      cx += spacing;
+    }
+    draw_glyph_with_font(image, cx, y, ch, font, black);
+    cx += font.glyphs[glyph_index(ch)].advance;
+    first = false;
   }
 }
 
@@ -1009,12 +1023,13 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       clock.time_label,
       platform::panel_font_assets::kFontInterBlack84);
   if (clock.valid) {
-    draw_text_with_font(
+    draw_text_with_font_spaced(
         image,
         left_x0,
         top_y + 92,
         weekday,
-        platform::panel_font_assets::kFontJetBold13);
+        platform::panel_font_assets::kFontJetBold13,
+        4);
     draw_text_with_font(
         image,
         left_x0,
