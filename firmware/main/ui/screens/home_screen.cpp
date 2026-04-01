@@ -482,6 +482,25 @@ TextVerticalBounds text_vertical_bounds_with_font(
   return bounds;
 }
 
+int text_height_with_font(const std::string& text, const BitmapFont& font) {
+  const TextVerticalBounds bounds = text_vertical_bounds_with_font(text, font);
+  if (!bounds.valid) {
+    return font.line_height;
+  }
+  return std::max(1, bounds.bottom - bounds.top);
+}
+
+int baseline_y_for_top_with_font(
+    const std::string& text,
+    const BitmapFont& font,
+    const int top_y) {
+  const TextVerticalBounds bounds = text_vertical_bounds_with_font(text, font);
+  if (!bounds.valid) {
+    return top_y;
+  }
+  return top_y - bounds.top;
+}
+
 int centered_text_y_with_font(
     const int row_y,
     const int row_h,
@@ -1016,31 +1035,40 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
           weather_right - metrics.weather_icon_size,
           icon_center_x - (metrics.weather_icon_size / 2)));
 
+  const BitmapFont& time_font = platform::panel_font_assets::kFontInterBlack84;
+  const BitmapFont& weekday_font = platform::panel_font_assets::kFontInterBold17;
+  const BitmapFont& date_font = platform::panel_font_assets::kFontInterBold18;
+  const int time_y = top_y - 24;
   draw_text_with_font(
       image,
       left_x0,
-      top_y - 24,
+      time_y,
       clock.time_label,
-      platform::panel_font_assets::kFontInterBlack84);
+      time_font);
+  const TextVerticalBounds time_bounds = text_vertical_bounds_with_font(clock.time_label, time_font);
+  const int time_bottom = time_y + (time_bounds.valid ? time_bounds.bottom : time_font.line_height);
+  const int weekday_y = time_bottom + 13;
   if (clock.valid) {
     draw_text_with_font_spaced(
         image,
         left_x0,
-        top_y + 92,
+        weekday_y,
         weekday,
-        platform::panel_font_assets::kFontInterBold17,
+        weekday_font,
         4);
+    const int weekday_h = text_height_with_font(weekday, weekday_font);
+    const int date_y = weekday_y + weekday_h + 11;
     draw_text_with_font(
         image,
         left_x0,
-        top_y + 118,
+        date_y,
         date,
-        platform::panel_font_assets::kFontInterBold18);
+        date_font);
   } else {
     draw_text_with_font(
         image,
         left_x0,
-        top_y + 92,
+        weekday_y,
         "--",
         platform::panel_font_assets::kFontJetBold13);
   }
@@ -1057,12 +1085,19 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
     draw_degree_mark(image, temp_x + text_width_with_font(temp, temp_font) + 2, top_y + 8, 6);
   }
   if (!location.empty()) {
+    const BitmapFont& city_font = platform::panel_font_assets::kFontJetBold13;
+    const int city_h = text_height_with_font(uppercase_copy(location), city_font);
+    const int city_top = std::max(outer_y0 + 4, (top_y - 2) - city_h - 6);
+    const int city_y = baseline_y_for_top_with_font(
+        uppercase_copy(location),
+        city_font,
+        city_top);
     draw_right_aligned_text_with_font(
         image,
         weather_right,
-        metrics.weather_city_y,
+        city_y,
         uppercase_copy(location),
-        platform::panel_font_assets::kFontJetBold13);
+        city_font);
   }
   draw_icon(
       image,
