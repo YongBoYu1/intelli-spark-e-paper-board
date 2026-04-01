@@ -453,6 +453,61 @@ int text_width_with_font(const std::string& text, const BitmapFont& font) {
   return width;
 }
 
+int text_width_with_font_spaced(
+    const std::string& text,
+    const BitmapFont& font,
+    const int spacing) {
+  if (text.empty()) {
+    return 0;
+  }
+  int width = 0;
+  bool first = true;
+  for (const char ch : text) {
+    if (!first) {
+      width += spacing;
+    }
+    width += font.glyphs[glyph_index(ch)].advance;
+    first = false;
+  }
+  return width;
+}
+
+std::string truncate_text_with_font(
+    const std::string& text,
+    const BitmapFont& font,
+    const int max_width_px,
+    const int spacing = 0) {
+  if (text.empty() || max_width_px <= 0) {
+    return "";
+  }
+  if (text_width_with_font_spaced(text, font, spacing) <= max_width_px) {
+    return text;
+  }
+
+  const std::string ellipsis = "...";
+  const int ellipsis_w = text_width_with_font_spaced(ellipsis, font, spacing);
+  if (ellipsis_w >= max_width_px) {
+    return ellipsis;
+  }
+  const int budget = std::max(0, max_width_px - ellipsis_w);
+
+  std::string out;
+  int width = 0;
+  for (const char ch : text) {
+    const int glyph_w = font.glyphs[glyph_index(ch)].advance;
+    const int extra = glyph_w + (out.empty() ? 0 : spacing);
+    if (width + extra > budget) {
+      break;
+    }
+    if (!out.empty()) {
+      width += spacing;
+    }
+    width += glyph_w;
+    out.push_back(ch);
+  }
+  return out.empty() ? ellipsis : (out + ellipsis);
+}
+
 struct TextVerticalBounds {
   int top{0};
   int bottom{0};
@@ -488,17 +543,6 @@ int text_height_with_font(const std::string& text, const BitmapFont& font) {
     return font.line_height;
   }
   return std::max(1, bounds.bottom - bounds.top);
-}
-
-int baseline_y_for_top_with_font(
-    const std::string& text,
-    const BitmapFont& font,
-    const int top_y) {
-  const TextVerticalBounds bounds = text_vertical_bounds_with_font(text, font);
-  if (!bounds.valid) {
-    return top_y;
-  }
-  return top_y - bounds.top;
 }
 
 int centered_text_y_with_font(
@@ -584,11 +628,19 @@ void draw_mask_icon(
   }
 }
 
-std::string right_fit(const std::string& value, const int scale, const int width_px) {
-  return truncate_text_px(uppercase_copy(value), scale, width_px);
+std::string right_fit_with_font(
+    const std::string& value,
+    const BitmapFont& font,
+    const int width_px,
+    const int spacing = 0) {
+  return truncate_text_with_font(uppercase_copy(value), font, width_px, spacing);
 }
 
-std::string location_label(const app::AppState& state, const int width_px) {
+std::string location_label(
+    const app::AppState& state,
+    const BitmapFont& font,
+    const int width_px,
+    const int spacing = 0) {
   std::string location = trim_copy(state.dashboard.location);
   if (location.empty()) {
     location = trim_copy(state.onboarding.timezone);
@@ -605,7 +657,7 @@ std::string location_label(const app::AppState& state, const int width_px) {
   if (location.empty()) {
     location = "Toronto";
   }
-  return truncate_text_px(uppercase_copy(location), 1, width_px);
+  return truncate_text_with_font(uppercase_copy(location), font, width_px, spacing);
 }
 
 void draw_right_aligned_text_with_font(
@@ -616,6 +668,17 @@ void draw_right_aligned_text_with_font(
     const BitmapFont& font) {
   const int width = text_width_with_font(text, font);
   draw_text_with_font(image, right_x - width, baseline_y, text, font);
+}
+
+void draw_right_aligned_text_with_font_spaced(
+    std::vector<uint8_t>& image,
+    const int right_x,
+    const int y,
+    const std::string& text,
+    const BitmapFont& font,
+    const int spacing) {
+  const int width = text_width_with_font_spaced(text, font, spacing);
+  draw_text_with_font_spaced(image, right_x - width, y, text, font, spacing);
 }
 
 void draw_section_rule(
@@ -918,23 +981,24 @@ void draw_family_board(
     std::vector<uint8_t>& image,
     const int x0,
     const int x1,
-    const int top_y,
+    const int label_y,
+    const int rule_y,
     const int bottom_y,
     const app::DashboardSummary& dashboard) {
   const BitmapFont& label_font = platform::panel_font_assets::kFontJetExtraBold16;
   const BitmapFont& meta_font = platform::panel_font_assets::kFontJetBold13;
-  draw_text_with_font(image, x0, top_y, "FAMILY BOARD", label_font);
+  draw_text_with_font_spaced(image, x0, label_y, "FAMILY BOARD", label_font, 3);
   if (!dashboard.family_memo_author.empty()) {
     draw_right_aligned_text_with_font(
         image,
         x1,
-        top_y,
+        label_y,
         uppercase_copy(dashboard.family_memo_author),
         meta_font);
   }
-  draw_section_rule(image, x0, x1, top_y + 18);
+  draw_section_rule(image, x0, x1, rule_y);
 
-  const int memo_y = top_y + 34;
+  const int memo_y = rule_y + 14;
   const int memo_width = x1 - x0 - 8;
   if (!dashboard.family_memo_text.empty()) {
     draw_text_wrapped(image, x0, memo_y, memo_width, dashboard.family_memo_text, 2, 5);
@@ -957,11 +1021,11 @@ void draw_voice_lane(
     const int x1) {
   const int lane_h = 29;
   const int icon_size = 16;
-  const BitmapFont& font = platform::panel_font_assets::kFontJetBold13;
+  const BitmapFont& font = platform::panel_font_assets::kFontInterMedium13;
   const std::string label = "Hold to talk";
   fill_white_rect(image, x0, y0 - 1, x1, y0 + lane_h + 1);
   const int icon_x = x0 + 2;
-  const int icon_y = y0 + ((lane_h - icon_size) / 2);
+  const int icon_y = y0 + ((lane_h - icon_size) / 2) - 1;
   draw_mic_icon(image, icon_x, icon_y);
   const int text_x = icon_x + icon_size + 7;
   const int text_y = centered_text_y_with_font(y0, lane_h, label, font);
@@ -1020,55 +1084,57 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
     }
   }
 
-  const std::string weekday = uppercase_copy(clock.weekday_label);
-  const std::string date = clock.date_label;
-  const std::string location = location_label(state, weather_col_w);
-  const std::string temp = std::to_string(state.dashboard.weather_temperature_c);
-  const std::string weather = right_fit(state.dashboard.weather_condition, 1, weather_col_w);
-  const std::string humidity =
-      "HUM " + std::to_string(state.dashboard.weather_humidity_percent) + "%";
-  const BitmapFont& weather_meta_font = platform::panel_font_assets::kFontJetBold15;
-  const int weather_desc_w =
-      text_width_with_font(uppercase_copy(weather), weather_meta_font);
-  const int icon_center_x = weather_right - (weather_desc_w / 2);
-  const int weather_icon_x = std::max(
-      weather_left,
-      std::min(
-          weather_right - metrics.weather_icon_size,
-          icon_center_x - (metrics.weather_icon_size / 2)));
-
   const BitmapFont& time_flow_font = platform::panel_font_assets::kFontInterBlack84;
-  const BitmapFont& time_display_font = platform::panel_font_assets::kFontInterBlack87;
+  const BitmapFont& time_display_font_large = platform::panel_font_assets::kFontInterBlack109;
+  const BitmapFont& time_display_font_mid = platform::panel_font_assets::kFontInterBlack87;
   const BitmapFont& weekday_font = platform::panel_font_assets::kFontInterSemiBold15;
   const BitmapFont& date_font = platform::panel_font_assets::kFontInterBold18;
-  const int time_y = top_y - 24;
-  draw_text_with_font(
-      image,
-      left_x0,
-      time_y,
-      clock.time_label,
-      time_display_font);
+  const BitmapFont& city_font = platform::panel_font_assets::kFontInterSemiBold13;
+  const BitmapFont& temp_font = platform::panel_font_assets::kFontInterBlack66;
+  const BitmapFont& weather_meta_font = platform::panel_font_assets::kFontJetBold15;
+  const BitmapFont& family_label_font = platform::panel_font_assets::kFontJetExtraBold16;
+
+  const std::string weekday = uppercase_copy(clock.weekday_label);
+  const std::string date = clock.date_label;
+  const std::string temp = std::to_string(state.dashboard.weather_temperature_c);
+  const std::string weather =
+      right_fit_with_font(state.dashboard.weather_condition, weather_meta_font, weather_col_w, 1);
+  const std::string humidity = right_fit_with_font(
+      "HUM " + std::to_string(state.dashboard.weather_humidity_percent) + "%",
+      weather_meta_font,
+      weather_col_w,
+      1);
+  const std::string location = location_label(
+      state,
+      city_font,
+      std::max(60, weather_col_w),
+      1);
+
+  const int clock_x = left_x0;
+  const int clock_y = top_y - 24;
+  const int clock_weather_gap = 14;
+  const int clock_budget_w = weather_left - clock_x - clock_weather_gap;
+  const BitmapFont* time_display_font = &time_display_font_large;
+  if (text_width_with_font(clock.time_label, *time_display_font) > clock_budget_w) {
+    time_display_font = &time_display_font_mid;
+  }
+  if (text_width_with_font(clock.time_label, *time_display_font) > clock_budget_w) {
+    time_display_font = &time_flow_font;
+  }
+  draw_text_with_font(image, clock_x, clock_y, clock.time_label, *time_display_font);
+
   const TextVerticalBounds time_flow_bounds =
       text_vertical_bounds_with_font(clock.time_label, time_flow_font);
   const int time_flow_bottom =
       top_y + (time_flow_bounds.valid ? time_flow_bounds.bottom : time_flow_font.line_height);
   const int weekday_y = time_flow_bottom + 13;
+  int weather_bottom = weekday_y;
   if (clock.valid) {
-    draw_text_with_font_spaced(
-        image,
-        left_x0,
-        weekday_y,
-        weekday,
-        weekday_font,
-        4);
-    const int weekday_h = text_height_with_font(weekday, weekday_font);
+    draw_text_with_font_spaced(image, left_x0, weekday_y, weekday, weekday_font, 4);
+    const int weekday_h = text_height_with_font("Ag", weekday_font);
     const int date_y = weekday_y + weekday_h + 11;
-    draw_text_with_font(
-        image,
-        left_x0,
-        date_y,
-        date,
-        date_font);
+    draw_text_with_font(image, left_x0, date_y, date, date_font);
+    weather_bottom = date_y + text_height_with_font(date, date_font);
   } else {
     draw_text_with_font(
         image,
@@ -1078,52 +1144,72 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
         platform::panel_font_assets::kFontJetBold13);
   }
 
-  draw_right_aligned_text_with_font(
-      image,
-      weather_right,
-      top_y - 2,
-      temp,
-      platform::panel_font_assets::kFontInterBlack66);
+  const int temp_y = top_y - 2;
+  draw_right_aligned_text_with_font(image, weather_right, temp_y, temp, temp_font);
   {
-    const BitmapFont& temp_font = platform::panel_font_assets::kFontInterBlack66;
     const int temp_x = weather_right - text_width_with_font(temp, temp_font);
     draw_degree_mark(image, temp_x + text_width_with_font(temp, temp_font) + 2, top_y + 8, 6);
   }
   if (!location.empty()) {
-    const BitmapFont& city_font = platform::panel_font_assets::kFontInterSemiBold13;
-    const int city_h = text_height_with_font(uppercase_copy(location), city_font);
-    const int city_top = std::max(outer_y0 + 4, (top_y - 2) - city_h - 6);
-    const int city_y = baseline_y_for_top_with_font(
-        uppercase_copy(location),
-        city_font,
-        city_top);
-    draw_right_aligned_text_with_font(
+    const int city_h = text_height_with_font(location, city_font);
+    const int city_y = std::max(outer_y0 + 4, temp_y - city_h - 6);
+    draw_right_aligned_text_with_font_spaced(
         image,
         weather_right,
         city_y,
-        uppercase_copy(location),
-        city_font);
+        location,
+        city_font,
+        1);
+    weather_bottom = std::max(weather_bottom, city_y + city_h);
   }
+
+  const int desc_y = temp_y + text_height_with_font(temp, temp_font) + 16 + 5;
+  const int desc_h = text_height_with_font(weather, weather_meta_font);
+  draw_right_aligned_text_with_font_spaced(
+      image,
+      weather_right,
+      desc_y,
+      weather,
+      weather_meta_font,
+      1);
+  const int weather_desc_w = text_width_with_font_spaced(weather, weather_meta_font, 1);
+  const int icon_center_x = weather_right - (weather_desc_w / 2);
+  const int weather_icon_y = desc_y + desc_h + 10;
+  const int weather_icon_size = std::max(12, static_cast<int>(std::lround(34.0 * 1.35)));
+  const int weather_icon_x = std::max(
+      weather_left,
+      std::min(
+          weather_right - weather_icon_size,
+          icon_center_x - (weather_icon_size / 2)));
   draw_icon(
       image,
       weather_icon_x,
-      metrics.weather_icon_y,
+      weather_icon_y,
       state.dashboard.weather_condition,
-      metrics.weather_icon_size);
-  draw_right_aligned_text_with_font(
-      image,
-      weather_right,
-      metrics.weather_desc_y,
-      uppercase_copy(weather),
-      weather_meta_font);
-  draw_right_aligned_text_with_font(
-      image,
-      weather_right,
-      metrics.weather_humidity_y,
-      uppercase_copy(humidity),
-      weather_meta_font);
+      weather_icon_size);
 
-  const int family_title_y = metrics.family_rule_y - 18;
+  const int humidity_y = weather_icon_y + weather_icon_size + 8;
+  draw_right_aligned_text_with_font_spaced(
+      image,
+      weather_right,
+      humidity_y,
+      humidity,
+      weather_meta_font,
+      1);
+  weather_bottom = std::max(
+      weather_bottom,
+      std::max(desc_y + desc_h, humidity_y + text_height_with_font(humidity, weather_meta_font)));
+
+  const int header_rule_y = weather_bottom + 28;
+  const int family_label_y = header_rule_y + 8;
+  const int family_rule_y = family_label_y + text_height_with_font("Ag", family_label_font) + 8;
+  HomeLandscapeMetrics render_metrics = metrics;
+  render_metrics.weather_desc_y = desc_y;
+  render_metrics.weather_icon_y = weather_icon_y;
+  render_metrics.weather_humidity_y = humidity_y;
+  render_metrics.weather_bottom = weather_bottom;
+  render_metrics.family_rule_y = family_rule_y;
+
   const int voice_margin = 14;
   const int voice_lane_h = 29;
   const int voice_lane_y = std::max(voice_margin, kPanelHeight - voice_margin - voice_lane_h);
@@ -1131,13 +1217,14 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       image,
       left_x0,
       left_x1,
-      family_title_y,
+      family_label_y,
+      family_rule_y,
       voice_lane_y - 4,
       state.dashboard);
   draw_voice_lane(image, 14, voice_lane_y, 14 + 340);
 
-  draw_inventory_section(image, right_x0, right_x1, metrics.inv_y, state);
-  draw_reminders_section(image, right_x0, right_x1, state, metrics);
+  draw_inventory_section(image, right_x0, right_x1, render_metrics.inv_y, state);
+  draw_reminders_section(image, right_x0, right_x1, state, render_metrics);
 
   return image;
 }
