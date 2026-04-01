@@ -74,20 +74,20 @@ void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
     case 'A':
     case 'h':
     case 'H':
-      runtime.dispatch(fridge_ink::app::Event::Rotate(-1));
+      runtime.dispatch(fridge_ink::app::Event::Rotate(-1, fridge_ink::platform::monotonic_ms()));
       break;
     case 'd':
     case 'D':
     case 'l':
     case 'L':
-      runtime.dispatch(fridge_ink::app::Event::Rotate(1));
+      runtime.dispatch(fridge_ink::app::Event::Rotate(1, fridge_ink::platform::monotonic_ms()));
       break;
     case 'c':
     case 'C':
     case '\r':
     case '\n':
     case ' ':
-      runtime.dispatch(fridge_ink::app::Event::Click());
+      runtime.dispatch(fridge_ink::app::Event::Click(fridge_ink::platform::monotonic_ms()));
       break;
     default:
       break;

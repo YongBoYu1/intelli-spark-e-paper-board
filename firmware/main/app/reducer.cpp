@@ -11,6 +11,8 @@ namespace {
 constexpr int kMenuItemCount = 6;
 constexpr int kHomeInventoryVisibleMax = 3;
 constexpr int kHomeReminderVisibleMax = 4;
+constexpr std::uint64_t kHomeCompletedHideGraceMs = 15000;
+constexpr std::uint64_t kHomeCompletedHideSettleMs = 600;
 constexpr std::size_t kOnboardingStepCount = 4;
 constexpr std::time_t kValidWallClockThreshold = 1700000000;
 constexpr std::array<const char*, 4> kTimezoneChoices = {
@@ -38,6 +40,32 @@ struct HomeFocusTarget {
   int item_index{-1};
 };
 
+bool contains_index(const std::vector<int>& values, const int index) {
+  return std::find(values.begin(), values.end(), index) != values.end();
+}
+
+void remove_index(std::vector<int>& values, const int index) {
+  values.erase(
+      std::remove(values.begin(), values.end(), index),
+      values.end());
+}
+
+std::vector<int> visible_reminder_indices(const AppState& state) {
+  std::vector<int> indices{};
+  const int total = static_cast<int>(state.dashboard.reminder_items.size());
+  indices.reserve(std::min(total, kHomeReminderVisibleMax));
+  for (int i = 0; i < total; ++i) {
+    if (contains_index(state.home.hidden_reminder_indices, i)) {
+      continue;
+    }
+    indices.push_back(i);
+    if (static_cast<int>(indices.size()) >= kHomeReminderVisibleMax) {
+      break;
+    }
+  }
+  return indices;
+}
+
 int home_inventory_count(const AppState& state) {
   return std::min(
       static_cast<int>(state.dashboard.inventory_items.size()),
@@ -45,9 +73,7 @@ int home_inventory_count(const AppState& state) {
 }
 
 int home_reminder_count(const AppState& state) {
-  return std::min(
-      static_cast<int>(state.dashboard.reminder_items.size()),
-      kHomeReminderVisibleMax);
+  return static_cast<int>(visible_reminder_indices(state).size());
 }
 
 int home_focus_count(const AppState& state) {
@@ -55,7 +81,8 @@ int home_focus_count(const AppState& state) {
 }
 
 int first_home_focus_index(const AppState& state) {
-  return home_focus_count(state) > 2 ? 2 : 0;
+  (void)state;
+  return 0;
 }
 
 void clamp_home_focus(AppState& state) {
@@ -85,8 +112,9 @@ HomeFocusTarget home_focus_target(const AppState& state) {
   }
   pos -= inventory_count;
 
-  if (pos < home_reminder_count(state)) {
-    return {HomeFocusTargetKind::ReminderItem, pos};
+  const std::vector<int> reminder_indices = visible_reminder_indices(state);
+  if (pos < static_cast<int>(reminder_indices.size())) {
+    return {HomeFocusTargetKind::ReminderItem, reminder_indices[static_cast<std::size_t>(pos)]};
   }
 
   return {HomeFocusTargetKind::None, -1};
@@ -99,6 +127,79 @@ void ensure_completion_flags(
     return;
   }
   completed.resize(item_count, false);
+}
+
+bool remove_reminder_visibility_tracking(
+    AppState& state,
+    const int item_index,
+    const bool restore_visible) {
+  if (item_index < 0) {
+    return false;
+  }
+  bool changed = false;
+  const auto pending_before = state.home.pending_hide_reminder_indices.size();
+  remove_index(state.home.pending_hide_reminder_indices, item_index);
+  if (state.home.pending_hide_reminder_indices.size() != pending_before) {
+    changed = true;
+  }
+
+  if (restore_visible) {
+    const auto hidden_before = state.home.hidden_reminder_indices.size();
+    remove_index(state.home.hidden_reminder_indices, item_index);
+    if (state.home.hidden_reminder_indices.size() != hidden_before) {
+      changed = true;
+    }
+  }
+
+  if (state.home.pending_hide_reminder_indices.empty()) {
+    state.home.hide_due_ms = 0;
+  }
+  return changed;
+}
+
+void mark_pending_reminder_hide(
+    AppState& state,
+    const int item_index,
+    const std::uint64_t now_ms) {
+  if (item_index < 0) {
+    return;
+  }
+  remove_index(state.home.hidden_reminder_indices, item_index);
+  if (!contains_index(state.home.pending_hide_reminder_indices, item_index)) {
+    state.home.pending_hide_reminder_indices.push_back(item_index);
+  }
+  const std::uint64_t base_ms = now_ms > 0 ? now_ms : state.last_tick_ms;
+  state.home.hide_due_ms = base_ms + kHomeCompletedHideGraceMs;
+}
+
+bool home_hide_ready(const AppState& state, const std::uint64_t now_ms) {
+  if (state.home.pending_hide_reminder_indices.empty()) {
+    return false;
+  }
+  if (state.home.hide_due_ms == 0 || now_ms < state.home.hide_due_ms) {
+    return false;
+  }
+  return (now_ms - state.home.last_interaction_ms) >= kHomeCompletedHideSettleMs;
+}
+
+bool promote_pending_reminder_hide(AppState& state) {
+  if (state.home.pending_hide_reminder_indices.empty()) {
+    return false;
+  }
+  bool changed = false;
+  for (const int index : state.home.pending_hide_reminder_indices) {
+    if (index < 0 ||
+        index >= static_cast<int>(state.dashboard.reminder_items.size())) {
+      continue;
+    }
+    if (!contains_index(state.home.hidden_reminder_indices, index)) {
+      state.home.hidden_reminder_indices.push_back(index);
+      changed = true;
+    }
+  }
+  state.home.pending_hide_reminder_indices.clear();
+  state.home.hide_due_ms = 0;
+  return changed;
 }
 
 void enter_onboarding_start(AppState& state) {
@@ -164,6 +265,7 @@ void open_menu_target(AppState& state) {
       state.screen = Screen::Home;
       return;
     case 1:
+      state.home.widget_mode = WidgetMode::Timer;
       state.screen = Screen::Timer;
       return;
     case 2:
@@ -242,9 +344,18 @@ void handle_tick(AppState& state, const Event& event) {
   if (state.screen == Screen::Onboarding) {
     refresh_onboarding_status(state);
   }
+
+  if (state.screen == Screen::Home &&
+      home_hide_ready(state, event.now_ms) &&
+      promote_pending_reminder_hide(state)) {
+    clamp_home_focus(state);
+  }
 }
 
 void handle_rotate(AppState& state, const Event& event) {
+  if (event.now_ms > 0) {
+    state.home.last_interaction_ms = event.now_ms;
+  }
   if (state.screen == Screen::Landing) {
     const auto next_index =
         (state.landing.language_index + (event.rotate_delta >= 0 ? 1U : 2U)) % 3U;
@@ -294,7 +405,10 @@ void handle_rotate(AppState& state, const Event& event) {
   }
 }
 
-void handle_click(AppState& state) {
+void handle_click(AppState& state, const Event& event) {
+  if (event.now_ms > 0) {
+    state.home.last_interaction_ms = event.now_ms;
+  }
   if (state.screen == Screen::Landing) {
     if (state.setup_completed) {
       enter_home(state);
@@ -356,6 +470,10 @@ void handle_click(AppState& state) {
       case HomeFocusTargetKind::None:
         return;
       case HomeFocusTargetKind::Clock:
+        if (state.home.widget_mode == WidgetMode::Timer) {
+          state.timer.running = !state.timer.running;
+          return;
+        }
         state.screen = Screen::Calendar;
         return;
       case HomeFocusTargetKind::Weather:
@@ -377,8 +495,14 @@ void handle_click(AppState& state) {
             state.dashboard.reminder_items.size());
         if (target.item_index >= 0 &&
             target.item_index < static_cast<int>(state.dashboard.reminder_completed.size())) {
-          state.dashboard.reminder_completed[static_cast<std::size_t>(target.item_index)] =
-              !state.dashboard.reminder_completed[static_cast<std::size_t>(target.item_index)];
+          const std::size_t index = static_cast<std::size_t>(target.item_index);
+          state.dashboard.reminder_completed[index] =
+              !state.dashboard.reminder_completed[index];
+          if (state.dashboard.reminder_completed[index]) {
+            mark_pending_reminder_hide(state, target.item_index, event.now_ms);
+          } else {
+            remove_reminder_visibility_tracking(state, target.item_index, true);
+          }
         }
         return;
     }
@@ -410,7 +534,7 @@ void reduce(AppState& state, const Event& event) {
       handle_rotate(state, event);
       break;
     case EventType::Click:
-      handle_click(state);
+      handle_click(state, event);
       break;
   }
 }

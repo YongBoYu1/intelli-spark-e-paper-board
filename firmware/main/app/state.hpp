@@ -25,6 +25,11 @@ enum class Language {
   FrFr,
 };
 
+enum class WidgetMode {
+  Clock,
+  Timer,
+};
+
 struct DashboardSummary {
   std::string location{"Kitchen"};
   int battery_percent{84};
@@ -54,6 +59,11 @@ struct HomeState {
   std::uint64_t clock_seed_monotonic_ms{0};
   bool clock_is_real{false};
   bool show_focus{false};
+  WidgetMode widget_mode{WidgetMode::Clock};
+  std::vector<int> pending_hide_reminder_indices{};
+  std::vector<int> hidden_reminder_indices{};
+  std::uint64_t hide_due_ms{0};
+  std::uint64_t last_interaction_ms{0};
 };
 
 struct MenuState {

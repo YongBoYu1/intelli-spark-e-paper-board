@@ -35,6 +35,9 @@ void Runtime::dispatch(const Event& event) {
   const auto old_home_focus = state_.home.focused_index;
   const auto old_clock_bucket = state_.home.clock_minute_bucket;
   const auto old_show_focus = state_.home.show_focus;
+  const auto old_widget_mode = state_.home.widget_mode;
+  const auto old_pending_hide = state_.home.pending_hide_reminder_indices;
+  const auto old_hidden_reminders = state_.home.hidden_reminder_indices;
   const auto old_inventory_completed = state_.dashboard.inventory_completed;
   const auto old_reminder_completed = state_.dashboard.reminder_completed;
   const auto old_status = state_.landing.status;
@@ -53,6 +56,9 @@ void Runtime::dispatch(const Event& event) {
       state_.home.focused_index != old_home_focus ||
       state_.home.clock_minute_bucket != old_clock_bucket ||
       state_.home.show_focus != old_show_focus ||
+      state_.home.widget_mode != old_widget_mode ||
+      state_.home.pending_hide_reminder_indices != old_pending_hide ||
+      state_.home.hidden_reminder_indices != old_hidden_reminders ||
       state_.dashboard.inventory_completed != old_inventory_completed ||
       state_.dashboard.reminder_completed != old_reminder_completed ||
       state_.landing.status != old_status ||

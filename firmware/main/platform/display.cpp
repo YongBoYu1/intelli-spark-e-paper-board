@@ -294,7 +294,7 @@ class EpaperDisplay final : public Display {
 
         // Force full refresh periodically to prevent ghosting buildup
         partial_since_full_++;
-        constexpr int kMaxPartialBeforeFull = 10;
+        constexpr int kMaxPartialBeforeFull = 30;
         constexpr float kPartialAreaLimit = 0.40f;
 
         if (!kEnablePartialRefresh ||

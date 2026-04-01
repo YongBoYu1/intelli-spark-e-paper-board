@@ -22,16 +22,18 @@ struct Event {
     return event;
   }
 
-  static Event Rotate(int delta) {
+  static Event Rotate(int delta, std::uint64_t now_ms_value = 0) {
     Event event;
     event.type = EventType::Rotate;
     event.rotate_delta = delta >= 0 ? 1 : -1;
+    event.now_ms = now_ms_value;
     return event;
   }
 
-  static Event Click() {
+  static Event Click(std::uint64_t now_ms_value = 0) {
     Event event;
     event.type = EventType::Click;
+    event.now_ms = now_ms_value;
     return event;
   }
 };
