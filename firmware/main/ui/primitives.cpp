@@ -26,16 +26,36 @@ void draw_mask_icon_scaled_32(
     const int x,
     const int y,
     const int size,
-    const char* const rows[32]) {
+    const char* const* rows) {
   const int draw_size = std::max(1, size);
+  // Use area-style supersampling so upscaled 1-bit icons keep smoother edges
+  // than nearest-neighbor pixel replication.
+  const int kSrcSize = weather_icon_assets::kKickstandThinGridSize;
+  constexpr int kSamples = 3;
+  const int on_threshold = draw_size >= kSrcSize ? 5 : 4;
   for (int yy = 0; yy < draw_size; ++yy) {
-    const int src_y = std::min(31, (yy * 32) / draw_size);
     for (int xx = 0; xx < draw_size; ++xx) {
-      const int src_x = std::min(31, (xx * 32) / draw_size);
-      if (rows[src_y][src_x] != '#') {
-        continue;
+      int on_count = 0;
+      for (int sy = 0; sy < kSamples; ++sy) {
+        const float fy = static_cast<float>(yy) +
+                         (static_cast<float>(sy) + 0.5f) / static_cast<float>(kSamples);
+        int src_y = static_cast<int>(fy * static_cast<float>(kSrcSize) /
+                                     static_cast<float>(draw_size));
+        src_y = std::max(0, std::min(kSrcSize - 1, src_y));
+        for (int sx = 0; sx < kSamples; ++sx) {
+          const float fx = static_cast<float>(xx) +
+                           (static_cast<float>(sx) + 0.5f) / static_cast<float>(kSamples);
+          int src_x = static_cast<int>(fx * static_cast<float>(kSrcSize) /
+                                       static_cast<float>(draw_size));
+          src_x = std::max(0, std::min(kSrcSize - 1, src_x));
+          if (rows[src_y][src_x] == '#') {
+            ++on_count;
+          }
+        }
       }
-      set_black_pixel(image, x + xx, y + yy);
+      if (on_count >= on_threshold) {
+        set_black_pixel(image, x + xx, y + yy);
+      }
     }
   }
 }
@@ -178,4 +198,3 @@ void draw_icon(
 }
 
 }  // namespace fridge_ink::ui
-

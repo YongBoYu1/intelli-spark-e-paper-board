@@ -704,7 +704,35 @@ void draw_degree_mark(
     const int y,
     const int size = 7) {
   const int d = std::max(4, size);
-  draw_rounded_rect_stroke(image, x, y, x + d, y + d, std::max(2, d / 2), 1);
+  const int r = std::max(2, d / 2);
+  const int cx = x + r;
+  const int cy = y + r;
+  const int outer_r2 = r * r;
+  const int inner_r = std::max(0, r - 2);
+  const int inner_r2 = inner_r * inner_r;
+
+  for (int py = y; py < y + d; ++py) {
+    for (int px = x; px < x + d; ++px) {
+      const int dx = px - cx;
+      const int dy = py - cy;
+      const int dist2 = dx * dx + dy * dy;
+      if (dist2 <= outer_r2) {
+        set_black_pixel(image, px, py);
+      }
+    }
+  }
+  if (inner_r > 0) {
+    for (int py = y; py < y + d; ++py) {
+      for (int px = x; px < x + d; ++px) {
+        const int dx = px - cx;
+        const int dy = py - cy;
+        const int dist2 = dx * dx + dy * dy;
+        if (dist2 <= inner_r2) {
+          clear_pixel(image, px, py);
+        }
+      }
+    }
+  }
 }
 
 void draw_text_strikethrough(
@@ -1154,11 +1182,13 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   }
 
   const int temp_y = top_y - 2;
-  draw_right_aligned_text_with_font(image, weather_right, temp_y, temp, temp_font);
-  {
-    const int temp_x = weather_right - text_width_with_font(temp, temp_font);
-    draw_degree_mark(image, temp_x + text_width_with_font(temp, temp_font) + 2, top_y + 8, 6);
-  }
+  const int temp_w = text_width_with_font(temp, temp_font);
+  constexpr int degree_gap = 0;
+  constexpr int degree_size = 8;
+  const int temp_group_w = temp_w + degree_gap + degree_size;
+  const int temp_x = weather_right - temp_group_w;
+  draw_text_with_font(image, temp_x, temp_y, temp, temp_font);
+  draw_degree_mark(image, temp_x + temp_w + degree_gap, temp_y + 7, degree_size);
   if (!location.empty()) {
     const int city_h = text_height_with_font(location, city_font);
     const int city_y = std::max(outer_y0 + 4, temp_y - city_h - 6);
