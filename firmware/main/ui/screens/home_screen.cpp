@@ -344,6 +344,62 @@ platform::DirtyRect home_focus_rect(
   return home_header_focus_rect(home_landscape_metrics(), kind);
 }
 
+platform::DirtyRect home_right_list_rect(const HomeDirtySnapshot& snapshot) {
+  const HomeLandscapeMetrics metrics = home_landscape_metrics();
+  const int inventory_rows = std::max(0, snapshot.inventory_count);
+  const int reminder_rows = std::max(0, snapshot.reminder_count);
+  const int y0 = std::max(metrics.oy0, metrics.inv_y - 8);
+  const int y1 = std::min(
+      metrics.oy1,
+      home_shopping_row_y(metrics, inventory_rows) + (reminder_rows * metrics.shop_row_h) + 12);
+  return clip_rect(
+      {metrics.row_x0, y0, metrics.row_x1, std::max(y0 + 8, y1)},
+      metrics.width,
+      metrics.height);
+}
+
+platform::DirtyRect home_family_board_rect() {
+  const HomeLandscapeMetrics metrics = home_landscape_metrics();
+  const int left_x0 = metrics.ox0 + 24;
+  const int left_x1 = metrics.weather_left - 24;
+  const int voice_lane_y = std::max(14, metrics.height - 14 - 29);
+  const int y0 = std::max(metrics.oy0, metrics.family_rule_y - 26);
+  const int y1 = std::max(y0 + 8, voice_lane_y - 4);
+  return clip_rect({left_x0, y0, left_x1, y1}, metrics.width, metrics.height);
+}
+
+platform::DirtyRect merge_focus_transition_rects(
+    const platform::DirtyRect& previous,
+    const platform::DirtyRect& current) {
+  if (is_valid_rect(previous) && is_valid_rect(current)) {
+    return merge_rects(previous, current);
+  }
+  if (is_valid_rect(previous)) {
+    return previous;
+  }
+  if (is_valid_rect(current)) {
+    return current;
+  }
+  return {};
+}
+
+void append_rect_if_valid(
+    std::vector<platform::DirtyRect>& rects,
+    const platform::DirtyRect& rect) {
+  if (!is_valid_rect(rect)) {
+    return;
+  }
+  for (const auto& existing : rects) {
+    if (existing.x0 == rect.x0 &&
+        existing.y0 == rect.y0 &&
+        existing.x1 == rect.x1 &&
+        existing.y1 == rect.y1) {
+      return;
+    }
+  }
+  rects.push_back(rect);
+}
+
 ClockSnapshot resolve_clock_snapshot(
     const std::uint64_t minute_bucket,
     const std::string& timezone_name,
@@ -1274,8 +1330,16 @@ HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
   snapshot.focused_index = state.home.focused_index;
   snapshot.show_focus = state.home.show_focus;
   snapshot.clock_minute_bucket = state.home.clock_minute_bucket;
+  snapshot.widget_mode = state.home.widget_mode;
   snapshot.inventory_count = visible_inventory_count(state.dashboard);
   snapshot.reminder_count = visible_reminder_count(state);
+  snapshot.weather_condition = state.dashboard.weather_condition;
+  snapshot.weather_temperature_c = state.dashboard.weather_temperature_c;
+  snapshot.weather_humidity_percent = state.dashboard.weather_humidity_percent;
+  snapshot.location = state.dashboard.location;
+  snapshot.family_memo_text = state.dashboard.family_memo_text;
+  snapshot.family_memo_author = state.dashboard.family_memo_author;
+  snapshot.family_memo_posted = state.dashboard.family_memo_posted;
   const int count = std::min(
       snapshot.inventory_count,
       static_cast<int>(snapshot.inventory_completed.size()));
@@ -1291,6 +1355,7 @@ HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
       static_cast<int>(snapshot.reminder_completed.size()));
   for (int i = 0; i < reminder_count; ++i) {
     const int item_index = reminder_indices[static_cast<std::size_t>(i)];
+    snapshot.visible_reminder_ids[static_cast<std::size_t>(i)] = item_index;
     snapshot.reminder_completed[static_cast<std::size_t>(i)] =
         item_index >= 0 &&
         item_index < static_cast<int>(state.dashboard.reminder_completed.size()) &&
@@ -1299,14 +1364,25 @@ HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
   return snapshot;
 }
 
-std::vector<platform::DirtyRect> home_dirty_hints(
+HomeDirtyPlan home_dirty_plan(
     const HomeDirtySnapshot& previous,
     const HomeDirtySnapshot& current) {
+  HomeDirtyPlan plan{};
   if (previous.screen != app::Screen::Home || current.screen != app::Screen::Home) {
-    return {};
+    return plan;
   }
 
-  std::vector<platform::DirtyRect> rects;
+  auto add_reason = [&](const char* reason) {
+    if (reason == nullptr) {
+      return;
+    }
+    for (const auto& existing : plan.reasons) {
+      if (existing == reason) {
+        return;
+      }
+    }
+    plan.reasons.emplace_back(reason);
+  };
 
   if (previous.focused_index != current.focused_index ||
       previous.show_focus != current.show_focus) {
@@ -1319,49 +1395,82 @@ std::vector<platform::DirtyRect> home_dirty_hints(
 
     if ((prev_kind == HomeFocusKind::Row && curr_kind == HomeFocusKind::Row) ||
         (prev_kind != HomeFocusKind::Row && curr_kind != HomeFocusKind::Row)) {
-      if (is_valid_rect(prev_rect) && is_valid_rect(curr_rect)) {
-        rects.push_back(merge_rects(prev_rect, curr_rect));
-      } else if (is_valid_rect(prev_rect)) {
-        rects.push_back(prev_rect);
-      } else if (is_valid_rect(curr_rect)) {
-        rects.push_back(curr_rect);
+      const platform::DirtyRect merged = merge_focus_transition_rects(prev_rect, curr_rect);
+      if (is_valid_rect(merged)) {
+        append_rect_if_valid(plan.rects, merged);
+      } else if (prev_kind == HomeFocusKind::Row) {
+        append_rect_if_valid(plan.rects, home_right_list_rect(current));
       }
-      return rects;
-    }
-
-    if (is_valid_rect(prev_rect)) {
-      rects.push_back(prev_rect);
-    }
-    if (is_valid_rect(curr_rect) &&
-        (rects.empty() ||
-         rects.front().x0 != curr_rect.x0 ||
-         rects.front().y0 != curr_rect.y0 ||
-         rects.front().x1 != curr_rect.x1 ||
-         rects.front().y1 != curr_rect.y1)) {
-      rects.push_back(curr_rect);
-    }
-    return rects;
-  }
-
-  if (previous.clock_minute_bucket != current.clock_minute_bucket) {
-    const platform::DirtyRect clock_rect = home_header_focus_rect(
-        home_landscape_metrics(),
-        HomeFocusKind::Clock);
-    if (is_valid_rect(clock_rect)) {
-      rects.push_back(clock_rect);
+      add_reason(
+          prev_kind == HomeFocusKind::Row
+              ? "home.focus_move_row"
+              : "home.focus_move_left_target");
+    } else {
+      append_rect_if_valid(plan.rects, prev_rect);
+      append_rect_if_valid(plan.rects, curr_rect);
+      add_reason(
+          curr_kind == HomeFocusKind::Clock || curr_kind == HomeFocusKind::Weather
+              ? "home.focus_to_left_panel"
+              : "home.focus_from_left_panel");
     }
   }
 
+  if (previous.clock_minute_bucket != current.clock_minute_bucket ||
+      previous.widget_mode != current.widget_mode) {
+    append_rect_if_valid(
+        plan.rects,
+        home_header_focus_rect(home_landscape_metrics(), HomeFocusKind::Clock));
+    add_reason("home.clock_or_timer_state");
+  }
+
+  if (previous.weather_condition != current.weather_condition ||
+      previous.weather_temperature_c != current.weather_temperature_c ||
+      previous.weather_humidity_percent != current.weather_humidity_percent ||
+      previous.location != current.location) {
+    append_rect_if_valid(
+        plan.rects,
+        home_header_focus_rect(home_landscape_metrics(), HomeFocusKind::Weather));
+    add_reason("home.weather_update");
+  }
+
+  const bool reminder_ids_changed =
+      previous.visible_reminder_ids != current.visible_reminder_ids;
+  const bool reminder_rows_changed =
+      previous.reminder_completed != current.reminder_completed ||
+      previous.inventory_completed != current.inventory_completed;
+  const bool section_count_changed =
+      previous.inventory_count != current.inventory_count ||
+      previous.reminder_count != current.reminder_count;
   if (previous.inventory_completed != current.inventory_completed ||
-      previous.reminder_completed != current.reminder_completed) {
-    const platform::DirtyRect row_rect =
-        home_focus_row_rect(current, current.focused_index);
-    if (is_valid_rect(row_rect)) {
-      rects.push_back(row_rect);
+      previous.reminder_completed != current.reminder_completed ||
+      reminder_ids_changed ||
+      section_count_changed) {
+    std::size_t rect_count_before = plan.rects.size();
+    if (!reminder_ids_changed && !section_count_changed && reminder_rows_changed) {
+      append_rect_if_valid(plan.rects, home_focus_row_rect(previous, previous.focused_index));
+      append_rect_if_valid(plan.rects, home_focus_row_rect(current, current.focused_index));
     }
+    const bool row_rect_added = plan.rects.size() > rect_count_before;
+    if (!row_rect_added || reminder_ids_changed || section_count_changed) {
+      append_rect_if_valid(plan.rects, home_right_list_rect(current));
+    }
+    add_reason("home.reminder_row_update");
   }
 
-  return rects;
+  if (previous.family_memo_text != current.family_memo_text ||
+      previous.family_memo_author != current.family_memo_author ||
+      previous.family_memo_posted != current.family_memo_posted) {
+    append_rect_if_valid(plan.rects, home_family_board_rect());
+    add_reason("home.family_board_update");
+  }
+
+  return plan;
+}
+
+std::vector<platform::DirtyRect> home_dirty_hints(
+    const HomeDirtySnapshot& previous,
+    const HomeDirtySnapshot& current) {
+  return home_dirty_plan(previous, current).rects;
 }
 
 }  // namespace fridge_ink::ui

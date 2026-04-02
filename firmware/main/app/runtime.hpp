@@ -7,6 +7,8 @@
 #include "ui/screens/home_screen.hpp"
 
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace fridge_ink::platform {
 class Display;

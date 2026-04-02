@@ -85,6 +85,11 @@ void Runtime::stage_render() {
     render_output.dirty_reasons.push_back("boot.initial");
   }
 
+  if (committed_frame_valid_ && state_.screen != committed_screen_) {
+    render_output.dirty_reasons.push_back(
+        std::string("screen.change_to_") + screen_name(state_.screen));
+  }
+
   if (render_output.dirty_reasons.empty()) {
     render_output.dirty_reasons.push_back("state.change");
   }

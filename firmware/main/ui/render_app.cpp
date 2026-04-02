@@ -35,12 +35,11 @@ RenderOutput render_app(
     case app::Screen::Home:
       output.image = render_home_bitmap(state);
       if (previous_home_snapshot != nullptr) {
-        output.dirty_rects = home_dirty_hints(
+        const HomeDirtyPlan plan = home_dirty_plan(
             *previous_home_snapshot,
             capture_home_dirty_snapshot(state));
-        if (!output.dirty_rects.empty()) {
-          output.dirty_reasons.push_back("home.infer_dirty");
-        }
+        output.dirty_rects = plan.rects;
+        output.dirty_reasons = plan.reasons;
       }
       break;
     case app::Screen::Menu:
