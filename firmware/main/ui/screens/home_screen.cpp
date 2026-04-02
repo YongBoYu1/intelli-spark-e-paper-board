@@ -45,8 +45,8 @@ constexpr const char* kMicMask16[] = {
 struct ClockSnapshot {
   bool valid{false};
   std::string time_label{"--:--"};
-  std::string weekday_label{"THURSDAY"};
-  std::string date_label{"MARCH 26, 2026"};
+  std::string weekday_label{"--"};
+  std::string date_label{"--- --, ----"};
 };
 
 constexpr int kInventoryVisibleMax = 3;
@@ -1273,6 +1273,7 @@ HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
   snapshot.screen = state.screen;
   snapshot.focused_index = state.home.focused_index;
   snapshot.show_focus = state.home.show_focus;
+  snapshot.clock_minute_bucket = state.home.clock_minute_bucket;
   snapshot.inventory_count = visible_inventory_count(state.dashboard);
   snapshot.reminder_count = visible_reminder_count(state);
   const int count = std::min(
@@ -1340,6 +1341,15 @@ std::vector<platform::DirtyRect> home_dirty_hints(
       rects.push_back(curr_rect);
     }
     return rects;
+  }
+
+  if (previous.clock_minute_bucket != current.clock_minute_bucket) {
+    const platform::DirtyRect clock_rect = home_header_focus_rect(
+        home_landscape_metrics(),
+        HomeFocusKind::Clock);
+    if (is_valid_rect(clock_rect)) {
+      rects.push_back(clock_rect);
+    }
   }
 
   if (previous.inventory_completed != current.inventory_completed ||

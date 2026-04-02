@@ -13,6 +13,7 @@ struct HomeDirtySnapshot {
   app::Screen screen{app::Screen::Landing};
   int focused_index{0};
   bool show_focus{false};
+  std::uint64_t clock_minute_bucket{0};
   int inventory_count{0};
   int reminder_count{0};
   std::array<bool, 3> inventory_completed{};

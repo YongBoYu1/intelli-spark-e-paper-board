@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 
 namespace {
 
@@ -23,6 +24,9 @@ constexpr std::uint64_t kRuntimeTickMs = 1000;
 bool vcom_mode = false;
 char vcom_hex[3] = {0, 0, 0};
 int vcom_hex_pos = 0;
+bool time_sync_mode = false;
+char time_epoch_digits[21] = {0};
+int time_epoch_pos = 0;
 
 bool setup_serial_input() {
   usb_serial_jtag_driver_config_t cfg{};
@@ -38,6 +42,10 @@ bool setup_serial_input() {
 
 bool is_hex_char(uint8_t ch) {
   return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+}
+
+bool is_digit_char(uint8_t ch) {
+  return ch >= '0' && ch <= '9';
 }
 
 void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
@@ -63,12 +71,48 @@ void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
     return;
   }
 
+  // Time sync mode: waiting for unix epoch seconds after 't'
+  if (time_sync_mode) {
+    if (byte == '\r' || byte == '\n') {
+      if (time_epoch_pos <= 0) {
+        ESP_LOGW(kTag, "Time sync ignored: empty epoch payload");
+      } else {
+        time_epoch_digits[time_epoch_pos] = '\0';
+        const auto epoch_seconds = static_cast<std::time_t>(
+            strtoull(time_epoch_digits, nullptr, 10));
+        if (fridge_ink::platform::set_wall_time_seconds(epoch_seconds)) {
+          ESP_LOGI(kTag, "Wall clock synced via serial: epoch=%llu",
+                   static_cast<unsigned long long>(epoch_seconds));
+          runtime.dispatch(fridge_ink::app::Event::Tick(fridge_ink::platform::monotonic_ms()));
+        } else {
+          ESP_LOGW(kTag, "Time sync rejected: invalid epoch=%s", time_epoch_digits);
+        }
+      }
+      time_sync_mode = false;
+      time_epoch_pos = 0;
+    } else if (is_digit_char(byte) &&
+               time_epoch_pos < static_cast<int>(sizeof(time_epoch_digits) - 1)) {
+      time_epoch_digits[time_epoch_pos++] = static_cast<char>(byte);
+    } else {
+      ESP_LOGW(kTag, "Time sync cancelled (unexpected char '%c')", byte);
+      time_sync_mode = false;
+      time_epoch_pos = 0;
+    }
+    return;
+  }
+
   switch (byte) {
     case 'v':
     case 'V':
       ESP_LOGI(kTag, "VCOM sweep mode: enter 2 hex digits (e.g. v08, v10, v20)");
       vcom_mode = true;
       vcom_hex_pos = 0;
+      break;
+    case 't':
+    case 'T':
+      ESP_LOGI(kTag, "Time sync mode: enter unix epoch seconds, then press Enter (e.g. t1743621000)");
+      time_sync_mode = true;
+      time_epoch_pos = 0;
       break;
     case 'a':
     case 'A':
@@ -117,7 +161,7 @@ extern "C" void app_main(void) {
 
   const bool serial_input_ok = setup_serial_input();
   if (serial_input_ok) {
-    ESP_LOGI(kTag, "Monitor controls: a/d = rotate, c = click, v<HH> = VCOM sweep (e.g. v08, v10, v20)");
+    ESP_LOGI(kTag, "Monitor controls: a/d = rotate, c = click, t<epoch> = time sync, v<HH> = VCOM sweep");
   }
 
   std::uint64_t last_tick_ms = fridge_ink::platform::monotonic_ms();

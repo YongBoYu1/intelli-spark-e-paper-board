@@ -1,5 +1,6 @@
 #include "app/defaults.hpp"
 
+#include "platform/clock.hpp"
 #include "esp_app_desc.h"
 
 #include <algorithm>
@@ -10,8 +11,8 @@
 namespace fridge_ink::app {
 namespace {
 
-constexpr std::time_t kValidWallClockThreshold = 1700000000;
 constexpr const char* kDefaultTimezone = "America/Toronto";
+const bool kAllowBuildTimestampFallback = false;
 
 int month_index_from_abbrev(const char* month) {
   static constexpr const char* kMonths[] = {
@@ -125,8 +126,8 @@ std::uint64_t app_build_minute_bucket() {
 }
 
 std::uint64_t current_minute_bucket(bool* is_real) {
-  const std::time_t wall = std::time(nullptr);
-  if (wall >= kValidWallClockThreshold) {
+  const std::time_t wall = platform::wall_time_seconds();
+  if (platform::wall_time_is_valid()) {
     if (is_real != nullptr) {
       *is_real = true;
     }
@@ -135,7 +136,10 @@ std::uint64_t current_minute_bucket(bool* is_real) {
   if (is_real != nullptr) {
     *is_real = false;
   }
-  return app_build_minute_bucket();
+  if (kAllowBuildTimestampFallback) {
+    return app_build_minute_bucket();
+  }
+  return 0;
 }
 
 }  // namespace
