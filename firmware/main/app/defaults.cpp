@@ -12,7 +12,7 @@ namespace fridge_ink::app {
 namespace {
 
 constexpr const char* kDefaultTimezone = "America/Toronto";
-const bool kAllowBuildTimestampFallback = false;
+const bool kAllowBuildTimestampFallback = true;
 
 int month_index_from_abbrev(const char* month) {
   static constexpr const char* kMonths[] = {
