@@ -805,14 +805,21 @@ void draw_inventory_section(
     const int title_y,
     const app::AppState& state) {
   const app::DashboardSummary& dashboard = state.dashboard;
-  const BitmapFont& title_font = platform::panel_font_assets::kFontJetBold13;
-  draw_text_with_font(image, x0, title_y, "INVENTORY", title_font);
+  const BitmapFont& title_font = platform::panel_font_assets::kFontInterBold13;
+  constexpr int title_spacing = 2;
+  draw_text_with_font_spaced(image, x0, title_y, "INVENTORY", title_font, title_spacing);
   const int visible_count = visible_inventory_count(dashboard);
   const int open_count = open_item_count(
       static_cast<int>(dashboard.inventory_items.size()),
       dashboard.inventory_completed);
   if (open_count > 0) {
-    draw_right_aligned_text_with_font(image, x1, title_y, std::to_string(open_count), title_font);
+    draw_right_aligned_text_with_font_spaced(
+        image,
+        x1,
+        title_y,
+        std::to_string(open_count),
+        title_font,
+        title_spacing);
   }
   draw_section_rule(image, x0, x1, title_y + 18);
 
@@ -924,8 +931,9 @@ void draw_reminders_section(
       std::max(metrics.family_rule_y, inv_bottom_y + metrics.shop_rule_y_min_gap);
   const int title_y = shop_rule_y - metrics.shop_title_h - metrics.shop_line_gap;
   const int row_start_y = std::max(title_y + metrics.shop_header_gap, shop_rule_y + 10);
-  const BitmapFont& title_font = platform::panel_font_assets::kFontJetBold13;
-  draw_text_with_font(image, x0, title_y, "REMINDERS", title_font);
+  const BitmapFont& title_font = platform::panel_font_assets::kFontInterBold13;
+  constexpr int title_spacing = 1;
+  draw_text_with_font_spaced(image, x0, title_y, "REMINDERS", title_font, title_spacing);
   const std::vector<int> reminder_indices = visible_reminder_indices(state);
   const int visible_count = static_cast<int>(reminder_indices.size());
   int open_count = 0;
@@ -942,14 +950,15 @@ void draw_reminders_section(
     }
   }
   const std::string count_text = std::to_string(open_count);
-  const int count_width = text_width_with_font(count_text, title_font);
+  const int count_width = text_width_with_font_spaced(count_text, title_font, title_spacing);
   const int count_x = x1 - count_width;
-  draw_right_aligned_text_with_font(
+  draw_right_aligned_text_with_font_spaced(
       image,
       x1,
       title_y,
       count_text,
-      title_font);
+      title_font,
+      title_spacing);
   const int shop_rule_right = std::min(x1 - 16, count_x - 6);
   if (shop_rule_right > x0) {
     draw_section_rule(image, x0, shop_rule_right, shop_rule_y);
