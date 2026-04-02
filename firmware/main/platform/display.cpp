@@ -35,8 +35,9 @@ constexpr bool kPowerOffAfterRefresh = false;
 constexpr bool kUseInvertedOldBufferForFullRefresh = true;
 constexpr int kUiDilateRadius = 0;
 constexpr bool kEnablePartialRefresh = true;
-// Experimental: use Waveshare host-LUT profile (Arduino epd7in5_V2) instead of OTP LUT.
-constexpr bool kUseHostLutWaveformProfile = true;
+// Python ground truth (epd7in5_V2.py) uses the OTP-LUT init()/init_part() path.
+// Keep host-LUT path disabled for parity.
+constexpr bool kUseHostLutWaveformProfile = false;
 // Match Waveshare epd7in5_V2_old host-LUT path by default.
 constexpr bool kUseHostLutDualPlaneRefresh = true;
 constexpr bool kUseHostLutEvsRegister = true;
