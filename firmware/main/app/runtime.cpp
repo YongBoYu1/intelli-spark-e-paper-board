@@ -53,6 +53,42 @@ bool should_collapse_to_latest(
   return has_focus_reason;
 }
 
+bool has_reason(
+    const std::vector<std::string>& reasons,
+    const char* reason) {
+  if (reason == nullptr) {
+    return false;
+  }
+  for (const auto& item : reasons) {
+    if (item == reason) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void reorder_home_transition_rects_for_partial(
+    const std::vector<std::string>& reasons,
+    std::vector<platform::DirtyRect>& rects) {
+  if (rects.size() < 2U) {
+    return;
+  }
+  if (has_reason(reasons, "home.focus_to_left_panel")) {
+    // Row -> left-panel: refresh right-side old focus region first so stale row
+    // frame does not linger while left panel rect is being refreshed.
+    std::stable_sort(rects.begin(), rects.end(), [](const auto& a, const auto& b) {
+      return a.x0 > b.x0;
+    });
+    return;
+  }
+  if (has_reason(reasons, "home.focus_from_left_panel")) {
+    // Left-panel -> row: clear previous left focus first, then apply new row.
+    std::stable_sort(rects.begin(), rects.end(), [](const auto& a, const auto& b) {
+      return a.x0 < b.x0;
+    });
+  }
+}
+
 }  // namespace
 
 Runtime::Runtime(platform::Display& display) : display_(display) {}
@@ -208,7 +244,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
   } else {
     const std::vector<platform::DirtyRect> pending_rects =
         refresh_runtime_.pending_dirty_rects;
-    const std::vector<platform::DirtyRect> aligned_rects =
+    std::vector<platform::DirtyRect> aligned_rects =
         refresh_policy::prepare_partial_rects(
             pending_rects,
             platform::kPanelWidth,
@@ -216,6 +252,11 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             kPartialPad,
             kPartialMaxRects,
             true);
+    if (pending_screen_ == Screen::Home) {
+      reorder_home_transition_rects_for_partial(
+          pending_render_.dirty_reasons,
+          aligned_rects);
+    }
     const double mode_limit =
         refresh_policy::screen_partial_area_limit(pending_screen_, mode);
     const double gate_area_ratio =
