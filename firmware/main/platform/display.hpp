@@ -20,12 +20,15 @@ class Display {
   virtual void init() = 0;
   virtual void clear() = 0;
 
-  /// Push a rendered framebuffer to the e-paper panel.
-  /// The image must be kPanelBufferSize bytes (800×480 / 8 = 48000).
-  /// Internally handles dirty-region detection and partial vs full refresh.
-  virtual void display_image(
+  /// Execute a full-screen refresh.
+  virtual void display_full(
       const std::vector<uint8_t>& image,
-      const std::vector<DirtyRect>& dirty_hints = {}) = 0;
+      bool clean_cycle = false) = 0;
+
+  /// Execute partial refreshes for explicit dirty windows.
+  virtual void display_partial(
+      const std::vector<uint8_t>& image,
+      const std::vector<DirtyRect>& dirty_rects) = 0;
 
   /// Diagnostic: set VCOM voltage register (0x82) and force full refresh.
   /// Used for VCOM sweep experiments. Value is the raw register byte.

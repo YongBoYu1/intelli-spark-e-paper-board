@@ -238,6 +238,8 @@ AppState make_state_from_defaults(
   state.inventory.total_items = 5;
   state.inventory.reminder_count = defaults.dashboard.reminder_count;
   state.settings.partial_refresh_enabled = true;
+  state.settings.refresh_mode = "balanced";
+  state.settings.full_refresh_every = 0;
   state.settings.auto_sync_enabled = true;
   state.dashboard = defaults.dashboard;
   return state;

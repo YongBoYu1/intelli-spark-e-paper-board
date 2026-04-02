@@ -1,8 +1,12 @@
 #pragma once
 
 #include "app/events.hpp"
+#include "app/refresh_policy.hpp"
 #include "app/state.hpp"
+#include "ui/render_app.hpp"
 #include "ui/screens/home_screen.hpp"
+
+#include <optional>
 
 namespace fridge_ink::platform {
 class Display;
@@ -21,16 +25,27 @@ class Runtime {
   const AppState& state() const { return state_; }
 
  private:
-  bool should_defer_render(const Event& event, Screen old_screen) const;
-  void queue_render(const ui::HomeDirtySnapshot& previous_home_snapshot);
-  void render_now(const ui::HomeDirtySnapshot* previous_home_snapshot = nullptr);
-  void render(const ui::HomeDirtySnapshot* previous_home_snapshot = nullptr);
+  void stage_render();
+  void flush_pending(std::uint64_t now_ms);
+  std::optional<platform::DirtyRect> diff_bbox(const std::vector<uint8_t>& image) const;
+  void mark_committed_snapshot();
+  static std::string format_rects(const std::vector<platform::DirtyRect>& rects);
+  static std::string format_reasons(const std::vector<std::string>& reasons);
 
   platform::Display& display_;
   AppState state_{};
-  bool pending_render_{false};
-  ui::HomeDirtySnapshot pending_previous_home_snapshot_{};
-  std::uint64_t last_render_ms_{0};
+  refresh_policy::RefreshPolicyRuntime refresh_runtime_{};
+
+  bool committed_frame_valid_{false};
+  std::vector<uint8_t> committed_frame_{};
+  Screen committed_screen_{Screen::Landing};
+  ui::HomeDirtySnapshot committed_home_snapshot_{};
+  bool committed_home_snapshot_valid_{false};
+
+  bool pending_render_valid_{false};
+  ui::RenderOutput pending_render_{};
+  Screen pending_screen_{Screen::Landing};
+  ui::HomeDirtySnapshot pending_home_snapshot_{};
 };
 
 }  // namespace fridge_ink::app

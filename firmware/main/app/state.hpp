@@ -92,6 +92,8 @@ struct InventoryState {
 
 struct SettingsState {
   bool partial_refresh_enabled{true};
+  std::string refresh_mode{"balanced"};
+  int full_refresh_every{0};
   bool auto_sync_enabled{true};
 };
 

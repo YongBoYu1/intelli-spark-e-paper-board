@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.cpp"
         "app/runtime.cpp"
+        "app/refresh_policy.cpp"
         "app/state.cpp"
         "app/reducer.cpp"
         "app/defaults.cpp"

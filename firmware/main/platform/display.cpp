@@ -193,17 +193,6 @@ bool is_valid_dirty_rect(const DirtyRect& rect) {
   return rect.x1 > rect.x0 && rect.y1 > rect.y0;
 }
 
-bool byte_span_intersects_rect(
-    const int byte_x0,
-    const int byte_x1,
-    const int y,
-    const DirtyRect& rect) {
-  if (y < rect.y0 || y >= rect.y1) {
-    return false;
-  }
-  return !(byte_x1 <= rect.x0 || byte_x0 >= rect.x1);
-}
-
 // ── EpaperDisplay — hardware SPI driver for UC8176 panel ─────────────────────
 
 class EpaperDisplay final : public Display {
@@ -254,9 +243,9 @@ class EpaperDisplay final : public Display {
     (void)clear_panel_once();
   }
 
-  void display_image(
+  void display_full(
       const std::vector<uint8_t>& image_in,
-      const std::vector<DirtyRect>& dirty_hints) override {
+      const bool clean_cycle) override {
     if (!hardware_ready_) {
       return;
     }
@@ -276,144 +265,53 @@ class EpaperDisplay final : public Display {
       ESP_LOGI(kTag, "Applied UI stroke dilation radius=%d", kUiDilateRadius);
     }
 
-    // Decide: partial or full refresh
-    if (!first_present_done_ || !previous_frame_valid_) {
-      if (in_partial_mode_) { restore_full_mode(); }
-      ESP_LOGI(kTag, "First frame: direct full refresh");
-      display_bitmap(image);
-      first_present_done_ = true;
+    if (in_partial_mode_) {
+      restore_full_mode();
+    }
+    if (clean_cycle) {
+      (void)clear_panel_once();
+    }
+    display_bitmap(image);
+  }
+
+  void display_partial(
+      const std::vector<uint8_t>& image_in,
+      const std::vector<DirtyRect>& dirty_rects) override {
+    if (!hardware_ready_) {
       return;
     }
 
-    std::vector<DirtyRect> normalized_hints{};
-    normalized_hints.reserve(dirty_hints.size());
-    for (const DirtyRect& hint : dirty_hints) {
-      const DirtyRect clipped = clip_dirty_rect(hint);
+    if (!kEnablePartialRefresh) {
+      ESP_LOGW(kTag, "Partial refresh disabled in driver, fallback to full");
+      display_full(image_in, false);
+      return;
+    }
+
+    auto image = image_in;
+    if (kUiDilateRadius > 0) {
+      image = dilate_black_pixels(image, kUiDilateRadius);
+    }
+
+    std::vector<DirtyRect> normalized_rects{};
+    normalized_rects.reserve(dirty_rects.size());
+    for (const DirtyRect& rect : dirty_rects) {
+      const DirtyRect clipped = clip_dirty_rect(rect);
       if (is_valid_dirty_rect(clipped)) {
-        normalized_hints.push_back(clipped);
+        normalized_rects.push_back(clipped);
       }
     }
 
-    // Compute actual byte-level diff bbox and validate whether hints fully cover it.
-    int diff_y0 = kPanelHeight;
-    int diff_y1 = 0;
-    int diff_x0_byte = kPanelWidthBytes;
-    int diff_x1_byte = 0;
-    bool has_diff = false;
-    bool has_diff_outside_hints = false;
-    for (int y = 0; y < kPanelHeight; ++y) {
-      for (int xb = 0; xb < kPanelWidthBytes; ++xb) {
-        const int idx = y * kPanelWidthBytes + xb;
-        if (image[idx] != previous_frame_[idx]) {
-          has_diff = true;
-          if (y < diff_y0) diff_y0 = y;
-          if (y > diff_y1) diff_y1 = y;
-          if (xb < diff_x0_byte) diff_x0_byte = xb;
-          if (xb > diff_x1_byte) diff_x1_byte = xb;
-
-          if (!normalized_hints.empty()) {
-            const int byte_x0 = xb * 8;
-            const int byte_x1 = (xb + 1) * 8;
-            bool covered = false;
-            for (const DirtyRect& hint_rect : normalized_hints) {
-              if (byte_span_intersects_rect(byte_x0, byte_x1, y, hint_rect)) {
-                covered = true;
-                break;
-              }
-            }
-            if (!covered) {
-              has_diff_outside_hints = true;
-            }
-          }
-        }
-      }
-    }
-
-    if (!has_diff) {
-      ESP_LOGI(kTag, "No pixel change, skipping refresh");
-      first_present_done_ = true;
+    if (normalized_rects.empty()) {
+      ESP_LOGW(kTag, "Partial refresh requested with empty rects, fallback to full");
+      display_full(image, false);
       return;
     }
 
-    constexpr int kMaxPartialBeforeFull = 30;
-    constexpr float kPartialAreaLimit = 0.12f;
-    constexpr std::size_t kMaxHintWindows = 2;
-    const int total_pixels = kPanelWidth * kPanelHeight;
-
-    // Prefer multi-window partial when all diffs are covered by explicit dirty hints.
-    if (kEnablePartialRefresh &&
-        !normalized_hints.empty() &&
-        !has_diff_outside_hints) {
-      int hinted_pixels = 0;
-      for (const DirtyRect& hint_rect : normalized_hints) {
-        hinted_pixels += (hint_rect.x1 - hint_rect.x0) * (hint_rect.y1 - hint_rect.y0);
-      }
-      const float hinted_ratio =
-          static_cast<float>(hinted_pixels) / static_cast<float>(total_pixels);
-      const bool allow_hint_partial =
-          normalized_hints.size() <= kMaxHintWindows &&
-          hinted_ratio <= kPartialAreaLimit &&
-          (partial_since_full_ + 1) < kMaxPartialBeforeFull;
-      if (allow_hint_partial) {
-        partial_since_full_++;
-        ESP_LOGI(
-            kTag,
-            "Hint partial refresh: windows=%u ratio=%.3f partials_since=%d",
-            static_cast<unsigned>(normalized_hints.size()),
-            hinted_ratio,
-            partial_since_full_);
-        for (const DirtyRect& hint_rect : normalized_hints) {
-          display_bitmap_partial(image, hint_rect.x0, hint_rect.y0, hint_rect.x1, hint_rect.y1);
-        }
-        previous_frame_ = image;
-        previous_frame_valid_ = true;
-        first_present_done_ = true;
-        return;
-      }
-      ESP_LOGI(
-          kTag,
-          "Hint partial rejected: windows=%u ratio=%.3f",
-          static_cast<unsigned>(normalized_hints.size()),
-          hinted_ratio);
-    } else if (!normalized_hints.empty() && has_diff_outside_hints) {
-      ESP_LOGW(kTag, "Dirty hints under-covered actual diff; falling back to diff bbox");
+    for (const DirtyRect& rect : normalized_rects) {
+      display_bitmap_partial(image, rect.x0, rect.y0, rect.x1, rect.y1);
     }
-
-    const int dirty_x0 = diff_x0_byte * 8;
-    const int dirty_y0 = diff_y0;
-    const int dirty_x1 = (diff_x1_byte + 1) * 8;
-    const int dirty_y1 = diff_y1 + 1;
-    const int dirty_w = dirty_x1 - dirty_x0;
-    const int dirty_h = dirty_y1 - dirty_y0;
-    const int dirty_pixels = dirty_w * dirty_h;
-    const float dirty_ratio =
-        static_cast<float>(dirty_pixels) / static_cast<float>(total_pixels);
-
-    ESP_LOGI(kTag, "Dirty region: (%d,%d)-(%d,%d) ratio=%.3f",
-             dirty_x0, dirty_y0, dirty_x1, dirty_y1, dirty_ratio);
-
-    partial_since_full_++;
-    if (!kEnablePartialRefresh ||
-        dirty_ratio > kPartialAreaLimit ||
-        partial_since_full_ >= kMaxPartialBeforeFull) {
-      ESP_LOGI(
-          kTag,
-          "Full refresh (partial_enabled=%d, ratio=%.3f, partials_since=%d)",
-          static_cast<int>(kEnablePartialRefresh),
-          dirty_ratio,
-          partial_since_full_);
-      if (in_partial_mode_) { restore_full_mode(); }
-      display_bitmap(image);
-      partial_since_full_ = 0;
-    } else {
-      ESP_LOGI(kTag, "Partial refresh (ratio=%.3f, partials_since=%d)",
-               dirty_ratio, partial_since_full_);
-      display_bitmap_partial(image, dirty_x0, dirty_y0, dirty_x1, dirty_y1);
-      previous_frame_ = image;
-      previous_frame_valid_ = true;
-    }
-
-    first_present_done_ = true;
+    previous_frame_ = image;
+    previous_frame_valid_ = true;
   }
 
   void set_vcom_and_refresh(uint8_t vcom_value) override {
@@ -1169,10 +1067,8 @@ class EpaperDisplay final : public Display {
   bool power_enabled_{false};
   bool panel_awake_{false};
   bool spi_ready_{false};
-  bool first_present_done_{false};
   bool previous_frame_valid_{false};
   bool in_partial_mode_{false};
-  int partial_since_full_{0};
   int64_t trace_epoch_ms_{0};
   uint32_t trace_seq_{0};
   uint8_t last_command_{0};
