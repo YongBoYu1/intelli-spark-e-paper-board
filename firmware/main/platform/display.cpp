@@ -925,37 +925,33 @@ class EpaperDisplay final : public Display {
     send_data(static_cast<uint8_t>((y1 - 1) & 0xFF));
     send_data(0x01);
 
-    const auto send_partial_plane = [&](const std::vector<uint8_t>& frame, const char* label) {
+    const auto send_partial_plane_13 = [&](const std::vector<uint8_t>& frame, const char* label) {
       trace_stream(label, static_cast<size_t>(w_bytes * h));
       begin_data_stream();
       std::array<uint8_t, kFillChunkBytes> panel_chunk{};
       for (int row = y0; row < y1; ++row) {
         const int src_offset = row * kPanelWidthBytes + (x0 / 8);
         for (int b = 0; b < w_bytes; ++b) {
-          panel_chunk[b] = map_framebuffer_byte_to_panel(frame[src_offset + b]);
+          // Python epd7in5_V2.display_Partial sends:
+          //   0x13 <- image1 where image1 = ~Image and Image is getbuffer(crop).
+          // Our runtime frame uses pre-getbuffer polarity, so we invert once here
+          // before transport mapping to match Python's 0x13 payload polarity.
+          const uint8_t payload = static_cast<uint8_t>(~frame[src_offset + b]);
+          panel_chunk[b] = map_framebuffer_byte_to_panel(payload);
         }
         spi_write_bytes(panel_chunk.data(), w_bytes);
       }
       end_data_stream();
     };
 
-    // In partial mode, feed both old/new planes to avoid inverted blocks on focus moves.
-    send_command(0x10);
-    if (previous_frame_valid_ &&
-        previous_frame_.size() == static_cast<size_t>(kPanelBufferSize)) {
-      send_partial_plane(previous_frame_, "PART_OLD");
-    } else {
-      send_partial_plane(image, "PART_OLD_CURR");
-    }
+    // Keep Python V2 partial path: window + single 0x13 payload + refresh.
     send_command(0x13);
-    send_partial_plane(image, "PART_NEW");
+    send_partial_plane_13(image, "PART_13");
 
     // Refresh
     send_command(0x12);
     vTaskDelay(pdMS_TO_TICKS(kPostRefreshDelayMs));
     (void)wait_until_idle("partial_0x12", kRefreshTimeoutMs);
-    send_command(0x92);  // Exit partial mode windowing command sequence.
-
   }
 
   // ── SPI transport ────────────────────────────────────────────────────────
