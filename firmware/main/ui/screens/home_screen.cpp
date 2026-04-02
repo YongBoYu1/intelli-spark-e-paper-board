@@ -941,10 +941,10 @@ void draw_inventory_section(
         draw_focus_stroke(image, box.x0, box.y0, box.x1, box.y1);
       }
     }
-    const BitmapFont& item_font =
-        focused_row == i
-            ? platform::panel_font_assets::kFontInterBold18
-            : platform::panel_font_assets::kFontInterMedium18;
+    // Hardware behavior: repeated partial refresh on weight flip (medium<->bold)
+    // causes visible right-list fade on current panel batches. Keep row text
+    // weight stable and express focus with stroke box only.
+    const BitmapFont& item_font = platform::panel_font_assets::kFontInterMedium18;
     draw_text_with_font(
         image,
         item_text_x,
@@ -987,9 +987,9 @@ void draw_checkbox_row(
     draw_right_panel_focus_row(image, x0, row_right_x, row_y, row_h);
   }
   draw_checkbox(image, cb_x0, cb_y0, checked, false, checkbox_size);
-  const BitmapFont& text_font =
-      focused ? platform::panel_font_assets::kFontInterBold18
-              : platform::panel_font_assets::kFontInterMedium18;
+  // Same rationale as inventory rows: keep text weight stable to avoid
+  // partial-refresh fade accumulation during navigation.
+  const BitmapFont& text_font = platform::panel_font_assets::kFontInterMedium18;
   const std::string clipped =
       truncate_text_px(text, 2, std::max(0, row_right_x - text_x - 8));
   // Python parity: home_kitchen.py centers by text-height only (no glyph-top
