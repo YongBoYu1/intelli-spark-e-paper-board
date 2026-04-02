@@ -980,7 +980,9 @@ void draw_checkbox_row(
     const bool focused) {
   const int checkbox_size = 14;
   const int cb_x0 = x0;
-  const int cb_y0 = row_y + ((row_h - checkbox_size) / 2);
+  // Optical parity with Python/Pillow output after 1-bit quantization:
+  // keep checkbox 1px higher relative to text baseline.
+  const int cb_y0 = row_y + ((row_h - checkbox_size) / 2) - 1;
   if (focused) {
     draw_right_panel_focus_row(image, x0, row_right_x, row_y, row_h);
   }
