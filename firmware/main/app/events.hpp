@@ -8,6 +8,8 @@ enum class EventType {
   Tick,
   Rotate,
   Click,
+  LongPress,
+  Back,
 };
 
 struct Event {
@@ -33,6 +35,20 @@ struct Event {
   static Event Click(std::uint64_t now_ms_value = 0) {
     Event event;
     event.type = EventType::Click;
+    event.now_ms = now_ms_value;
+    return event;
+  }
+
+  static Event LongPress(std::uint64_t now_ms_value = 0) {
+    Event event;
+    event.type = EventType::LongPress;
+    event.now_ms = now_ms_value;
+    return event;
+  }
+
+  static Event Back(std::uint64_t now_ms_value = 0) {
+    Event event;
+    event.type = EventType::Back;
     event.now_ms = now_ms_value;
     return event;
   }

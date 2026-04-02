@@ -14,6 +14,8 @@ struct HomeDirtySnapshot {
   app::Screen screen{app::Screen::Landing};
   int focused_index{0};
   bool show_focus{false};
+  bool menu_overlay_active{false};
+  int menu_focused_index{0};
   std::uint64_t clock_minute_bucket{0};
   app::WidgetMode widget_mode{app::WidgetMode::Clock};
   int inventory_count{0};

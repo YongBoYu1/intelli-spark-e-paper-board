@@ -36,6 +36,15 @@ std::vector<uint8_t> render_placeholder_bitmap(
 
 }  // namespace
 
+std::vector<uint8_t> render_memo_bitmap(const app::AppState& state) {
+  (void)state;
+  return render_placeholder_bitmap(
+      "MEMO",
+      "Memo screen is wired into navigation framework.",
+      "Detail behavior will follow after runtime migration stabilizes.",
+      "Back/long-press returns HOME to match Python navigation semantics.");
+}
+
 std::vector<uint8_t> render_timer_bitmap(const app::AppState& state) {
   const std::string line_one =
       std::string("Minutes remaining: ") + std::to_string(state.timer.minutes_remaining);

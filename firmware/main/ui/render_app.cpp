@@ -45,6 +45,9 @@ RenderOutput render_app(
     case app::Screen::Menu:
       output.image = render_menu_bitmap(state);
       break;
+    case app::Screen::Memo:
+      output.image = render_memo_bitmap(state);
+      break;
     case app::Screen::Timer:
       output.image = render_timer_bitmap(state);
       break;

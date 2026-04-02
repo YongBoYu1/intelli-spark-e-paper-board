@@ -9,7 +9,7 @@
 namespace fridge_ink::app {
 namespace {
 
-constexpr int kMenuItemCount = 6;
+constexpr int kMenuItemCount = 5;
 constexpr int kHomeInventoryVisibleMax = 3;
 constexpr int kHomeReminderVisibleMax = 5;
 constexpr std::uint64_t kHomeCompletedHideGraceMs = 15000;
@@ -251,33 +251,28 @@ void enter_home(AppState& state) {
   state.screen = Screen::Home;
   state.home.focused_index = first_home_focus_index(state);
   state.home.show_focus = true;
+  state.home.menu_overlay_active = false;
   state.landing.status.clear();
   state.onboarding.status = "Setup complete.";
 }
 
-void enter_menu(AppState& state) {
-  state.screen = Screen::Menu;
-}
-
 void open_menu_target(AppState& state) {
+  state.home.menu_overlay_active = false;
   switch (state.menu.focused_index % kMenuItemCount) {
     case 0:
-      state.screen = Screen::Home;
+      state.screen = Screen::Memo;
       return;
     case 1:
+      state.screen = Screen::Inventory;
+      return;
+    case 2:
       state.home.widget_mode = WidgetMode::Timer;
       state.screen = Screen::Timer;
       return;
-    case 2:
+    case 3:
       state.screen = Screen::Calendar;
       return;
-    case 3:
-      state.screen = Screen::Weather;
-      return;
     case 4:
-      state.screen = Screen::Inventory;
-      return;
-    case 5:
       state.screen = Screen::Settings;
       return;
   }
@@ -388,6 +383,15 @@ void handle_rotate(AppState& state, const Event& event) {
     return;
   }
 
+  if (state.screen == Screen::Menu ||
+      (state.screen == Screen::Home && state.home.menu_overlay_active)) {
+    const int delta = event.rotate_delta >= 0 ? 1 : (kMenuItemCount - 1);
+    state.menu.focused_index =
+        (state.menu.focused_index + static_cast<std::size_t>(delta)) %
+        static_cast<std::size_t>(kMenuItemCount);
+    return;
+  }
+
   if (state.screen == Screen::Home) {
     const int slot_count = std::max(1, home_focus_count(state));
     const int delta = event.rotate_delta >= 0 ? 1 : -1;
@@ -395,13 +399,6 @@ void handle_rotate(AppState& state, const Event& event) {
         std::max(0, std::min(state.home.focused_index + delta, slot_count - 1));
     state.home.show_focus = true;
     return;
-  }
-
-  if (state.screen == Screen::Menu) {
-    const int delta = event.rotate_delta >= 0 ? 1 : (kMenuItemCount - 1);
-    state.menu.focused_index =
-        (state.menu.focused_index + static_cast<std::size_t>(delta)) %
-        static_cast<std::size_t>(kMenuItemCount);
   }
 }
 
@@ -463,6 +460,10 @@ void handle_click(AppState& state, const Event& event) {
   }
 
   if (state.screen == Screen::Home) {
+    if (state.home.menu_overlay_active) {
+      open_menu_target(state);
+      return;
+    }
     clamp_home_focus(state);
     state.home.show_focus = true;
     const HomeFocusTarget target = home_focus_target(state);
@@ -474,9 +475,11 @@ void handle_click(AppState& state, const Event& event) {
           state.timer.running = !state.timer.running;
           return;
         }
+        state.home.menu_overlay_active = false;
         state.screen = Screen::Calendar;
         return;
       case HomeFocusTargetKind::Weather:
+        state.home.menu_overlay_active = false;
         state.screen = Screen::Weather;
         return;
       case HomeFocusTargetKind::InventoryItem:
@@ -514,13 +517,55 @@ void handle_click(AppState& state, const Event& event) {
     return;
   }
 
-  if (state.screen == Screen::Timer ||
+  if (state.screen == Screen::Memo ||
+      state.screen == Screen::Timer ||
       state.screen == Screen::Calendar ||
       state.screen == Screen::Weather ||
       state.screen == Screen::Inventory ||
       state.screen == Screen::Settings) {
-    enter_menu(state);
+    // Placeholder/detail screens rely on Back/LongPress to return home.
+    return;
   }
+}
+
+void handle_long_press(AppState& state, const Event& event) {
+  if (event.now_ms > 0) {
+    state.home.last_interaction_ms = event.now_ms;
+  }
+  // Python parity:
+  // - HOME long press toggles the menu overlay.
+  // - Non-HOME long press returns to HOME.
+  if (state.screen == Screen::Home) {
+    state.home.menu_overlay_active = !state.home.menu_overlay_active;
+    return;
+  }
+
+  state.screen = Screen::Home;
+  state.home.menu_overlay_active = false;
+  clamp_home_focus(state);
+  state.home.show_focus = true;
+}
+
+void handle_back(AppState& state, const Event& event) {
+  if (event.now_ms > 0) {
+    state.home.last_interaction_ms = event.now_ms;
+  }
+  // Python parity:
+  // - HOME back closes overlay if open, otherwise opens overlay.
+  // - Non-HOME back returns to HOME.
+  if (state.screen == Screen::Home) {
+    if (state.home.menu_overlay_active) {
+      state.home.menu_overlay_active = false;
+      return;
+    }
+    state.home.menu_overlay_active = true;
+    return;
+  }
+
+  state.screen = Screen::Home;
+  state.home.menu_overlay_active = false;
+  clamp_home_focus(state);
+  state.home.show_focus = true;
 }
 
 }  // namespace
@@ -535,6 +580,12 @@ void reduce(AppState& state, const Event& event) {
       break;
     case EventType::Click:
       handle_click(state, event);
+      break;
+    case EventType::LongPress:
+      handle_long_press(state, event);
+      break;
+    case EventType::Back:
+      handle_back(state, event);
       break;
   }
 }

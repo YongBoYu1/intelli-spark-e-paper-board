@@ -133,6 +133,14 @@ void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
     case ' ':
       runtime.dispatch(fridge_ink::app::Event::Click(fridge_ink::platform::monotonic_ms()));
       break;
+    case 'm':
+    case 'M':
+      runtime.dispatch(fridge_ink::app::Event::LongPress(fridge_ink::platform::monotonic_ms()));
+      break;
+    case 'b':
+    case 'B':
+      runtime.dispatch(fridge_ink::app::Event::Back(fridge_ink::platform::monotonic_ms()));
+      break;
     default:
       break;
   }
@@ -161,7 +169,10 @@ extern "C" void app_main(void) {
 
   const bool serial_input_ok = setup_serial_input();
   if (serial_input_ok) {
-    ESP_LOGI(kTag, "Monitor controls: a/d = rotate, c = click, t<epoch> = time sync, v<HH> = VCOM sweep");
+    ESP_LOGI(
+        kTag,
+        "Monitor controls: a/d = rotate, c = click, m = long-press, b = back, "
+        "t<epoch> = time sync, v<HH> = VCOM sweep");
   }
 
   std::uint64_t last_tick_ms = fridge_ink::platform::monotonic_ms();

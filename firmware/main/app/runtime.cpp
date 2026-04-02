@@ -37,6 +37,7 @@ bool should_collapse_to_latest(
       "home.focus_to_left_panel",
       "home.focus_from_left_panel",
       "home.focus_left_panel_only",
+      "home.menu_overlay_toggle",
       "home.menu_overlay_focus",
       "home.focus_priority_drop_family",
       "diff_fallback",

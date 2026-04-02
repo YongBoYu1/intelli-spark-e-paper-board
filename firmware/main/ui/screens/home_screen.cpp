@@ -51,6 +51,14 @@ struct ClockSnapshot {
 
 constexpr int kInventoryVisibleMax = 3;
 constexpr int kReminderVisibleMax = 5;
+constexpr int kHomeMenuItemCount = 5;
+constexpr const char* kHomeMenuItems[kHomeMenuItemCount] = {
+    "MEMO",
+    "LIST",
+    "TIMER",
+    "CALENDAR",
+    "SETTINGS",
+};
 
 enum class HomeFocusKind {
   Clock,
@@ -99,6 +107,18 @@ struct FocusBox {
   int x1{0};
   int y1{0};
   bool valid{false};
+};
+
+struct HomeMenuOverlayLayout {
+  int x0{0};
+  int y0{0};
+  int x1{0};
+  int y1{0};
+  int pill_w{0};
+  int pill_h{0};
+  int gap{0};
+  int pills_y{0};
+  bool compact{false};
 };
 
 int visible_inventory_count(const app::DashboardSummary& dashboard);
@@ -366,6 +386,50 @@ platform::DirtyRect home_family_board_rect() {
   const int y0 = std::max(metrics.oy0, metrics.family_rule_y - 26);
   const int y1 = std::max(y0 + 8, voice_lane_y - 4);
   return clip_rect({left_x0, y0, left_x1, y1}, metrics.width, metrics.height);
+}
+
+HomeMenuOverlayLayout home_menu_overlay_layout(const int width, const int height) {
+  HomeMenuOverlayLayout layout{};
+  const int w = std::max(1, width);
+  const int h = std::max(1, height);
+  layout.compact = w < 640;
+  const int outer_margin = layout.compact ? 8 : 16;
+  const int inner_pad_x = layout.compact ? 8 : 14;
+  layout.gap = layout.compact ? 8 : 12;
+  layout.pill_h = layout.compact ? 40 : 56;
+  const int pill_w_cap = layout.compact ? 88 : 116;
+  const int pill_w_floor = layout.compact ? 56 : 96;
+  const int available_pills_w = std::max(
+      1,
+      w - (outer_margin * 2) - (inner_pad_x * 2) - ((kHomeMenuItemCount - 1) * layout.gap));
+  layout.pill_w = std::max(
+      pill_w_floor,
+      std::min(pill_w_cap, available_pills_w / kHomeMenuItemCount));
+  const int total_w =
+      (kHomeMenuItemCount * layout.pill_w) + ((kHomeMenuItemCount - 1) * layout.gap);
+  const int overlay_w = total_w + (inner_pad_x * 2);
+  layout.x0 = std::max(outer_margin, (w - overlay_w) / 2);
+  layout.x1 = std::min(w - outer_margin, layout.x0 + overlay_w);
+  const int cy = h / 2;
+  const int overlay_h = layout.compact ? 78 : 102;
+  const int overlay_margin_y = layout.compact ? 96 : 80;
+  layout.y0 = std::max(overlay_margin_y, cy - (overlay_h / 2));
+  layout.y1 = std::min(h - overlay_margin_y, layout.y0 + overlay_h);
+  layout.pills_y = layout.y0 + (layout.compact ? 24 : 28);
+  return layout;
+}
+
+platform::DirtyRect home_menu_overlay_rect() {
+  const HomeLandscapeMetrics metrics = home_landscape_metrics();
+  const HomeMenuOverlayLayout layout = home_menu_overlay_layout(metrics.width, metrics.height);
+  return clip_rect(
+      {layout.x0, layout.y0, layout.x1, layout.y1},
+      metrics.width,
+      metrics.height);
+}
+
+int normalized_menu_focus_index(const std::size_t raw_index) {
+  return static_cast<int>(raw_index % static_cast<std::size_t>(kHomeMenuItemCount));
 }
 
 platform::DirtyRect merge_focus_transition_rects(
@@ -1135,6 +1199,66 @@ void draw_voice_lane(
       font);
 }
 
+void draw_home_menu_overlay(
+    std::vector<uint8_t>& image,
+    const app::AppState& state) {
+  const HomeLandscapeMetrics metrics = home_landscape_metrics();
+  const HomeMenuOverlayLayout layout = home_menu_overlay_layout(metrics.width, metrics.height);
+  if (layout.x1 <= layout.x0 || layout.y1 <= layout.y0) {
+    return;
+  }
+
+  fill_white_rect(image, layout.x0, layout.y0, layout.x1, layout.y1);
+  draw_rounded_rect_stroke(
+      image,
+      layout.x0,
+      layout.y0,
+      layout.x1,
+      layout.y1,
+      layout.compact ? 10 : 12,
+      1);
+
+  const BitmapFont& hint_font = platform::panel_font_assets::kFontJetBold13;
+  const BitmapFont& item_font = platform::panel_font_assets::kFontInterBold13;
+  constexpr int hint_spacing = 1;
+  const std::string hint = "NAVIGATION";
+  const int hint_w = text_width_with_font_spaced(hint, hint_font, hint_spacing);
+  const int hint_x =
+      layout.x0 + std::max(8, ((layout.x1 - layout.x0) - hint_w) / 2);
+  const int hint_y = layout.y0 + (layout.compact ? 6 : 8);
+  draw_text_with_font_spaced(image, hint_x, hint_y, hint, hint_font, hint_spacing);
+
+  const int total_pills_w =
+      (kHomeMenuItemCount * layout.pill_w) + ((kHomeMenuItemCount - 1) * layout.gap);
+  const int start_x = layout.x0 + std::max(8, ((layout.x1 - layout.x0) - total_pills_w) / 2);
+  const int focus_index = normalized_menu_focus_index(state.menu.focused_index);
+  const int label_budget = std::max(20, layout.pill_w - (layout.compact ? 14 : 24));
+  for (int i = 0; i < kHomeMenuItemCount; ++i) {
+    const int px0 = start_x + i * (layout.pill_w + layout.gap);
+    const int px1 = px0 + layout.pill_w;
+    const bool focused = i == focus_index;
+    if (focused) {
+      fill_black_rect(image, px0 + 1, layout.pills_y + 1, px1 - 1, layout.pills_y + layout.pill_h - 1);
+    } else {
+      fill_white_rect(image, px0 + 1, layout.pills_y + 1, px1 - 1, layout.pills_y + layout.pill_h - 1);
+    }
+    draw_rounded_rect_stroke(
+        image,
+        px0,
+        layout.pills_y,
+        px1,
+        layout.pills_y + layout.pill_h,
+        layout.compact ? 8 : 10,
+        1);
+    const std::string label =
+        truncate_text_with_font(kHomeMenuItems[i], item_font, label_budget);
+    const int text_w = text_width_with_font(label, item_font);
+    const int tx = px0 + std::max(2, (layout.pill_w - text_w) / 2);
+    const int ty = centered_sample_y_with_font(layout.pills_y, layout.pill_h, item_font);
+    draw_text_with_font(image, tx, ty, label, item_font, 0, !focused);
+  }
+}
+
 }  // namespace
 
 std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
@@ -1325,6 +1449,9 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
 
   draw_inventory_section(image, right_x0, right_x1, render_metrics.inv_y, state);
   draw_reminders_section(image, right_x0, right_x1, state, render_metrics);
+  if (state.home.menu_overlay_active) {
+    draw_home_menu_overlay(image, state);
+  }
 
   return image;
 }
@@ -1334,6 +1461,8 @@ HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
   snapshot.screen = state.screen;
   snapshot.focused_index = state.home.focused_index;
   snapshot.show_focus = state.home.show_focus;
+  snapshot.menu_overlay_active = state.home.menu_overlay_active;
+  snapshot.menu_focused_index = normalized_menu_focus_index(state.menu.focused_index);
   snapshot.clock_minute_bucket = state.home.clock_minute_bucket;
   snapshot.widget_mode = state.home.widget_mode;
   snapshot.inventory_count = visible_inventory_count(state.dashboard);
@@ -1388,6 +1517,16 @@ HomeDirtyPlan home_dirty_plan(
     }
     plan.reasons.emplace_back(reason);
   };
+
+  if (previous.menu_overlay_active != current.menu_overlay_active) {
+    append_rect_if_valid(plan.rects, home_menu_overlay_rect());
+    add_reason("home.menu_overlay_toggle");
+  }
+  if (current.menu_overlay_active &&
+      previous.menu_focused_index != current.menu_focused_index) {
+    append_rect_if_valid(plan.rects, home_menu_overlay_rect());
+    add_reason("home.menu_overlay_focus");
+  }
 
   if (previous.focused_index != current.focused_index ||
       previous.show_focus != current.show_focus) {

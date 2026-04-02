@@ -12,6 +12,7 @@ enum class Screen {
   Onboarding,
   Home,
   Menu,
+  Memo,
   Timer,
   Calendar,
   Weather,
@@ -59,6 +60,7 @@ struct HomeState {
   std::uint64_t clock_seed_monotonic_ms{0};
   bool clock_is_real{false};
   bool show_focus{false};
+  bool menu_overlay_active{false};
   WidgetMode widget_mode{WidgetMode::Clock};
   std::vector<int> pending_hide_reminder_indices{};
   std::vector<int> hidden_reminder_indices{};

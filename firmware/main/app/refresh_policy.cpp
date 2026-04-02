@@ -72,6 +72,7 @@ double screen_partial_area_limit(const Screen screen, const Mode mode) {
     case Screen::Inventory:
       return std::max(0.60, std::min(base + 0.15, 0.80));
     case Screen::Menu:
+    case Screen::Memo:
       return std::max(0.30, std::min(base, 0.55));
     case Screen::Calendar:
       return std::max(0.58, std::min(base + 0.15, 0.82));

@@ -13,12 +13,11 @@ std::vector<uint8_t> render_menu_bitmap(const app::AppState& state) {
   using platform::kPanelBufferSize;
   using platform::kPanelWidth;
 
-  constexpr std::array<const char*, 6> kMenuItems = {
-      "HOME",
+  constexpr std::array<const char*, 5> kMenuItems = {
+      "MEMO",
+      "LIST",
       "TIMER",
       "CALENDAR",
-      "WEATHER",
-      "INVENTORY",
       "SETTINGS",
   };
 

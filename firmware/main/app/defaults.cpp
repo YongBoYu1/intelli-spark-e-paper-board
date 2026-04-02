@@ -227,8 +227,10 @@ AppState make_state_from_defaults(
   state.home.clock_minute_bucket = current_minute_bucket(&state.home.clock_is_real);
   state.home.clock_seed_monotonic_ms = now_ms;
   state.home.show_focus = true;
+  state.home.menu_overlay_active = false;
   state.home.last_interaction_ms = now_ms;
-  state.menu.focused_index = 0;
+  // Python parity: HOME overlay menu defaults to LIST.
+  state.menu.focused_index = 1;
   state.timer.running = false;
   state.timer.minutes_remaining = 12;
   state.calendar.day_of_month = 26;

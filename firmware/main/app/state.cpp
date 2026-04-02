@@ -12,6 +12,8 @@ const char* screen_name(Screen screen) {
       return "home";
     case Screen::Menu:
       return "menu";
+    case Screen::Memo:
+      return "memo";
     case Screen::Timer:
       return "timer";
     case Screen::Calendar:
