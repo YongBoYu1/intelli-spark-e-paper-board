@@ -992,7 +992,10 @@ void draw_checkbox_row(
               : platform::panel_font_assets::kFontInterMedium18;
   const std::string clipped =
       truncate_text_px(text, 2, std::max(0, row_right_x - text_x - 8));
-  const int text_y = centered_sample_y_with_font(row_y, row_h, text_font);
+  // Python parity: home_kitchen.py centers by text-height only (no glyph-top
+  // compensation), which lands reminder labels a bit lower than geometric
+  // center on panel output.
+  const int text_y = centered_sample_y_with_font(row_y, row_h, text_font) + 3;
   draw_text_with_font(
       image,
       text_x,
