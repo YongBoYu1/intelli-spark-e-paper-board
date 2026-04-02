@@ -35,11 +35,12 @@ constexpr bool kPowerOffAfterRefresh = false;
 constexpr bool kUseInvertedOldBufferForFullRefresh = true;
 constexpr int kUiDilateRadius = 0;
 constexpr bool kEnablePartialRefresh = true;
-// Hardware contrast regression note:
-// OTP-LUT init path caused severe low-contrast/washed rendering on current panel
-// batch. Keep host-LUT full-refresh profile enabled until driver parity can be
-// completed without contrast loss.
-constexpr bool kUseHostLutWaveformProfile = true;
+// Python parity: keep full and partial in the same waveform family
+// (epd7in5_V2.init + init_part), avoid host-LUT/partial mixed behavior.
+constexpr bool kUseHostLutWaveformProfile = false;
+// epd7in5_V2.py note: on gray/washed panels use data interval 0x17 and
+// optional 0x52=0x03 to improve contrast.
+constexpr bool kUsePythonInitGrayFix = true;
 // Match Waveshare epd7in5_V2_old host-LUT path by default.
 constexpr bool kUseHostLutDualPlaneRefresh = true;
 constexpr bool kUseHostLutEvsRegister = true;
@@ -575,7 +576,12 @@ class EpaperDisplay final : public Display {
     // 0x50: VCOM and Data Interval
     send_command(0x50);
     send_data(0x10);
-    send_data(0x07);
+    send_data(kUsePythonInitGrayFix ? 0x17 : 0x07);
+
+    if (kUsePythonInitGrayFix) {
+      send_command(0x52);
+      send_data(0x03);
+    }
 
     // 0x60: TCON
     send_command(0x60);
