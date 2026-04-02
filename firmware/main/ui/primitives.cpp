@@ -4,6 +4,7 @@
 #include "ui/weather_icon_assets_generated.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 namespace fridge_ink::ui {
@@ -66,26 +67,47 @@ void draw_checkbox_checkmark(
     const int y0,
     const int size) {
   const int safe_size = std::max(10, size);
-  const int x1 = x0 + safe_size - 1;
-  const int y1 = y0 + safe_size - 1;
+  const int stroke = std::max(1, safe_size / 7);
+  const int brush_half = stroke / 2;
 
-  for (int step = 0; step < 4; ++step) {
+  const auto draw_brush = [&](const int px, const int py) {
     fill_black_rect(
         image,
-        x0 + 2 + step,
-        y0 + (safe_size / 2) + step,
-        x0 + 4 + step,
-        y0 + (safe_size / 2) + step + 2);
-  }
-  for (int step = 0; step < 6; ++step) {
-    fill_black_rect(
-        image,
-        x0 + 5 + step,
-        y1 - 3 - step,
-        x0 + 7 + step,
-        y1 - 1 - step);
-  }
-  fill_black_rect(image, x1 - 1, y0 + 2, x1 + 1, y0 + 4);
+        px - brush_half,
+        py - brush_half,
+        px - brush_half + stroke,
+        py - brush_half + stroke);
+  };
+
+  const auto draw_segment = [&](const int ax, const int ay, const int bx, const int by) {
+    const int dx = bx - ax;
+    const int dy = by - ay;
+    const int steps = std::max(std::abs(dx), std::abs(dy));
+    if (steps <= 0) {
+      draw_brush(ax, ay);
+      return;
+    }
+    for (int i = 0; i <= steps; ++i) {
+      const float t = static_cast<float>(i) / static_cast<float>(steps);
+      const int px = static_cast<int>(std::lround(ax + static_cast<float>(dx) * t));
+      const int py = static_cast<int>(std::lround(ay + static_cast<float>(dy) * t));
+      draw_brush(px, py);
+    }
+  };
+
+  // Match Python home_kitchen.py checkmark geometry:
+  // [(cbx+3, cy), (cbx+5, cy+3), (cbx+10, cby+3)] for a 14px checkbox.
+  const auto scale14 = [&](const int v) {
+    return (safe_size * v + 7) / 14;
+  };
+  const int p0_x = x0 + scale14(3);
+  const int p0_y = y0 + (safe_size / 2);
+  const int p1_x = x0 + scale14(5);
+  const int p1_y = y0 + scale14(10);
+  const int p2_x = x0 + scale14(10);
+  const int p2_y = y0 + scale14(3);
+  draw_segment(p0_x, p0_y, p1_x, p1_y);
+  draw_segment(p1_x, p1_y, p2_x, p2_y);
 }
 
 }  // namespace
@@ -124,12 +146,12 @@ void draw_checkbox(
         image,
         x - 3,
         y - 3,
-        x + safe_size + 3,
-        y + safe_size + 3,
+        x + safe_size + 4,
+        y + safe_size + 4,
         4,
         1);
   }
-  draw_rounded_rect_stroke(image, x, y, x + safe_size, y + safe_size, 3, 2);
+  draw_rounded_rect_stroke(image, x, y, x + safe_size + 1, y + safe_size + 1, 3, 2);
   if (checked) {
     draw_checkbox_checkmark(image, x, y, safe_size);
   }
