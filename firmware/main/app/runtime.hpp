@@ -7,6 +7,7 @@
 #include "ui/screens/home_screen.hpp"
 
 #include <optional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -29,7 +30,8 @@ class Runtime {
  private:
   void stage_render();
   void flush_pending(std::uint64_t now_ms);
-  std::optional<platform::DirtyRect> diff_bbox(const std::vector<uint8_t>& image) const;
+  std::pair<std::optional<platform::DirtyRect>, double> diff_stats(
+      const std::vector<uint8_t>& image) const;
   void mark_committed_snapshot();
   static std::string format_rects(const std::vector<platform::DirtyRect>& rects);
   static std::string format_reasons(const std::vector<std::string>& reasons);

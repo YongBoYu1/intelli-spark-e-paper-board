@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 namespace fridge_ink::app {
@@ -21,6 +22,36 @@ constexpr const char* kTag = "runtime";
 constexpr int kPartialPad = 2;
 constexpr int kPartialMaxRects = 6;
 constexpr bool kRefreshDebugLogs = true;
+constexpr double kDiffFallbackMinRatio = 0.10;
+
+bool should_collapse_to_latest(
+    const Screen screen,
+    const std::vector<std::string>& reasons) {
+  if (reasons.empty() || screen != Screen::Home) {
+    return false;
+  }
+
+  static const std::unordered_set<std::string> kAllowedReasons = {
+      "home.focus_move_row",
+      "home.focus_move_left_target",
+      "home.focus_to_left_panel",
+      "home.focus_from_left_panel",
+      "home.focus_left_panel_only",
+      "home.menu_overlay_focus",
+      "home.focus_priority_drop_family",
+      "diff_fallback",
+  };
+  bool has_focus_reason = false;
+  for (const auto& reason : reasons) {
+    if (reason.rfind("home.focus_", 0) == 0 || reason == "home.menu_overlay_focus") {
+      has_focus_reason = true;
+    }
+    if (kAllowedReasons.find(reason) == kAllowedReasons.end()) {
+      return false;
+    }
+  }
+  return has_focus_reason;
+}
 
 }  // namespace
 
@@ -59,7 +90,7 @@ void Runtime::stage_render() {
   }
 
   if (committed_frame_valid_) {
-    const auto bbox = diff_bbox(render_output.image);
+    const auto [bbox, diff_ratio] = diff_stats(render_output.image);
     if (!bbox.has_value()) {
       pending_render_valid_ = false;
       pending_render_ = {};
@@ -77,8 +108,27 @@ void Runtime::stage_render() {
           platform::kPanelWidth,
           platform::kPanelHeight);
       if (!merged.has_value() || !refresh_policy::rect_contains(merged.value(), bbox.value(), 4)) {
-        render_output.dirty_rects.push_back(bbox.value());
-        render_output.dirty_reasons.push_back("diff_fallback");
+        if (!merged.has_value()) {
+          render_output.dirty_rects.push_back(bbox.value());
+          render_output.dirty_reasons.push_back("diff_fallback");
+        } else if (state_.screen == committed_screen_) {
+          if (diff_ratio >= kDiffFallbackMinRatio) {
+            render_output.dirty_rects.push_back(bbox.value());
+            render_output.dirty_reasons.push_back("diff_fallback");
+          } else if (kRefreshDebugLogs) {
+            ESP_LOGI(
+                kTag,
+                "[refresh] DIFF_FALLBACK_SKIP screen=%s diff_ratio=%.4f threshold=%.4f",
+                screen_name(state_.screen),
+                diff_ratio,
+                kDiffFallbackMinRatio);
+          }
+        } else if (kRefreshDebugLogs) {
+          ESP_LOGI(
+              kTag,
+              "[refresh] DIFF_FALLBACK_SKIP screen=%s reason=screen_changed",
+              screen_name(state_.screen));
+        }
       }
     }
   } else if (render_output.dirty_reasons.empty()) {
@@ -94,6 +144,9 @@ void Runtime::stage_render() {
     render_output.dirty_reasons.push_back("state.change");
   }
 
+  if (should_collapse_to_latest(state_.screen, render_output.dirty_reasons)) {
+    refresh_runtime_.clear_pending();
+  }
   refresh_runtime_.enqueue(render_output.dirty_rects);
   pending_render_ = std::move(render_output);
   pending_screen_ = state_.screen;
@@ -235,11 +288,12 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
   refresh_runtime_.clear_pending();
 }
 
-std::optional<platform::DirtyRect> Runtime::diff_bbox(const std::vector<uint8_t>& image) const {
+std::pair<std::optional<platform::DirtyRect>, double> Runtime::diff_stats(
+    const std::vector<uint8_t>& image) const {
   if (!committed_frame_valid_ ||
       committed_frame_.size() != image.size() ||
       image.size() != static_cast<std::size_t>(platform::kPanelBufferSize)) {
-    return std::nullopt;
+    return {std::nullopt, 0.0};
   }
 
   int y0 = platform::kPanelHeight;
@@ -247,6 +301,7 @@ std::optional<platform::DirtyRect> Runtime::diff_bbox(const std::vector<uint8_t>
   int xb0 = platform::kPanelWidthBytes;
   int xb1 = -1;
   bool has_diff = false;
+  std::size_t changed_bits = 0;
   for (int y = 0; y < platform::kPanelHeight; ++y) {
     for (int xb = 0; xb < platform::kPanelWidthBytes; ++xb) {
       const int idx = y * platform::kPanelWidthBytes + xb;
@@ -255,6 +310,11 @@ std::optional<platform::DirtyRect> Runtime::diff_bbox(const std::vector<uint8_t>
         continue;
       }
       has_diff = true;
+      const uint8_t delta = static_cast<uint8_t>(
+          image[static_cast<std::size_t>(idx)] ^
+          committed_frame_[static_cast<std::size_t>(idx)]);
+      changed_bits += static_cast<std::size_t>(__builtin_popcount(
+          static_cast<unsigned int>(delta)));
       y0 = std::min(y0, y);
       y1 = std::max(y1, y);
       xb0 = std::min(xb0, xb);
@@ -263,13 +323,19 @@ std::optional<platform::DirtyRect> Runtime::diff_bbox(const std::vector<uint8_t>
   }
 
   if (!has_diff) {
-    return std::nullopt;
+    return {std::nullopt, 0.0};
   }
-  return platform::DirtyRect{
-      xb0 * 8,
-      y0,
-      (xb1 + 1) * 8,
-      y1 + 1,
+  const double diff_ratio =
+      static_cast<double>(changed_bits) /
+      static_cast<double>(std::max(1, platform::kPanelWidth * platform::kPanelHeight));
+  return {
+      platform::DirtyRect{
+          xb0 * 8,
+          y0,
+          (xb1 + 1) * 8,
+          y1 + 1,
+      },
+      diff_ratio,
   };
 }
 

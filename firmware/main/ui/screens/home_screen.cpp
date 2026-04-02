@@ -1454,7 +1454,11 @@ HomeDirtyPlan home_dirty_plan(
     if (!row_rect_added || reminder_ids_changed || section_count_changed) {
       append_rect_if_valid(plan.rects, home_right_list_rect(current));
     }
-    add_reason("home.reminder_row_update");
+    if (reminder_ids_changed || section_count_changed) {
+      add_reason("home.reminder_compact");
+    } else {
+      add_reason("home.reminder_row_update");
+    }
   }
 
   if (previous.family_memo_text != current.family_memo_text ||
