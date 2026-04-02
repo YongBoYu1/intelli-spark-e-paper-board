@@ -35,9 +35,11 @@ constexpr bool kPowerOffAfterRefresh = false;
 constexpr bool kUseInvertedOldBufferForFullRefresh = true;
 constexpr int kUiDilateRadius = 0;
 constexpr bool kEnablePartialRefresh = true;
-// Python ground truth (epd7in5_V2.py) uses the OTP-LUT init()/init_part() path.
-// Keep host-LUT path disabled for parity.
-constexpr bool kUseHostLutWaveformProfile = false;
+// Hardware contrast regression note:
+// OTP-LUT init path caused severe low-contrast/washed rendering on current panel
+// batch. Keep host-LUT full-refresh profile enabled until driver parity can be
+// completed without contrast loss.
+constexpr bool kUseHostLutWaveformProfile = true;
 // Match Waveshare epd7in5_V2_old host-LUT path by default.
 constexpr bool kUseHostLutDualPlaneRefresh = true;
 constexpr bool kUseHostLutEvsRegister = true;
