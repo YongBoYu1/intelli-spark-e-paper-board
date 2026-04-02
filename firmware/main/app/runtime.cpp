@@ -162,10 +162,12 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
   const refresh_policy::Mode mode =
       refresh_policy::parse_mode(state_.settings.refresh_mode);
   const refresh_policy::ModeParams params = refresh_policy::mode_params(mode);
-  const int full_every = refresh_policy::effective_full_refresh_every(
-      pending_screen_,
-      mode,
-      state_.settings.full_refresh_every);
+  const int full_every = state_.settings.partial_refresh_budget_enabled
+                             ? refresh_policy::effective_full_refresh_every(
+                                   pending_screen_,
+                                   mode,
+                                   state_.settings.full_refresh_every)
+                             : 0;
   const double now_s = static_cast<double>(now_ms) / 1000.0;
   const std::string full_clean_reason =
       refresh_runtime_.full_clean_reason(now_s, full_every);
@@ -235,7 +237,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         ESP_LOGI(
             kTag,
             "[refresh] R1_PARTIAL_RECTS screen=%s count=%u rects=%s gate_ratio=%.3f limit=%.3f "
-            "partial_count=%d/%d mode=%s dirty=%s",
+            "partial_count=%d/%d budget=%s mode=%s dirty=%s",
             screen_name(pending_screen_),
             static_cast<unsigned>(aligned_rects.size()),
             format_rects(aligned_rects).c_str(),
@@ -243,6 +245,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             mode_limit,
             refresh_runtime_.partial_count,
             full_every,
+            state_.settings.partial_refresh_budget_enabled ? "on" : "off",
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());
       }
