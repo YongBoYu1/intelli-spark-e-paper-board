@@ -39,7 +39,6 @@ bool should_collapse_to_latest(
       "home.focus_to_left_panel",
       "home.focus_from_left_panel",
       "home.focus_left_panel_only",
-      "home.menu_overlay_toggle",
       "home.menu_overlay_focus",
       "home.focus_priority_drop_family",
       "diff_fallback",
@@ -268,7 +267,8 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
       effective_mode_limit = std::max(effective_mode_limit, kHomeFamilyAreaLimitOverride);
     }
     if (pending_screen_ == Screen::Home &&
-        has_reason(pending_render_.dirty_reasons, "home.menu_overlay_toggle")) {
+        (has_reason(pending_render_.dirty_reasons, "home.menu_overlay_toggle") ||
+         has_reason(pending_render_.dirty_reasons, "home.menu_overlay_focus"))) {
       effective_mode_limit = std::max(effective_mode_limit, kHomeMenuOverlayAreaLimitOverride);
     }
     const double gate_area_ratio =
@@ -282,46 +282,14 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         partial_enabled &&
         !aligned_rects.empty() &&
         gate_area_ratio <= effective_mode_limit;
-    const bool menu_overlay_toggle_open =
-        pending_screen_ == Screen::Home &&
-        has_reason(pending_render_.dirty_reasons, "home.menu_overlay_toggle") &&
-        pending_home_snapshot_.menu_overlay_active;
-
-    if (menu_overlay_toggle_open) {
-      // Product consistency guardrail:
-      // Home menu first-open must not show "transparent/washed" pills.
-      // Force a non-clean full refresh for deterministic visual result.
-      display_.display_full(pending_render_.image, false);
-      refresh_runtime_.mark_fast_full(now_s);
-      if (kRefreshDebugLogs) {
-        ESP_LOGI(
-            kTag,
-            "[refresh] R2_FAST_FULL screen=%s reason=home.menu_overlay_toggle_consistency "
-            "gate_ratio=%.3f limit=%.3f mode=%s dirty=%s",
-            screen_name(pending_screen_),
-            gate_area_ratio,
-            effective_mode_limit,
-            refresh_policy::mode_name(mode),
-            format_reasons(pending_render_.dirty_reasons).c_str());
-      }
-    } else if (allow_partial) {
+    if (allow_partial) {
       const bool reinforce_row_toggle =
           pending_screen_ == Screen::Home &&
           has_reason(pending_render_.dirty_reasons, "home.reminder_row_update");
-      const bool reinforce_menu_overlay_toggle =
-          pending_screen_ == Screen::Home &&
-          has_reason(pending_render_.dirty_reasons, "home.menu_overlay_toggle");
-      const bool overlay_toggle_open =
-          reinforce_menu_overlay_toggle && pending_home_snapshot_.menu_overlay_active;
 
       int partial_passes = 1;
       if (reinforce_row_toggle) {
         partial_passes = std::max(partial_passes, 2);
-      }
-      if (overlay_toggle_open) {
-        // Panel-side stabilization: first overlay open is the most artifact-prone
-        // (white-on-old-content recovery). Drive the same rects multiple times.
-        partial_passes = std::max(partial_passes, 3);
       }
 
       for (int pass = 0; pass < partial_passes; ++pass) {
@@ -332,8 +300,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         ESP_LOGI(
             kTag,
             "[refresh] R1_PARTIAL_RECTS screen=%s count=%u rects=%s gate_ratio=%.3f limit=%.3f "
-            "partial_count=%d/%d budget=%s passes=%d reinforce_row=%s reinforce_menu_toggle=%s "
-            "overlay_toggle_open=%s mode=%s dirty=%s",
+            "partial_count=%d/%d budget=%s passes=%d reinforce_row=%s mode=%s dirty=%s",
             screen_name(pending_screen_),
             static_cast<unsigned>(aligned_rects.size()),
             format_rects(aligned_rects).c_str(),
@@ -344,8 +311,6 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             state_.settings.partial_refresh_budget_enabled ? "on" : "off",
             partial_passes,
             reinforce_row_toggle ? "on" : "off",
-            reinforce_menu_overlay_toggle ? "on" : "off",
-            overlay_toggle_open ? "on" : "off",
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());
       }
