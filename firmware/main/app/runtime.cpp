@@ -276,11 +276,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
       const bool reinforce_row_toggle =
           pending_screen_ == Screen::Home &&
           has_reason(pending_render_.dirty_reasons, "home.reminder_row_update");
-      const bool reinforce_menu_overlay =
-          pending_screen_ == Screen::Home &&
-          (has_reason(pending_render_.dirty_reasons, "home.menu_overlay_toggle") ||
-           has_reason(pending_render_.dirty_reasons, "home.menu_overlay_focus"));
-      const bool reinforce_partial = reinforce_row_toggle || reinforce_menu_overlay;
+      const bool reinforce_partial = reinforce_row_toggle;
       display_.display_partial(pending_render_.image, aligned_rects);
       if (reinforce_partial) {
         // On current panel batches, check/uncheck transitions can leave a faint
@@ -293,7 +289,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         ESP_LOGI(
             kTag,
             "[refresh] R1_PARTIAL_RECTS screen=%s count=%u rects=%s gate_ratio=%.3f limit=%.3f "
-            "partial_count=%d/%d budget=%s reinforce_row=%s reinforce_menu=%s mode=%s dirty=%s",
+            "partial_count=%d/%d budget=%s reinforce=%s mode=%s dirty=%s",
             screen_name(pending_screen_),
             static_cast<unsigned>(aligned_rects.size()),
             format_rects(aligned_rects).c_str(),
@@ -303,7 +299,6 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             full_every,
             state_.settings.partial_refresh_budget_enabled ? "on" : "off",
             reinforce_row_toggle ? "on" : "off",
-            reinforce_menu_overlay ? "on" : "off",
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());
       }

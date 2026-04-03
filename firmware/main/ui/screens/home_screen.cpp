@@ -422,14 +422,8 @@ HomeMenuOverlayLayout home_menu_overlay_layout(const int width, const int height
 platform::DirtyRect home_menu_overlay_rect() {
   const HomeLandscapeMetrics metrics = home_landscape_metrics();
   const HomeMenuOverlayLayout layout = home_menu_overlay_layout(metrics.width, metrics.height);
-  constexpr int kOverlayDirtyPad = 3;
   return clip_rect(
-      {
-          layout.x0 - kOverlayDirtyPad,
-          layout.y0 - kOverlayDirtyPad,
-          layout.x1 + kOverlayDirtyPad,
-          layout.y1 + kOverlayDirtyPad,
-      },
+      {layout.x0, layout.y0, layout.x1, layout.y1},
       metrics.width,
       metrics.height);
 }
@@ -1214,7 +1208,10 @@ void draw_home_menu_overlay(
     return;
   }
 
+  // Python source-of-truth: app/ui/menu.py::render_menu_overlay_home
+  // radius=card_radius(default 12), compact clamps to 10, border width default 2.
   const int overlay_radius = layout.compact ? 10 : 12;
+  const int border_w = layout.compact ? 1 : 2;
   fill_rounded_rect(
       image,
       layout.x0,
@@ -1230,11 +1227,11 @@ void draw_home_menu_overlay(
       layout.x1,
       layout.y1,
       overlay_radius,
-      1);
+      border_w);
 
   const BitmapFont& hint_font = platform::panel_font_assets::kFontJetBold13;
-  const BitmapFont& item_font = platform::panel_font_assets::kFontInterBold13;
-  constexpr int hint_spacing = 1;
+  const BitmapFont* item_font = &platform::panel_font_assets::kFontInterBold18;
+  constexpr int hint_spacing = 0;
   const std::string hint = "NAVIGATION";
   const int hint_w = text_width_with_font_spaced(hint, hint_font, hint_spacing);
   const int hint_x =
@@ -1246,19 +1243,37 @@ void draw_home_menu_overlay(
       (kHomeMenuItemCount * layout.pill_w) + ((kHomeMenuItemCount - 1) * layout.gap);
   const int start_x = layout.x0 + std::max(8, ((layout.x1 - layout.x0) - total_pills_w) / 2);
   const int focus_index = normalized_menu_focus_index(state.menu.focused_index);
-  const int label_budget = std::max(20, layout.pill_w - (layout.compact ? 14 : 24));
+  const int label_budget = std::max(24, layout.pill_w - (layout.compact ? 14 : 24));
+
+  // Python parity: dynamic font-size reduction when labels overflow available pill width.
+  const BitmapFont* candidates[] = {
+      &platform::panel_font_assets::kFontInterBold18,
+      &platform::panel_font_assets::kFontInterBold17,
+      &platform::panel_font_assets::kFontInterBold13,
+  };
+  for (const BitmapFont* candidate : candidates) {
+    int max_w = 0;
+    for (int i = 0; i < kHomeMenuItemCount; ++i) {
+      max_w = std::max(max_w, text_width_with_font(kHomeMenuItems[i], *candidate));
+    }
+    if (max_w <= label_budget) {
+      item_font = candidate;
+      break;
+    }
+  }
+
   for (int i = 0; i < kHomeMenuItemCount; ++i) {
     const int px0 = start_x + i * (layout.pill_w + layout.gap);
     const int px1 = px0 + layout.pill_w;
     const bool focused = i == focus_index;
-    const int pill_radius = layout.compact ? 8 : 10;
+    const int pill_radius = overlay_radius;
     fill_rounded_rect(
         image,
-        px0 + 1,
-        layout.pills_y + 1,
-        px1 - 1,
-        layout.pills_y + layout.pill_h - 1,
-        std::max(0, pill_radius - 1),
+        px0,
+        layout.pills_y,
+        px1,
+        layout.pills_y + layout.pill_h,
+        pill_radius,
         focused);
     draw_rounded_rect_stroke(
         image,
@@ -1267,13 +1282,13 @@ void draw_home_menu_overlay(
         px1,
         layout.pills_y + layout.pill_h,
         pill_radius,
-        1);
+        border_w);
     const std::string label =
-        truncate_text_with_font(kHomeMenuItems[i], item_font, label_budget);
-    const int text_w = text_width_with_font(label, item_font);
+        truncate_text_with_font(kHomeMenuItems[i], *item_font, label_budget);
+    const int text_w = text_width_with_font(label, *item_font);
     const int tx = px0 + std::max(2, (layout.pill_w - text_w) / 2);
-    const int ty = centered_sample_y_with_font(layout.pills_y, layout.pill_h, item_font);
-    draw_text_with_font(image, tx, ty, label, item_font, 0, !focused);
+    const int ty = centered_sample_y_with_font(layout.pills_y, layout.pill_h, *item_font);
+    draw_text_with_font(image, tx, ty, label, *item_font, 0, !focused);
   }
 }
 
