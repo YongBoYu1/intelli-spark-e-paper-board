@@ -282,7 +282,28 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         partial_enabled &&
         !aligned_rects.empty() &&
         gate_area_ratio <= effective_mode_limit;
-    if (allow_partial) {
+    const bool menu_overlay_toggle_open =
+        pending_screen_ == Screen::Home &&
+        has_reason(pending_render_.dirty_reasons, "home.menu_overlay_toggle") &&
+        pending_home_snapshot_.menu_overlay_active;
+
+    if (menu_overlay_toggle_open) {
+      // Product consistency override:
+      // menu overlay first-open should render as stable solid pills immediately.
+      display_.display_full(pending_render_.image, false);
+      refresh_runtime_.mark_fast_full(now_s);
+      if (kRefreshDebugLogs) {
+        ESP_LOGI(
+            kTag,
+            "[refresh] R2_FAST_FULL screen=%s reason=home.menu_overlay_open_consistency "
+            "gate_ratio=%.3f limit=%.3f mode=%s dirty=%s",
+            screen_name(pending_screen_),
+            gate_area_ratio,
+            effective_mode_limit,
+            refresh_policy::mode_name(mode),
+            format_reasons(pending_render_.dirty_reasons).c_str());
+      }
+    } else if (allow_partial) {
       const bool reinforce_row_toggle =
           pending_screen_ == Screen::Home &&
           has_reason(pending_render_.dirty_reasons, "home.reminder_row_update");
