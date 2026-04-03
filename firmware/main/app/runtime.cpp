@@ -23,6 +23,8 @@ constexpr int kPartialPad = 2;
 constexpr int kPartialMaxRects = 6;
 constexpr bool kRefreshDebugLogs = true;
 constexpr double kDiffFallbackMinRatio = 0.10;
+constexpr double kHomeFamilyAreaLimitOverride = 0.30;
+constexpr double kHomeMenuOverlayAreaLimitOverride = 0.60;
 
 bool should_collapse_to_latest(
     const Screen screen,
@@ -260,6 +262,15 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
     }
     const double mode_limit =
         refresh_policy::screen_partial_area_limit(pending_screen_, mode);
+    double effective_mode_limit = mode_limit;
+    if (pending_screen_ == Screen::Home &&
+        has_reason(pending_render_.dirty_reasons, "home.family_board_update")) {
+      effective_mode_limit = std::max(effective_mode_limit, kHomeFamilyAreaLimitOverride);
+    }
+    if (pending_screen_ == Screen::Home &&
+        has_reason(pending_render_.dirty_reasons, "home.menu_overlay_toggle")) {
+      effective_mode_limit = std::max(effective_mode_limit, kHomeMenuOverlayAreaLimitOverride);
+    }
     const double gate_area_ratio =
         refresh_policy::partial_gate_area_ratio(
             aligned_rects,
@@ -270,18 +281,21 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         !screen_changed &&
         partial_enabled &&
         !aligned_rects.empty() &&
-        gate_area_ratio <= mode_limit;
+        gate_area_ratio <= effective_mode_limit;
 
     if (allow_partial) {
       const bool reinforce_row_toggle =
           pending_screen_ == Screen::Home &&
           has_reason(pending_render_.dirty_reasons, "home.reminder_row_update");
-      const bool reinforce_partial = reinforce_row_toggle;
+      const bool reinforce_menu_overlay_toggle =
+          pending_screen_ == Screen::Home &&
+          has_reason(pending_render_.dirty_reasons, "home.menu_overlay_toggle");
+      const bool reinforce_partial = reinforce_row_toggle || reinforce_menu_overlay_toggle;
       display_.display_partial(pending_render_.image, aligned_rects);
       if (reinforce_partial) {
         // On current panel batches, check/uncheck transitions can leave a faint
         // residue after a single partial. A second pass over the same rects
-        // improves recovery stability for row toggles and menu-overlay toggles.
+        // improves recovery stability for row toggles and first menu-overlay open.
         display_.display_partial(pending_render_.image, aligned_rects);
       }
       refresh_runtime_.mark_partial(now_s);
@@ -289,16 +303,17 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         ESP_LOGI(
             kTag,
             "[refresh] R1_PARTIAL_RECTS screen=%s count=%u rects=%s gate_ratio=%.3f limit=%.3f "
-            "partial_count=%d/%d budget=%s reinforce=%s mode=%s dirty=%s",
+            "partial_count=%d/%d budget=%s reinforce_row=%s reinforce_menu_toggle=%s mode=%s dirty=%s",
             screen_name(pending_screen_),
             static_cast<unsigned>(aligned_rects.size()),
             format_rects(aligned_rects).c_str(),
             gate_area_ratio,
-            mode_limit,
+            effective_mode_limit,
             refresh_runtime_.partial_count,
             full_every,
             state_.settings.partial_refresh_budget_enabled ? "on" : "off",
             reinforce_row_toggle ? "on" : "off",
+            reinforce_menu_overlay_toggle ? "on" : "off",
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());
       }
@@ -310,7 +325,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         why = "partial_disabled";
       } else if (aligned_rects.empty()) {
         why = "no_aligned_rect";
-      } else if (gate_area_ratio > mode_limit) {
+      } else if (gate_area_ratio > effective_mode_limit) {
         why = "area_over_limit";
       }
       display_.display_full(pending_render_.image, false);
@@ -322,7 +337,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             screen_name(pending_screen_),
             why,
             gate_area_ratio,
-            mode_limit,
+            effective_mode_limit,
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());
       }

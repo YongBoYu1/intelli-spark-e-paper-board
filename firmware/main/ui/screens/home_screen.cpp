@@ -634,6 +634,44 @@ struct TextVerticalBounds {
   bool valid{false};
 };
 
+struct TextBounds {
+  int left{0};
+  int top{0};
+  int right{0};
+  int bottom{0};
+  bool valid{false};
+};
+
+TextBounds text_bounds_with_font(
+    const std::string& text,
+    const BitmapFont& font) {
+  TextBounds bounds{};
+  int pen_x = 0;
+  for (const char ch : text) {
+    const Glyph& glyph = font.glyphs[glyph_index(ch)];
+    if (glyph.width > 0 && glyph.height > 0) {
+      const int glyph_left = pen_x + glyph.left;
+      const int glyph_top = glyph.top;
+      const int glyph_right = glyph_left + glyph.width;
+      const int glyph_bottom = glyph_top + glyph.height;
+      if (!bounds.valid) {
+        bounds.left = glyph_left;
+        bounds.top = glyph_top;
+        bounds.right = glyph_right;
+        bounds.bottom = glyph_bottom;
+        bounds.valid = true;
+      } else {
+        bounds.left = std::min(bounds.left, glyph_left);
+        bounds.top = std::min(bounds.top, glyph_top);
+        bounds.right = std::max(bounds.right, glyph_right);
+        bounds.bottom = std::max(bounds.bottom, glyph_bottom);
+      }
+    }
+    pen_x += glyph.advance;
+  }
+  return bounds;
+}
+
 TextVerticalBounds text_vertical_bounds_with_font(
     const std::string& text,
     const BitmapFont& font) {
@@ -1285,9 +1323,15 @@ void draw_home_menu_overlay(
         border_w);
     const std::string label =
         truncate_text_with_font(kHomeMenuItems[i], *item_font, label_budget);
-    const int text_w = text_width_with_font(label, *item_font);
-    const int tx = px0 + std::max(2, (layout.pill_w - text_w) / 2);
-    const int ty = centered_sample_y_with_font(layout.pills_y, layout.pill_h, *item_font);
+    const TextBounds text_bounds = text_bounds_with_font(label, *item_font);
+    const int text_w = text_bounds.valid
+                           ? std::max(1, text_bounds.right - text_bounds.left)
+                           : std::max(1, text_width_with_font(label, *item_font));
+    const int text_h = text_bounds.valid
+                           ? std::max(1, text_bounds.bottom - text_bounds.top)
+                           : std::max(1, text_height_with_font(label, *item_font));
+    const int tx = px0 + ((layout.pill_w - text_w) / 2) - (text_bounds.valid ? text_bounds.left : 0);
+    const int ty = layout.pills_y + ((layout.pill_h - text_h) / 2) - (text_bounds.valid ? text_bounds.top : 0);
     draw_text_with_font(image, tx, ty, label, *item_font, 0, !focused);
   }
 }
