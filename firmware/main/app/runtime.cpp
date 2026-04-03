@@ -290,12 +290,20 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
       const bool reinforce_menu_overlay_toggle =
           pending_screen_ == Screen::Home &&
           has_reason(pending_render_.dirty_reasons, "home.menu_overlay_toggle");
-      const bool reinforce_partial = reinforce_row_toggle || reinforce_menu_overlay_toggle;
-      display_.display_partial(pending_render_.image, aligned_rects);
-      if (reinforce_partial) {
-        // On current panel batches, check/uncheck transitions can leave a faint
-        // residue after a single partial. A second pass over the same rects
-        // improves recovery stability for row toggles and first menu-overlay open.
+      const bool overlay_toggle_open =
+          reinforce_menu_overlay_toggle && pending_home_snapshot_.menu_overlay_active;
+
+      int partial_passes = 1;
+      if (reinforce_row_toggle) {
+        partial_passes = std::max(partial_passes, 2);
+      }
+      if (overlay_toggle_open) {
+        // Panel-side stabilization: first overlay open is the most artifact-prone
+        // (white-on-old-content recovery). Drive the same rects multiple times.
+        partial_passes = std::max(partial_passes, 3);
+      }
+
+      for (int pass = 0; pass < partial_passes; ++pass) {
         display_.display_partial(pending_render_.image, aligned_rects);
       }
       refresh_runtime_.mark_partial(now_s);
@@ -303,7 +311,8 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         ESP_LOGI(
             kTag,
             "[refresh] R1_PARTIAL_RECTS screen=%s count=%u rects=%s gate_ratio=%.3f limit=%.3f "
-            "partial_count=%d/%d budget=%s reinforce_row=%s reinforce_menu_toggle=%s mode=%s dirty=%s",
+            "partial_count=%d/%d budget=%s passes=%d reinforce_row=%s reinforce_menu_toggle=%s "
+            "overlay_toggle_open=%s mode=%s dirty=%s",
             screen_name(pending_screen_),
             static_cast<unsigned>(aligned_rects.size()),
             format_rects(aligned_rects).c_str(),
@@ -312,8 +321,10 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             refresh_runtime_.partial_count,
             full_every,
             state_.settings.partial_refresh_budget_enabled ? "on" : "off",
+            partial_passes,
             reinforce_row_toggle ? "on" : "off",
             reinforce_menu_overlay_toggle ? "on" : "off",
+            overlay_toggle_open ? "on" : "off",
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());
       }
