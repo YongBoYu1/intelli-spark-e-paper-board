@@ -49,13 +49,14 @@ bool is_digit_char(uint8_t ch) {
 }
 
 void log_monitor_controls() {
-  ESP_LOGI(kTag, "Monitor 控制键 / Controls:");
-  ESP_LOGI(kTag, "  a/d (或 h/l): 旋转焦点 / rotate");
-  ESP_LOGI(kTag, "  c 或 Enter 或 Space: 点击 / click");
-  ESP_LOGI(kTag, "  m: 长按旋钮 / long-press (Home 上开关导航菜单)");
-  ESP_LOGI(kTag, "  b: 返回键 / back (Home 上开/关菜单，其他页返回 Home)");
-  ESP_LOGI(kTag, "  t<epoch> + Enter: 同步时间 / sync wall clock");
-  ESP_LOGI(kTag, "  v<HH>: VCOM 扫值 / VCOM sweep (2 hex digits)");
+  ESP_LOGI(kTag, "Controls (? to print again)");
+  ESP_LOGI(kTag, "A/D or H/L: rotate");
+  ESP_LOGI(kTag, "C or Enter/Space: click");
+  ESP_LOGI(kTag, "M: long-press (toggle Home nav overlay)");
+  ESP_LOGI(kTag, "B: back (toggle/close menu, or return Home)");
+  ESP_LOGI(kTag, "T<epoch> + Enter: sync wall clock");
+  ESP_LOGI(kTag, "V<HH>: VCOM sweep (2 hex digits)");
+  ESP_LOGI(kTag, "中文: A/D旋转, C点击, M长按, B返回");
 }
 
 void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
@@ -117,6 +118,9 @@ void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
       ESP_LOGI(kTag, "VCOM sweep mode: enter 2 hex digits (e.g. v08, v10, v20)");
       vcom_mode = true;
       vcom_hex_pos = 0;
+      break;
+    case '?':
+      log_monitor_controls();
       break;
     case 't':
     case 'T':
