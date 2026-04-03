@@ -59,6 +59,13 @@ void log_monitor_controls() {
   ESP_LOGI(kTag, "中文: A/D旋转, C点击, M长按, B返回");
 }
 
+void log_monitor_controls_summary() {
+  ESP_LOGI(
+      kTag,
+      "Controls: a/d rotate, c click, m long-press, b back, "
+      "t<epoch> sync time, v<HH> vcom, ?|/|p help");
+}
+
 void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
                          fridge_ink::platform::Display& display,
                          const std::uint8_t byte) {
@@ -120,6 +127,10 @@ void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
       vcom_hex_pos = 0;
       break;
     case '?':
+    case '/':
+    case 'p':
+    case 'P':
+      log_monitor_controls_summary();
       log_monitor_controls();
       break;
     case 't':
@@ -183,7 +194,8 @@ extern "C" void app_main(void) {
 
   const bool serial_input_ok = setup_serial_input();
   if (serial_input_ok) {
-    log_monitor_controls();
+    // Keep startup print compact and robust after heavy panel-init logs.
+    log_monitor_controls_summary();
   }
 
   std::uint64_t last_tick_ms = fridge_ink::platform::monotonic_ms();

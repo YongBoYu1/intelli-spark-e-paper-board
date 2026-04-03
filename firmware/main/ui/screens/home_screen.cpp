@@ -422,8 +422,14 @@ HomeMenuOverlayLayout home_menu_overlay_layout(const int width, const int height
 platform::DirtyRect home_menu_overlay_rect() {
   const HomeLandscapeMetrics metrics = home_landscape_metrics();
   const HomeMenuOverlayLayout layout = home_menu_overlay_layout(metrics.width, metrics.height);
+  constexpr int kOverlayDirtyPad = 3;
   return clip_rect(
-      {layout.x0, layout.y0, layout.x1, layout.y1},
+      {
+          layout.x0 - kOverlayDirtyPad,
+          layout.y0 - kOverlayDirtyPad,
+          layout.x1 + kOverlayDirtyPad,
+          layout.y1 + kOverlayDirtyPad,
+      },
       metrics.width,
       metrics.height);
 }
@@ -1208,14 +1214,22 @@ void draw_home_menu_overlay(
     return;
   }
 
-  fill_white_rect(image, layout.x0, layout.y0, layout.x1, layout.y1);
+  const int overlay_radius = layout.compact ? 10 : 12;
+  fill_rounded_rect(
+      image,
+      layout.x0,
+      layout.y0,
+      layout.x1,
+      layout.y1,
+      overlay_radius,
+      false);
   draw_rounded_rect_stroke(
       image,
       layout.x0,
       layout.y0,
       layout.x1,
       layout.y1,
-      layout.compact ? 10 : 12,
+      overlay_radius,
       1);
 
   const BitmapFont& hint_font = platform::panel_font_assets::kFontJetBold13;
@@ -1237,18 +1251,22 @@ void draw_home_menu_overlay(
     const int px0 = start_x + i * (layout.pill_w + layout.gap);
     const int px1 = px0 + layout.pill_w;
     const bool focused = i == focus_index;
-    if (focused) {
-      fill_black_rect(image, px0 + 1, layout.pills_y + 1, px1 - 1, layout.pills_y + layout.pill_h - 1);
-    } else {
-      fill_white_rect(image, px0 + 1, layout.pills_y + 1, px1 - 1, layout.pills_y + layout.pill_h - 1);
-    }
+    const int pill_radius = layout.compact ? 8 : 10;
+    fill_rounded_rect(
+        image,
+        px0 + 1,
+        layout.pills_y + 1,
+        px1 - 1,
+        layout.pills_y + layout.pill_h - 1,
+        std::max(0, pill_radius - 1),
+        focused);
     draw_rounded_rect_stroke(
         image,
         px0,
         layout.pills_y,
         px1,
         layout.pills_y + layout.pill_h,
-        layout.compact ? 8 : 10,
+        pill_radius,
         1);
     const std::string label =
         truncate_text_with_font(kHomeMenuItems[i], item_font, label_budget);
