@@ -929,7 +929,13 @@ class EpaperDisplay final : public Display {
     send_data(0x01);
 
     const auto send_partial_plane_13 = [&](const std::vector<uint8_t>& frame, const char* label) {
-      trace_stream(label, static_cast<size_t>(w_bytes * h));
+      // Python source-of-truth (epd7in5_V2.py::display_Partial):
+      // after 0x13 it streams a full-frame-length payload, where only the
+      // leading Width*Height bytes carry window data and the remainder stays
+      // white (0xFF in framebuffer convention).
+      const size_t partial_payload_len = static_cast<size_t>(w_bytes * h);
+      const size_t full_payload_len = static_cast<size_t>(kPanelBufferSize);
+      trace_stream(label, full_payload_len);
       begin_data_stream();
       std::array<uint8_t, kFillChunkBytes> panel_chunk{};
       for (int row = y0; row < y1; ++row) {
@@ -943,6 +949,16 @@ class EpaperDisplay final : public Display {
           panel_chunk[b] = map_framebuffer_byte_to_panel(payload);
         }
         spi_write_bytes(panel_chunk.data(), w_bytes);
+      }
+      if (partial_payload_len < full_payload_len) {
+        const size_t tail_len = full_payload_len - partial_payload_len;
+        panel_chunk.fill(panel_white_fill_byte());
+        size_t sent = 0;
+        while (sent < tail_len) {
+          const size_t chunk = std::min(panel_chunk.size(), tail_len - sent);
+          spi_write_bytes(panel_chunk.data(), chunk);
+          sent += chunk;
+        }
       }
       end_data_stream();
     };
