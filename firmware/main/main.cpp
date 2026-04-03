@@ -48,6 +48,16 @@ bool is_digit_char(uint8_t ch) {
   return ch >= '0' && ch <= '9';
 }
 
+void log_monitor_controls() {
+  ESP_LOGI(kTag, "Monitor 控制键 / Controls:");
+  ESP_LOGI(kTag, "  a/d (或 h/l): 旋转焦点 / rotate");
+  ESP_LOGI(kTag, "  c 或 Enter 或 Space: 点击 / click");
+  ESP_LOGI(kTag, "  m: 长按旋钮 / long-press (Home 上开关导航菜单)");
+  ESP_LOGI(kTag, "  b: 返回键 / back (Home 上开/关菜单，其他页返回 Home)");
+  ESP_LOGI(kTag, "  t<epoch> + Enter: 同步时间 / sync wall clock");
+  ESP_LOGI(kTag, "  v<HH>: VCOM 扫值 / VCOM sweep (2 hex digits)");
+}
+
 void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
                          fridge_ink::platform::Display& display,
                          const std::uint8_t byte) {
@@ -169,10 +179,7 @@ extern "C" void app_main(void) {
 
   const bool serial_input_ok = setup_serial_input();
   if (serial_input_ok) {
-    ESP_LOGI(
-        kTag,
-        "Monitor controls: a/d = rotate, c = click, m = long-press, b = back, "
-        "t<epoch> = time sync, v<HH> = VCOM sweep");
+    log_monitor_controls();
   }
 
   std::uint64_t last_tick_ms = fridge_ink::platform::monotonic_ms();
