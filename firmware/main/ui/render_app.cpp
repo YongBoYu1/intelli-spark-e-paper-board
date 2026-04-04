@@ -1,10 +1,14 @@
 #include "ui/render_app.hpp"
 
+#include "ui/screens/calendar_screen.hpp"
 #include "ui/screens/home_screen.hpp"
 #include "ui/screens/landing_screen.hpp"
+#include "ui/screens/memo_screen.hpp"
 #include "ui/screens/menu_screen.hpp"
 #include "ui/screens/onboarding_screen.hpp"
 #include "ui/screens/placeholder_screen.hpp"
+#include "ui/screens/settings_screen.hpp"
+#include "ui/screens/timer_screen.hpp"
 
 #include "esp_log.h"
 

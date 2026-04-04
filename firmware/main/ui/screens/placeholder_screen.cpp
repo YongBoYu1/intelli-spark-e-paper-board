@@ -36,39 +36,6 @@ std::vector<uint8_t> render_placeholder_bitmap(
 
 }  // namespace
 
-std::vector<uint8_t> render_memo_bitmap(const app::AppState& state) {
-  (void)state;
-  return render_placeholder_bitmap(
-      "MEMO",
-      "Memo screen is wired into navigation framework.",
-      "Detail behavior will follow after runtime migration stabilizes.",
-      "Back/long-press returns HOME to match Python navigation semantics.");
-}
-
-std::vector<uint8_t> render_timer_bitmap(const app::AppState& state) {
-  const std::string line_one =
-      std::string("Minutes remaining: ") + std::to_string(state.timer.minutes_remaining);
-  const std::string line_two =
-      std::string("Running: ") + (state.timer.running ? "YES" : "NO");
-  return render_placeholder_bitmap(
-      "TIMER",
-      line_one,
-      line_two,
-      "Timer behavior migration belongs to #52. Refresh-policy tuning belongs later.");
-}
-
-std::vector<uint8_t> render_calendar_bitmap(const app::AppState& state) {
-  const std::string line_one =
-      std::string("Month: ") + state.calendar.month_label;
-  const std::string line_two =
-      std::string("Selected day: ") + std::to_string(state.calendar.day_of_month);
-  return render_placeholder_bitmap(
-      "CALENDAR",
-      line_one,
-      line_two,
-      "Calendar screen is now reachable from the C++ runtime.");
-}
-
 std::vector<uint8_t> render_weather_bitmap(const app::AppState& state) {
   const std::string line_one =
       std::string("Condition: ") + state.weather.condition;
@@ -91,19 +58,6 @@ std::vector<uint8_t> render_inventory_bitmap(const app::AppState& state) {
       line_one,
       line_two,
       "This placeholder keeps the combined product area reachable on device.");
-}
-
-std::vector<uint8_t> render_settings_bitmap(const app::AppState& state) {
-  const std::string line_one =
-      std::string("Partial refresh: ") +
-      (state.settings.partial_refresh_enabled ? "ENABLED" : "DISABLED");
-  const std::string line_two =
-      std::string("Auto sync: ") + (state.settings.auto_sync_enabled ? "ON" : "OFF");
-  return render_placeholder_bitmap(
-      "SETTINGS",
-      line_one,
-      line_two,
-      "Settings behavior and persistence integration will be expanded in later #52/#53 work.");
 }
 
 }  // namespace fridge_ink::ui
