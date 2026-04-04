@@ -1288,8 +1288,7 @@ void draw_home_menu_overlay(
   const BitmapFont* candidates[] = {
       &platform::panel_font_assets::kFontInterBold18,
       &platform::panel_font_assets::kFontInterBold17,
-      &platform::panel_font_assets::kFontInterSemiBold15,
-      &platform::panel_font_assets::kFontInterSemiBold13,
+      &platform::panel_font_assets::kFontInterBold13,
   };
   const int candidate_count = static_cast<int>(sizeof(candidates) / sizeof(candidates[0]));
   item_font = candidates[candidate_count - 1];
