@@ -1295,7 +1295,11 @@ void draw_home_menu_overlay(
   for (const BitmapFont* candidate : candidates) {
     int max_w = 0;
     for (int i = 0; i < kHomeMenuItemCount; ++i) {
-      max_w = std::max(max_w, text_width_with_font(kHomeMenuItems[i], *candidate));
+      const TextBounds bounds = text_bounds_with_font(kHomeMenuItems[i], *candidate);
+      const int label_w = bounds.valid
+                              ? std::max(1, bounds.right - bounds.left)
+                              : std::max(1, text_width_with_font(kHomeMenuItems[i], *candidate));
+      max_w = std::max(max_w, label_w);
     }
     if (max_w <= label_budget) {
       item_font = candidate;
