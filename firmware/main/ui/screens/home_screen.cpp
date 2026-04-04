@@ -1283,12 +1283,16 @@ void draw_home_menu_overlay(
   const int focus_index = normalized_menu_focus_index(state.menu.focused_index);
   const int label_budget = std::max(24, layout.pill_w - (layout.compact ? 14 : 24));
 
-  // Python parity: dynamic font-size reduction when labels overflow available pill width.
+  // Python parity intent: progressively reduce label size when pills are tight.
+  // We use the closest available bitmap-font ladder on firmware.
   const BitmapFont* candidates[] = {
       &platform::panel_font_assets::kFontInterBold18,
       &platform::panel_font_assets::kFontInterBold17,
-      &platform::panel_font_assets::kFontInterBold13,
+      &platform::panel_font_assets::kFontInterSemiBold15,
+      &platform::panel_font_assets::kFontInterSemiBold13,
   };
+  const int candidate_count = static_cast<int>(sizeof(candidates) / sizeof(candidates[0]));
+  item_font = candidates[candidate_count - 1];
   for (const BitmapFont* candidate : candidates) {
     int max_w = 0;
     for (int i = 0; i < kHomeMenuItemCount; ++i) {
