@@ -48,16 +48,4 @@ std::vector<uint8_t> render_weather_bitmap(const app::AppState& state) {
       "Detailed weather layout parity is deferred until after navigation/state migration.");
 }
 
-std::vector<uint8_t> render_inventory_bitmap(const app::AppState& state) {
-  const std::string line_one =
-      std::string("Inventory items: ") + std::to_string(state.inventory.total_items);
-  const std::string line_two =
-      std::string("Reminders: ") + std::to_string(state.inventory.reminder_count);
-  return render_placeholder_bitmap(
-      "INVENTORY / REMINDERS",
-      line_one,
-      line_two,
-      "This placeholder keeps the combined product area reachable on device.");
-}
-
 }  // namespace fridge_ink::ui

@@ -3,6 +3,7 @@
 #include "ui/screens/calendar_screen.hpp"
 #include "ui/screens/home_screen.hpp"
 #include "ui/screens/landing_screen.hpp"
+#include "ui/screens/list_screen.hpp"
 #include "ui/screens/memo_screen.hpp"
 #include "ui/screens/menu_screen.hpp"
 #include "ui/screens/onboarding_screen.hpp"
@@ -62,7 +63,7 @@ RenderOutput render_app(
       output.image = render_weather_bitmap(state);
       break;
     case app::Screen::Inventory:
-      output.image = render_inventory_bitmap(state);
+      output.image = render_list_bitmap(state);
       break;
     case app::Screen::Settings:
       output.image = render_settings_bitmap(state);
