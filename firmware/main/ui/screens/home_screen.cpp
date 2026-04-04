@@ -592,6 +592,45 @@ int text_width_with_font_spaced(
   return width;
 }
 
+int text_visual_width_with_font_spaced(
+    const std::string& text,
+    const BitmapFont& font,
+    const int spacing) {
+  if (text.empty()) {
+    return 0;
+  }
+
+  int pen_x = 0;
+  int left = 0;
+  int right = 0;
+  bool valid = false;
+
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const Glyph& glyph = font.glyphs[glyph_index(text[i])];
+    if (glyph.width > 0 && glyph.height > 0) {
+      const int glyph_left = pen_x + glyph.left;
+      const int glyph_right = glyph_left + glyph.width;
+      if (!valid) {
+        left = glyph_left;
+        right = glyph_right;
+        valid = true;
+      } else {
+        left = std::min(left, glyph_left);
+        right = std::max(right, glyph_right);
+      }
+    }
+    pen_x += glyph.advance;
+    if (i + 1 < text.size()) {
+      pen_x += spacing;
+    }
+  }
+
+  if (valid) {
+    return std::max(1, right - left);
+  }
+  return std::max(0, pen_x);
+}
+
 std::string truncate_text_with_font(
     const std::string& text,
     const BitmapFont& font,
@@ -600,30 +639,24 @@ std::string truncate_text_with_font(
   if (text.empty() || max_width_px <= 0) {
     return "";
   }
-  if (text_width_with_font_spaced(text, font, spacing) <= max_width_px) {
+  if (text_visual_width_with_font_spaced(text, font, spacing) <= max_width_px) {
     return text;
   }
 
   const std::string ellipsis = "...";
-  const int ellipsis_w = text_width_with_font_spaced(ellipsis, font, spacing);
+  const int ellipsis_w = text_visual_width_with_font_spaced(ellipsis, font, spacing);
   if (ellipsis_w >= max_width_px) {
     return ellipsis;
   }
   const int budget = std::max(0, max_width_px - ellipsis_w);
 
   std::string out;
-  int width = 0;
   for (const char ch : text) {
-    const int glyph_w = font.glyphs[glyph_index(ch)].advance;
-    const int extra = glyph_w + (out.empty() ? 0 : spacing);
-    if (width + extra > budget) {
+    const std::string candidate = out + ch;
+    if (text_visual_width_with_font_spaced(candidate, font, spacing) > budget) {
       break;
     }
-    if (!out.empty()) {
-      width += spacing;
-    }
-    width += glyph_w;
-    out.push_back(ch);
+    out = candidate;
   }
   return out.empty() ? ellipsis : (out + ellipsis);
 }
@@ -1285,13 +1318,14 @@ void draw_home_menu_overlay(
 
   // Python parity intent: progressively reduce label size when pills are tight.
   // We use the closest available bitmap-font ladder on firmware.
-  const BitmapFont* candidates[] = {
+  std::vector<const BitmapFont*> candidates = {
       &platform::panel_font_assets::kFontInterBold18,
       &platform::panel_font_assets::kFontInterBold17,
-      &platform::panel_font_assets::kFontInterBold13,
   };
-  const int candidate_count = static_cast<int>(sizeof(candidates) / sizeof(candidates[0]));
-  item_font = candidates[candidate_count - 1];
+  if (layout.compact) {
+    candidates.push_back(&platform::panel_font_assets::kFontInterBold13);
+  }
+  item_font = candidates.back();
   for (const BitmapFont* candidate : candidates) {
     int max_w = 0;
     for (int i = 0; i < kHomeMenuItemCount; ++i) {
