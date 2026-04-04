@@ -49,8 +49,10 @@ std::vector<uint8_t> render_timer_portrait_bitmap(const app::AppState& state) {
 
   const bool running = bool(state.timer.running);
   const std::string time_text = format_timer_display(state.timer.minutes_remaining);
-  const std::string status_text = running ? "RUNNING" : "PAUSED";
+  const std::string status_text =
+      running ? "RUNNING" : (state.timer.minutes_remaining > 0 ? "PAUSED" : "READY");
   const std::string action_text = running ? "PAUSE" : "START";
+  const int focused = std::max(0, std::min(state.timer.focused_index, 3));
 
   draw_outline_rect(image, 12, 12, kPanelWidth - 12, kPanelHeight - 12, 3);
 
@@ -76,14 +78,14 @@ std::vector<uint8_t> render_timer_portrait_bitmap(const app::AppState& state) {
   const int top_row_y = 306;
   const int bottom_row_y = 372;
 
-  draw_timer_button(image, left_x0, top_row_y, left_x0 + button_w, top_row_y + button_h, "-1M", false);
-  draw_timer_button(image, right_x0, top_row_y, right_x0 + button_w, top_row_y + button_h, "+1M", false);
+  draw_timer_button(image, left_x0, top_row_y, left_x0 + button_w, top_row_y + button_h, "-1M", focused == 0);
+  draw_timer_button(image, right_x0, top_row_y, right_x0 + button_w, top_row_y + button_h, "+1M", focused == 1);
   draw_timer_button(
       image, left_x0, bottom_row_y, left_x0 + button_w, bottom_row_y + button_h,
-      action_text, true);
+      action_text, focused == 2);
   draw_timer_button(
       image, right_x0, bottom_row_y, right_x0 + button_w, bottom_row_y + button_h,
-      "RESET", false);
+      "RESET", focused == 3);
 
   return image;
 }

@@ -460,6 +460,27 @@ void handle_tick(AppState& state, const Event& event) {
     }
   }
   state.last_tick_ms = event.now_ms;
+
+  if (state.timer.running && state.timer.minutes_remaining > 0) {
+    const std::uint64_t base_ms =
+        state.timer.last_tick_ms > 0 ? state.timer.last_tick_ms : event.now_ms;
+    if (event.now_ms > base_ms) {
+      const std::uint64_t elapsed_ms = event.now_ms - base_ms;
+      const int elapsed_minutes = static_cast<int>(elapsed_ms / 60000ULL);
+      if (elapsed_minutes > 0) {
+        state.timer.minutes_remaining =
+            std::max(0, state.timer.minutes_remaining - elapsed_minutes);
+        state.timer.last_tick_ms = base_ms + static_cast<std::uint64_t>(elapsed_minutes) * 60000ULL;
+        if (state.timer.minutes_remaining <= 0) {
+          state.timer.running = false;
+          state.timer.minutes_remaining = 0;
+        }
+      }
+    }
+  } else {
+    state.timer.last_tick_ms = event.now_ms;
+  }
+
   if (state.screen == Screen::Landing) {
     if (state.setup_completed) {
       enter_home(state);
@@ -548,6 +569,17 @@ void handle_rotate(AppState& state, const Event& event) {
       state.settings.focused_index = kSettingsItemCount - 1;
     } else if (state.settings.focused_index >= kSettingsItemCount) {
       state.settings.focused_index = 0;
+    }
+    return;
+  }
+
+  if (state.screen == Screen::Timer) {
+    const int delta = event.rotate_delta >= 0 ? 1 : -1;
+    state.timer.focused_index += delta;
+    if (state.timer.focused_index < 0) {
+      state.timer.focused_index = 3;
+    } else if (state.timer.focused_index > 3) {
+      state.timer.focused_index = 0;
     }
     return;
   }
@@ -675,6 +707,44 @@ void handle_click(AppState& state, const Event& event) {
     return;
   }
 
+  if (state.screen == Screen::Timer) {
+    int focus = state.timer.focused_index;
+    if (focus < 0 || focus > 3) {
+      focus = 2;
+      state.timer.focused_index = focus;
+    }
+    const std::uint64_t base_ms = event.now_ms > 0 ? event.now_ms : state.last_tick_ms;
+    switch (focus) {
+      case 0:
+        state.timer.minutes_remaining = std::max(0, state.timer.minutes_remaining - 1);
+        if (state.timer.minutes_remaining == 0) {
+          state.timer.running = false;
+        }
+        state.timer.last_tick_ms = base_ms;
+        return;
+      case 1:
+        state.timer.minutes_remaining = std::min(180, state.timer.minutes_remaining + 1);
+        state.timer.last_tick_ms = base_ms;
+        return;
+      case 2:
+        if (state.timer.running) {
+          state.timer.running = false;
+        } else {
+          if (state.timer.minutes_remaining <= 0) {
+            state.timer.minutes_remaining = 5;
+          }
+          state.timer.running = true;
+        }
+        state.timer.last_tick_ms = base_ms;
+        return;
+      case 3:
+        state.timer.running = false;
+        state.timer.minutes_remaining = 0;
+        state.timer.last_tick_ms = base_ms;
+        return;
+    }
+  }
+
   if (state.screen == Screen::Settings) {
     handle_settings_click(state, event);
     return;
@@ -717,7 +787,6 @@ void handle_click(AppState& state, const Event& event) {
   }
 
   if (state.screen == Screen::Memo ||
-      state.screen == Screen::Timer ||
       state.screen == Screen::Calendar ||
       state.screen == Screen::Weather) {
     // Other detail screens rely on Back/LongPress to return home.

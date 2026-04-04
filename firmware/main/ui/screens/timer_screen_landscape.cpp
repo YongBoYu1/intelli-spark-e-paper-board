@@ -101,7 +101,7 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
   for (int idx = 0; idx < 4; ++idx) {
     const int x0 = kMarginX + idx * (control_width + kControlsGap);
     const int x1 = x0 + control_width;
-    const bool active = idx == 2;
+    const bool active = idx == std::max(0, std::min(state.timer.focused_index, 3));
     draw_control_pill(image, x0, controls_y, x1, controls_y + kControlsHeight, controls[idx], active);
   }
 

@@ -75,6 +75,8 @@ struct MenuState {
 struct TimerState {
   bool running{false};
   int minutes_remaining{12};
+  int focused_index{2};
+  std::uint64_t last_tick_ms{0};
 };
 
 struct CalendarState {

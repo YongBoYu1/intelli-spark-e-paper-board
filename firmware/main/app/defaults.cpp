@@ -233,6 +233,8 @@ AppState make_state_from_defaults(
   state.menu.focused_index = 1;
   state.timer.running = false;
   state.timer.minutes_remaining = 12;
+  state.timer.focused_index = 2;
+  state.timer.last_tick_ms = now_ms;
   state.calendar.day_of_month = 26;
   state.calendar.month_label = "March 2026";
   state.weather.temperature_c = 4;
