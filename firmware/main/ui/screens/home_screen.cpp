@@ -1321,10 +1321,9 @@ void draw_home_menu_overlay(
   std::vector<const BitmapFont*> candidates = {
       &platform::panel_font_assets::kFontInterBold18,
       &platform::panel_font_assets::kFontInterBold17,
+      &platform::panel_font_assets::kFontInterSemiBold15,
+      &platform::panel_font_assets::kFontInterBold13,
   };
-  if (layout.compact) {
-    candidates.push_back(&platform::panel_font_assets::kFontInterBold13);
-  }
   item_font = candidates.back();
   for (const BitmapFont* candidate : candidates) {
     int max_w = 0;
