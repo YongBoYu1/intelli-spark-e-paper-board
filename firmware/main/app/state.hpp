@@ -90,14 +90,25 @@ struct WeatherState {
 struct InventoryState {
   int total_items{5};
   int reminder_count{3};
+  int focused_index{0};
 };
 
 struct SettingsState {
+  int focused_index{0};
+  std::string font_size{"medium"};
+  std::string partial_refresh_mode{"balanced"};
   bool partial_refresh_enabled{true};
   bool partial_refresh_budget_enabled{false};
   std::string refresh_mode{"balanced"};
   int full_refresh_every{30};
+  bool wifi_enabled{true};
+  bool bluetooth_enabled{false};
   bool auto_sync_enabled{true};
+  std::uint64_t last_sync_ms{0};
+  std::string sync_state{"never"};
+  int rotation_deg{0};
+  std::string notice{};
+  std::uint64_t notice_due_ms{0};
 };
 
 struct OnboardingState {

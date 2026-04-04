@@ -239,11 +239,22 @@ AppState make_state_from_defaults(
   state.weather.condition = "Cloudy";
   state.inventory.total_items = 5;
   state.inventory.reminder_count = defaults.dashboard.reminder_count;
+  state.inventory.focused_index = 0;
+  state.settings.focused_index = 0;
+  state.settings.font_size = "medium";
+  state.settings.partial_refresh_mode = "balanced";
   state.settings.partial_refresh_enabled = true;
   state.settings.partial_refresh_budget_enabled = false;
   state.settings.refresh_mode = "balanced";
   state.settings.full_refresh_every = 30;
+  state.settings.wifi_enabled = true;
+  state.settings.bluetooth_enabled = false;
   state.settings.auto_sync_enabled = true;
+  state.settings.last_sync_ms = 0;
+  state.settings.sync_state = "never";
+  state.settings.rotation_deg = 0;
+  state.settings.notice.clear();
+  state.settings.notice_due_ms = 0;
   state.dashboard = defaults.dashboard;
   return state;
 }

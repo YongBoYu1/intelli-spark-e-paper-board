@@ -4,9 +4,8 @@ namespace fridge_ink::ui {
 namespace {
 
 bool use_list_portrait_layout(const app::AppState& state) {
-  (void)state;
-  // Orientation wiring is still shared follow-up work across all detail pages.
-  return false;
+  const int deg = ((state.settings.rotation_deg % 360) + 360) % 360;
+  return deg == 90 || deg == 270;
 }
 
 }  // namespace

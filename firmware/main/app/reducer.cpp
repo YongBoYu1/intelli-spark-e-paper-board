@@ -10,6 +10,7 @@ namespace fridge_ink::app {
 namespace {
 
 constexpr int kMenuItemCount = 5;
+constexpr int kSettingsItemCount = 8;
 constexpr int kHomeInventoryVisibleMax = 3;
 constexpr int kHomeReminderVisibleMax = 5;
 constexpr std::uint64_t kHomeCompletedHideGraceMs = 15000;
@@ -26,6 +27,17 @@ constexpr std::array<const char*, kOnboardingStepCount> kOnboardingStepTitles = 
     "Pair QR",
     "Prefs",
     "Voice Guide"};
+
+enum class SettingsItem {
+  FontSize = 0,
+  PartialRefresh = 1,
+  FullRefresh = 2,
+  Rotation = 3,
+  Connectivity = 4,
+  AutoSync = 5,
+  SyncNow = 6,
+  ResetAndWipe = 7,
+};
 
 enum class HomeFocusTargetKind {
   None,
@@ -48,6 +60,125 @@ void remove_index(std::vector<int>& values, const int index) {
   values.erase(
       std::remove(values.begin(), values.end(), index),
       values.end());
+}
+
+int clamp_int(const int value, const int low, const int high) {
+  return std::max(low, std::min(value, high));
+}
+
+int normalize_rotation_deg(const int raw) {
+  const int rounded = ((raw % 360) + 360) % 360;
+  if (rounded >= 315 || rounded < 45) {
+    return 0;
+  }
+  if (rounded < 135) {
+    return 90;
+  }
+  if (rounded < 225) {
+    return 180;
+  }
+  return 270;
+}
+
+int list_item_count(const AppState& state) {
+  return static_cast<int>(state.dashboard.inventory_items.size() +
+                          state.dashboard.reminder_items.size());
+}
+
+void clamp_list_focus(AppState& state) {
+  const int total = list_item_count(state);
+  if (total <= 0) {
+    state.inventory.focused_index = 0;
+    return;
+  }
+  state.inventory.focused_index = clamp_int(state.inventory.focused_index, 0, total - 1);
+}
+
+void clamp_settings_focus(AppState& state) {
+  state.settings.focused_index =
+      clamp_int(state.settings.focused_index, 0, kSettingsItemCount - 1);
+}
+
+SettingsItem settings_item_for_focus(AppState& state) {
+  clamp_settings_focus(state);
+  return static_cast<SettingsItem>(state.settings.focused_index);
+}
+
+void set_settings_notice(
+    AppState& state,
+    const std::string& text,
+    const std::uint64_t now_ms,
+    const std::uint64_t due_ms = 2000) {
+  state.settings.notice = text;
+  const std::uint64_t base_ms = now_ms > 0 ? now_ms : state.last_tick_ms;
+  state.settings.notice_due_ms = base_ms + due_ms;
+}
+
+std::string cycle_font_size(const std::string& current) {
+  if (current == "small") {
+    return "medium";
+  }
+  if (current == "medium") {
+    return "large";
+  }
+  return "small";
+}
+
+std::string cycle_partial_refresh_mode(const std::string& current) {
+  if (current == "slow") {
+    return "balanced";
+  }
+  if (current == "balanced") {
+    return "fast";
+  }
+  return "slow";
+}
+
+int cycle_full_refresh_every(const int current) {
+  if (current == 10) {
+    return 20;
+  }
+  if (current == 20) {
+    return 30;
+  }
+  return 10;
+}
+
+void handle_settings_click(AppState& state, const Event& event) {
+  switch (settings_item_for_focus(state)) {
+    case SettingsItem::FontSize:
+      state.settings.font_size = cycle_font_size(state.settings.font_size);
+      return;
+    case SettingsItem::PartialRefresh:
+      state.settings.partial_refresh_mode =
+          cycle_partial_refresh_mode(state.settings.partial_refresh_mode);
+      state.settings.refresh_mode = state.settings.partial_refresh_mode;
+      return;
+    case SettingsItem::FullRefresh:
+      state.settings.full_refresh_every = cycle_full_refresh_every(state.settings.full_refresh_every);
+      return;
+    case SettingsItem::Rotation:
+      state.settings.rotation_deg =
+          (normalize_rotation_deg(state.settings.rotation_deg) + 90) % 360;
+      return;
+    case SettingsItem::Connectivity: {
+      const bool next_on = !(state.settings.wifi_enabled && state.settings.bluetooth_enabled);
+      state.settings.wifi_enabled = next_on;
+      state.settings.bluetooth_enabled = next_on;
+      return;
+    }
+    case SettingsItem::AutoSync:
+      state.settings.auto_sync_enabled = !state.settings.auto_sync_enabled;
+      return;
+    case SettingsItem::SyncNow:
+      state.settings.last_sync_ms = event.now_ms > 0 ? event.now_ms : state.last_tick_ms;
+      state.settings.sync_state = "ok";
+      set_settings_notice(state, "FAKE SYNC COMPLETE", event.now_ms);
+      return;
+    case SettingsItem::ResetAndWipe:
+      set_settings_notice(state, "NOT IMPLEMENTED", event.now_ms);
+      return;
+  }
 }
 
 std::vector<int> visible_reminder_indices(const AppState& state) {
@@ -264,6 +395,7 @@ void open_menu_target(AppState& state) {
       return;
     case 1:
       state.screen = Screen::Inventory;
+      clamp_list_focus(state);
       return;
     case 2:
       state.home.widget_mode = WidgetMode::Timer;
@@ -274,6 +406,7 @@ void open_menu_target(AppState& state) {
       return;
     case 4:
       state.screen = Screen::Settings;
+      clamp_settings_focus(state);
       return;
   }
 }
@@ -345,6 +478,13 @@ void handle_tick(AppState& state, const Event& event) {
       promote_pending_reminder_hide(state)) {
     clamp_home_focus(state);
   }
+
+  if (!state.settings.notice.empty() &&
+      state.settings.notice_due_ms > 0 &&
+      event.now_ms >= state.settings.notice_due_ms) {
+    state.settings.notice.clear();
+    state.settings.notice_due_ms = 0;
+  }
 }
 
 void handle_rotate(AppState& state, const Event& event) {
@@ -398,6 +538,24 @@ void handle_rotate(AppState& state, const Event& event) {
     state.home.focused_index =
         std::max(0, std::min(state.home.focused_index + delta, slot_count - 1));
     state.home.show_focus = true;
+    return;
+  }
+
+  if (state.screen == Screen::Settings) {
+    const int delta = event.rotate_delta >= 0 ? 1 : -1;
+    state.settings.focused_index += delta;
+    if (state.settings.focused_index < 0) {
+      state.settings.focused_index = kSettingsItemCount - 1;
+    } else if (state.settings.focused_index >= kSettingsItemCount) {
+      state.settings.focused_index = 0;
+    }
+    return;
+  }
+
+  if (state.screen == Screen::Inventory) {
+    const int delta = event.rotate_delta >= 0 ? 1 : -1;
+    state.inventory.focused_index += delta;
+    clamp_list_focus(state);
     return;
   }
 }
@@ -517,13 +675,52 @@ void handle_click(AppState& state, const Event& event) {
     return;
   }
 
+  if (state.screen == Screen::Settings) {
+    handle_settings_click(state, event);
+    return;
+  }
+
+  if (state.screen == Screen::Inventory) {
+    const int inventory_count = static_cast<int>(state.dashboard.inventory_items.size());
+    const int reminder_count = static_cast<int>(state.dashboard.reminder_items.size());
+    const int total = inventory_count + reminder_count;
+    if (total <= 0) {
+      state.inventory.focused_index = 0;
+      return;
+    }
+    clamp_list_focus(state);
+    if (state.inventory.focused_index < inventory_count) {
+      ensure_completion_flags(
+          state.dashboard.inventory_completed,
+          state.dashboard.inventory_items.size());
+      const int index = state.inventory.focused_index;
+      state.dashboard.inventory_completed[static_cast<std::size_t>(index)] =
+          !state.dashboard.inventory_completed[static_cast<std::size_t>(index)];
+      return;
+    }
+
+    const int reminder_index = state.inventory.focused_index - inventory_count;
+    ensure_completion_flags(
+        state.dashboard.reminder_completed,
+        state.dashboard.reminder_items.size());
+    if (reminder_index < 0 ||
+        reminder_index >= static_cast<int>(state.dashboard.reminder_completed.size())) {
+      return;
+    }
+    const std::size_t index = static_cast<std::size_t>(reminder_index);
+    const bool next_completed = !state.dashboard.reminder_completed[index];
+    state.dashboard.reminder_completed[index] = next_completed;
+    if (!next_completed) {
+      remove_reminder_visibility_tracking(state, reminder_index, true);
+    }
+    return;
+  }
+
   if (state.screen == Screen::Memo ||
       state.screen == Screen::Timer ||
       state.screen == Screen::Calendar ||
-      state.screen == Screen::Weather ||
-      state.screen == Screen::Inventory ||
-      state.screen == Screen::Settings) {
-    // Placeholder/detail screens rely on Back/LongPress to return home.
+      state.screen == Screen::Weather) {
+    // Other detail screens rely on Back/LongPress to return home.
     return;
   }
 }

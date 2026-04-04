@@ -157,7 +157,10 @@ std::vector<uint8_t> render_list_portrait_bitmap(const app::AppState& state) {
   const int rem_list_bottom = content_bottom;
 
   const int total_items = static_cast<int>(inventory.size() + reminders.size());
-  const int focused_global = total_items > 0 ? 0 : -1;
+  int focused_global = -1;
+  if (total_items > 0) {
+    focused_global = std::max(0, std::min(state.inventory.focused_index, total_items - 1));
+  }
   const int selected_inventory =
       (focused_global >= 0 && focused_global < static_cast<int>(inventory.size())) ? focused_global : -1;
   const int selected_reminder =

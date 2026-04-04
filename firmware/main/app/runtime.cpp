@@ -198,7 +198,10 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
   }
 
   const refresh_policy::Mode mode =
-      refresh_policy::parse_mode(state_.settings.refresh_mode);
+      refresh_policy::parse_mode(
+          state_.settings.partial_refresh_mode.empty()
+              ? state_.settings.refresh_mode
+              : state_.settings.partial_refresh_mode);
   const refresh_policy::ModeParams params = refresh_policy::mode_params(mode);
   const int full_every = state_.settings.partial_refresh_budget_enabled
                              ? refresh_policy::effective_full_refresh_every(
