@@ -56,9 +56,11 @@ constexpr bool kUseHostLutWhiteBoostPass = false;
 // Align dual-plane payload order with Waveshare EPD_7in5_V2_old.c:
 //   0x10 <- image, 0x13 <- ~image
 constexpr bool kUseHostLutLegacyPlaneOrder = false;
-// Enable command/data timing trace for RPi-vs-ESP32 waveform comparison.
-constexpr bool kEnableDisplayTraceLogs = true;
-constexpr bool kBusyPollWithStatusCommand = true;
+// Keep disabled in normal runtime to reduce navigation lag; enable only when
+// doing low-level driver debugging.
+constexpr bool kEnableDisplayTraceLogs = false;
+// Python epd7in5_V2 busy-wait path polls BUSY GPIO directly (no extra 0x71).
+constexpr bool kBusyPollWithStatusCommand = false;
 // UI framebuffer follows Python convention: 0=black, 1=white.
 constexpr bool kFramebufferBlackBitIsZero = true;
 // Some panel batches behave as 1=black at transport level. Keep this explicit.
