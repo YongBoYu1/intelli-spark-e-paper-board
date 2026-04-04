@@ -286,9 +286,15 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
       const bool reinforce_row_toggle =
           pending_screen_ == Screen::Home &&
           has_reason(pending_render_.dirty_reasons, "home.reminder_row_update");
+      const bool reinforce_menu_overlay_toggle =
+          pending_screen_ == Screen::Home &&
+          has_reason(pending_render_.dirty_reasons, "home.menu_overlay_toggle");
 
       int partial_passes = 1;
       if (reinforce_row_toggle) {
+        partial_passes = std::max(partial_passes, 2);
+      }
+      if (reinforce_menu_overlay_toggle) {
         partial_passes = std::max(partial_passes, 2);
       }
 
@@ -300,7 +306,8 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         ESP_LOGI(
             kTag,
             "[refresh] R1_PARTIAL_RECTS screen=%s count=%u rects=%s gate_ratio=%.3f limit=%.3f "
-            "partial_count=%d/%d budget=%s passes=%d reinforce_row=%s mode=%s dirty=%s",
+            "partial_count=%d/%d budget=%s passes=%d reinforce_row=%s reinforce_menu_toggle=%s "
+            "mode=%s dirty=%s",
             screen_name(pending_screen_),
             static_cast<unsigned>(aligned_rects.size()),
             format_rects(aligned_rects).c_str(),
@@ -311,6 +318,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             state_.settings.partial_refresh_budget_enabled ? "on" : "off",
             partial_passes,
             reinforce_row_toggle ? "on" : "off",
+            reinforce_menu_overlay_toggle ? "on" : "off",
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());
       }
