@@ -81,20 +81,18 @@ python tools/generate_firmware_panel_assets.py   # → assets/*.raw (if needed)
 
 ## Issue Status
 
-- **Issue #51** (this runtime): **PAUSED** — display settle/contrast blocker.
-  - Runtime structure, interaction, and display bring-up are functional.
-  - Current pause baseline is on the host-LUT path (not OTP), with UI usable but still showing a light gray artifact around rows that contain content.
-  - Recent OTP fallback test in this branch produced overall white-wash behavior, so it is not the selected freeze baseline.
-  - This blocker is in panel drive/waveform quality, not reducer/render flow.
-  - Freeze `#51` from a **clean working tree** only; do not use a dirty display experiment state as the shared base for `#52`.
-  - See `firmware/docs/display_experiments.md` (especially Exp #19) for detailed notes and current baseline switches.
-- **Issue #52** (behavior migration): starts from #51 freeze baseline.
-  - Migrates Python state machine / renderer to C++.
-  - Should stay focused on behavior/state/render migration.
-  - Should not absorb LUT / waveform / first-frame experiments.
-  - Should not touch `display.cpp` except compile/integration fixes.
-  - Assignee context: `docs/issues/2026-03-26-issue-52-assignee-context.md`
-- **Issue #53** (backend integration): follows #52.
-  - Assignee context: `docs/issues/2026-03-26-issue-53-assignee-context.md`
+- **Issue #51** (runtime V0 foundation):
+  - close by runtime-foundation acceptance (boot/defaults/reducer-driven runtime structure), not by full product parity.
+- **Issue #52** (behavior migration + product parity):
+  - active closeout track.
+  - execution order: finish landscape first, then portrait.
+- **Issue #53** (runtime host integration completeness):
+  - starts only after `#52` closes.
 
-See `docs/issues/2026-03-26-issue-51-freeze-and-issue-52-kickoff.md` for freeze plan.
+Primary closeout plan:
+- `docs/issues/2026-04-05-issue-51-52-53-closeout-plan.md`
+
+Historical context docs:
+- `docs/issues/2026-03-26-issue-52-assignee-context.md`
+- `docs/issues/2026-03-26-issue-53-assignee-context.md`
+- `docs/issues/2026-03-26-issue-51-freeze-and-issue-52-kickoff.md`
