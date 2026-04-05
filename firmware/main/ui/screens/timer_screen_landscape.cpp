@@ -16,10 +16,9 @@ using platform::panel_font_assets::BitmapFont;
 using platform::panel_font_assets::Glyph;
 
 constexpr int kMarginX = 24;
-constexpr int kTitleY = 16;
-constexpr int kHintY = 52;
-constexpr int kDividerY = 68;
-constexpr int kContentTop = 112;
+constexpr int kHintY = 8;
+constexpr int kDividerY = 26;
+constexpr int kContentTop = 70;
 constexpr int kStatusGap = 38;
 constexpr int kButtonGap = 12;
 constexpr int kButtonHeight = 60;
@@ -204,19 +203,16 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
 
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
-  const BitmapFont& title_font = platform::panel_font_assets::kFontInterBlack29;
   const BitmapFont& status_font = platform::panel_font_assets::kFontInterBold18;
   const BitmapFont& button_font = platform::panel_font_assets::kFontInterBold18;
 
-  const std::string title_text = "TIMER";
   const std::string hint_raw = "ROTATE=SELECT  |  CLICK=ENTER  |  HOLD=HOME";
   const std::string hint_text = truncate_text_px(hint_raw, 1, std::max(80, kPanelWidth - 48));
   const std::string time_text = format_timer_value(state.timer.minutes_remaining);
   const std::string status_text = timer_status_text(state.timer);
 
-  draw_text_with_font(image, kMarginX, kTitleY, title_text, title_font);
   const int hint_w = text_width_px(hint_text, 1);
-  const int hint_x = std::max(kMarginX, (kPanelWidth - kMarginX) - hint_w);
+  const int hint_x = std::max(kMarginX, ((kPanelWidth - hint_w) / 2));
   draw_text_line(image, hint_x, kHintY, hint_text, 1, 0);
   fill_black_rect(image, kMarginX, kDividerY, kPanelWidth - kMarginX, kDividerY + 2);
 

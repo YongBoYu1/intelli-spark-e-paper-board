@@ -31,6 +31,13 @@ enum class WidgetMode {
   Timer,
 };
 
+struct MemoItem {
+  std::string text{};
+  std::string author{};
+  std::string posted{};
+  bool is_new{false};
+};
+
 struct DashboardSummary {
   std::string location{"Kitchen"};
   int battery_percent{84};
@@ -46,6 +53,7 @@ struct DashboardSummary {
   std::string family_memo_text{};
   std::string family_memo_author{};
   std::string family_memo_posted{};
+  std::vector<MemoItem> memos{};
 };
 
 struct LandingState {
@@ -76,9 +84,14 @@ struct MenuState {
 
 struct TimerState {
   bool running{false};
-  int minutes_remaining{12};
+  int minutes_remaining{0};
   int focused_index{2};
   std::uint64_t last_tick_ms{0};
+};
+
+struct MemoState {
+  int index{0};
+  bool expanded{false};
 };
 
 struct CalendarState {
@@ -139,6 +152,7 @@ struct AppState {
   HomeState home{};
   MenuState menu{};
   TimerState timer{};
+  MemoState memo{};
   CalendarState calendar{};
   WeatherState weather{};
   InventoryState inventory{};

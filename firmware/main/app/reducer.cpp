@@ -1,5 +1,6 @@
 #include "app/reducer.hpp"
 #include "platform/clock.hpp"
+#include "esp_log.h"
 
 #include <algorithm>
 #include <array>
@@ -8,6 +9,8 @@
 
 namespace fridge_ink::app {
 namespace {
+
+constexpr const char* kTag = "reducer";
 
 constexpr int kMenuItemCount = 5;
 constexpr int kSettingsItemCount = 8;
@@ -88,6 +91,19 @@ int list_item_count(const AppState& state) {
                           state.dashboard.reminder_items.size());
 }
 
+void clamp_memo_index(AppState& state) {
+  const int total = static_cast<int>(state.dashboard.memos.size());
+  if (total <= 0) {
+    state.memo.index = 0;
+    return;
+  }
+  if (state.memo.index < 0) {
+    state.memo.index = total - 1;
+  } else if (state.memo.index >= total) {
+    state.memo.index = 0;
+  }
+}
+
 void clamp_list_focus(AppState& state) {
   const int total = list_item_count(state);
   if (total <= 0) {
@@ -151,35 +167,51 @@ void handle_settings_click(AppState& state, const Event& event) {
   switch (settings_item_for_focus(state)) {
     case SettingsItem::FontSize:
       state.settings.font_size = cycle_font_size(state.settings.font_size);
+      ESP_LOGI(kTag, "[settings] font_size=%s", state.settings.font_size.c_str());
       return;
     case SettingsItem::PartialRefresh:
       state.settings.partial_refresh_mode =
           cycle_partial_refresh_mode(state.settings.partial_refresh_mode);
       state.settings.refresh_mode = state.settings.partial_refresh_mode;
+      ESP_LOGI(
+          kTag,
+          "[settings] partial_refresh_mode=%s",
+          state.settings.partial_refresh_mode.c_str());
       return;
     case SettingsItem::FullRefresh:
       state.settings.full_refresh_every = cycle_full_refresh_every(state.settings.full_refresh_every);
+      ESP_LOGI(kTag, "[settings] full_refresh_every=%d", state.settings.full_refresh_every);
       return;
     case SettingsItem::Rotation:
       state.settings.rotation_deg =
           (normalize_rotation_deg(state.settings.rotation_deg) + 90) % 360;
+      ESP_LOGI(kTag, "[settings] rotation_deg=%d", state.settings.rotation_deg);
       return;
     case SettingsItem::Connectivity: {
       const bool next_on = !(state.settings.wifi_enabled && state.settings.bluetooth_enabled);
       state.settings.wifi_enabled = next_on;
       state.settings.bluetooth_enabled = next_on;
+      ESP_LOGI(
+          kTag,
+          "[settings] connectivity wifi=%d bt=%d",
+          static_cast<int>(state.settings.wifi_enabled),
+          static_cast<int>(state.settings.bluetooth_enabled));
       return;
     }
     case SettingsItem::AutoSync:
       state.settings.auto_sync_enabled = !state.settings.auto_sync_enabled;
+      ESP_LOGI(kTag, "[settings] auto_sync=%d", static_cast<int>(state.settings.auto_sync_enabled));
       return;
     case SettingsItem::SyncNow:
       state.settings.last_sync_ms = event.now_ms > 0 ? event.now_ms : state.last_tick_ms;
       state.settings.sync_state = "ok";
       set_settings_notice(state, "FAKE SYNC COMPLETE", event.now_ms);
+      ESP_LOGI(kTag, "[settings] sync_now=ok at=%llu",
+               static_cast<unsigned long long>(state.settings.last_sync_ms));
       return;
     case SettingsItem::ResetAndWipe:
       set_settings_notice(state, "NOT IMPLEMENTED", event.now_ms);
+      ESP_LOGI(kTag, "[settings] reset_and_wipe=not_implemented");
       return;
   }
 }
@@ -493,6 +525,8 @@ void open_menu_target(AppState& state, const std::uint64_t now_ms) {
   switch (state.menu.focused_index % kMenuItemCount) {
     case 0:
       state.screen = Screen::Memo;
+      clamp_memo_index(state);
+      state.memo.expanded = false;
       return;
     case 1:
       state.screen = Screen::Inventory;
@@ -696,6 +730,14 @@ void handle_rotate(AppState& state, const Event& event) {
     return;
   }
 
+  if (state.screen == Screen::Memo) {
+    const int delta = event.rotate_delta >= 0 ? 1 : -1;
+    state.memo.index += delta;
+    clamp_memo_index(state);
+    state.memo.expanded = false;
+    return;
+  }
+
   if (state.screen == Screen::Inventory) {
     const int delta = event.rotate_delta >= 0 ? 1 : -1;
     state.inventory.focused_index += delta;
@@ -862,6 +904,13 @@ void handle_click(AppState& state, const Event& event) {
 
   if (state.screen == Screen::Settings) {
     handle_settings_click(state, event);
+    return;
+  }
+
+  if (state.screen == Screen::Memo) {
+    if (!state.dashboard.memos.empty()) {
+      state.memo.expanded = !state.memo.expanded;
+    }
     return;
   }
 

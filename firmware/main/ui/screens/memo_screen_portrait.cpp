@@ -4,252 +4,188 @@
 #include "ui/draw.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 #include <vector>
 
 namespace fridge_ink::ui {
 namespace {
 
-using platform::kPanelBufferSize;
-using platform::kPanelHeight;
-using platform::kPanelWidth;
-
-struct MemoRow {
-  std::string kind;
-  std::string body;
-  std::string status;
-  bool selected{false};
-};
-
-std::string uppercase_copy(std::string text) {
-  for (char& ch : text) {
-    if (ch >= 'a' && ch <= 'z') {
-      ch = static_cast<char>(ch - ('a' - 'A'));
-    }
+std::string upper_copy(const std::string& text) {
+  std::string out = text;
+  for (char& ch : out) {
+    ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
   }
-  return text;
+  return out;
 }
 
-std::string strip_or_default(const std::string& text, const std::string& fallback) {
+std::string trim_or_default(const std::string& text, const std::string& fallback) {
   const std::string trimmed = trim_copy(text);
   return trimmed.empty() ? fallback : trimmed;
 }
 
-std::string truncated_text(
-    const std::string& text,
-    const int scale,
-    const int max_width_px) {
-  return truncate_text_px(trim_copy(text), scale, std::max(0, max_width_px));
+int window_start(const int total, const int slots, const int selected) {
+  if (total <= slots) {
+    return 0;
+  }
+  return std::max(0, std::min(selected - (slots / 2), total - slots));
 }
 
-void draw_right_aligned_text(
-    std::vector<uint8_t>& image,
-    const int right_x,
-    const int y,
-    const std::string& text,
-    const int scale,
-    const int max_width_px,
-    const bool inverted = false) {
-  const std::string clipped = truncated_text(text, scale, max_width_px);
-  const int x = std::max(0, right_x - text_width_px(clipped, scale));
-  if (inverted) {
-    draw_text_line_inverted(image, x, y, clipped, scale, 0);
-  } else {
-    draw_text_line(image, x, y, clipped, scale, 0);
+int selected_memo_index(const app::AppState& state) {
+  const int total = static_cast<int>(state.dashboard.memos.size());
+  if (total <= 0) {
+    return 0;
   }
-}
-
-void draw_rule(std::vector<uint8_t>& image, const int x0, const int x1, const int y) {
-  fill_black_rect(image, x0, y, x1, y + 1);
-}
-
-std::vector<MemoRow> build_rows(const app::AppState& state) {
-  const auto& dashboard = state.dashboard;
-  std::vector<MemoRow> rows;
-
-  const std::size_t reminder_count = dashboard.reminder_items.size();
-  const std::size_t reminder_flags = dashboard.reminder_completed.size();
-  for (std::size_t i = 0; i < reminder_count; ++i) {
-    const std::string body = strip_or_default(dashboard.reminder_items[i], "UNTITLED NOTE");
-    const bool done = i < reminder_flags && dashboard.reminder_completed[i];
-    rows.push_back(MemoRow{
-        "REMINDER",
-        body,
-        done ? "DONE" : "OPEN",
-        rows.empty(),
-    });
+  if (state.memo.index < 0) {
+    return 0;
   }
-
-  const std::size_t inventory_count = dashboard.inventory_items.size();
-  const std::size_t inventory_flags = dashboard.inventory_completed.size();
-  const std::size_t inventory_badges = dashboard.inventory_badges.size();
-  for (std::size_t i = 0; i < inventory_count; ++i) {
-    const std::string body = strip_or_default(dashboard.inventory_items[i], "EMPTY SHELF");
-    std::string status = "OPEN";
-    if (i < inventory_badges && !trim_copy(dashboard.inventory_badges[i]).empty()) {
-      status = uppercase_copy(trim_copy(dashboard.inventory_badges[i]));
-    } else if (i < inventory_flags && dashboard.inventory_completed[i]) {
-      status = "DONE";
-    }
-    rows.push_back(MemoRow{
-        "PANTRY",
-        body,
-        status,
-        rows.empty(),
-    });
+  if (state.memo.index >= total) {
+    return total - 1;
   }
-
-  if (rows.empty()) {
-    rows.push_back(MemoRow{"MEMO", "NO OPEN ITEMS", "READY", true});
-  }
-
-  if (!rows.empty()) {
-    rows.front().selected = true;
-  }
-
-  return rows;
-}
-
-void draw_memo_card(
-    std::vector<uint8_t>& image,
-    const app::DashboardSummary& dashboard,
-    const int x0,
-    const int y0,
-    const int x1,
-    const int y1) {
-  const int title_h = 27;
-  const int inner_x0 = x0 + 16;
-  const int inner_x1 = x1 - 16;
-  const std::string author = uppercase_copy(strip_or_default(dashboard.family_memo_author, "FAMILY BOARD"));
-  const std::string posted = uppercase_copy(trim_copy(dashboard.family_memo_posted));
-  const std::string memo_text = trim_copy(dashboard.family_memo_text);
-
-  draw_outline_rect(image, x0, y0, x1, y1, 2);
-  fill_black_rect(image, x0, y0, x1, y0 + title_h);
-  draw_text_line_inverted(image, inner_x0, y0 + 7, "FAMILY BOARD", 1, 32);
-
-  const std::string top_right = posted.empty() ? author : (author + " / " + posted);
-  draw_right_aligned_text(image, inner_x1, y0 + 7, top_right, 1, 260, true);
-
-  if (!memo_text.empty()) {
-    draw_text_wrapped(image, inner_x0, y0 + 42, inner_x1 - inner_x0, memo_text, 2, 2);
-  } else {
-    draw_text_line(image, inner_x0, y0 + 46, "NO FAMILY MEMO", 2, 28);
-    draw_text_line(image, inner_x0, y0 + 78, "VOICE TO ADD A NOTE", 1, 32);
-  }
-
-  const int meta_y = y1 - 24;
-  const std::string meta_left = std::string("LOCATION ") + uppercase_copy(strip_or_default(dashboard.location, "KITCHEN"));
-  const std::string meta_right = std::string("BATTERY ") + std::to_string(dashboard.battery_percent) + "%";
-  draw_text_line(image, inner_x0, meta_y, meta_left, 1, 36);
-  draw_right_aligned_text(image, inner_x1, meta_y, meta_right, 1, 180);
-}
-
-void draw_rows_section(
-    std::vector<uint8_t>& image,
-    const std::vector<MemoRow>& rows,
-    const int x0,
-    const int y0,
-    const int x1,
-    const int y1) {
-  const int heading_y = y0 + 2;
-  draw_text_line(image, x0, heading_y, "OPEN ITEMS", 1, 24);
-
-  const int total = static_cast<int>(rows.size());
-  const int visible_slots = 3;
-  const int visible_end = std::min(total, visible_slots);
-  const std::string summary = std::string("SHOWING 1-") + std::to_string(visible_end) + " OF " +
-                              std::to_string(total);
-  draw_right_aligned_text(image, x1, heading_y, summary, 1, 220);
-  draw_rule(image, x0, x1, y0 + 18);
-
-  const int row_x0 = x0;
-  const int row_x1 = x1;
-  const int row_h = 42;
-  const int row_gap = 6;
-  const int row_top = y0 + 28;
-  const int row_count = std::min(visible_slots, total);
-  for (int i = 0; i < row_count; ++i) {
-    const MemoRow& row = rows[static_cast<std::size_t>(i)];
-    const int ry0 = row_top + i * (row_h + row_gap);
-    const int ry1 = std::min(y1, ry0 + row_h);
-    if (row.selected) {
-      fill_black_rect(image, row_x0, ry0, row_x1, ry1);
-    } else {
-      draw_outline_rect(image, row_x0, ry0, row_x1, ry1, 1);
-    }
-
-    const int text_x = row_x0 + 12;
-    const int content_x1 = row_x1 - 12;
-    const bool inverted = row.selected;
-    const int kind_y = ry0 + 6;
-    const int body_y = ry0 + 18;
-    const int status_y = ry0 + 6;
-
-    const std::string kind = uppercase_copy(row.kind);
-    const std::string status = uppercase_copy(row.status);
-    const int status_w = text_width_px(status, 1);
-    const int status_x = std::max(text_x, content_x1 - status_w);
-    const int body_width = std::max(24, status_x - text_x - 10);
-    const std::string body = truncated_text(row.body, 2, body_width);
-
-    if (inverted) {
-      draw_text_line_inverted(image, text_x, kind_y, kind, 1, 18);
-      draw_text_line_inverted(image, text_x, body_y, body, 2, 0);
-      draw_text_line_inverted(image, status_x, status_y, status, 1, 12);
-    } else {
-      draw_text_line(image, text_x, kind_y, kind, 1, 18);
-      draw_text_line(image, text_x, body_y, body, 2, 0);
-      draw_text_line(image, status_x, status_y, status, 1, 12);
-    }
-  }
-
-  if (total > visible_slots) {
-    const std::string tail = std::string("SHOWING 1-") + std::to_string(visible_slots) +
-                             " OF " + std::to_string(total);
-    draw_right_aligned_text(image, x1, y1 - 2, tail, 1, 240);
-  }
+  return state.memo.index;
 }
 
 }  // namespace
 
 std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
+  using platform::kPanelBufferSize;
+  using platform::kPanelHeight;
+  using platform::kPanelWidth;
+
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
-  const auto& dashboard = state.dashboard;
-  const std::vector<MemoRow> rows = build_rows(state);
+  const int left = 24;
+  const int right = kPanelWidth - 24;
+  const int content_top = 86;
+  const int content_bottom = kPanelHeight - 56;
 
-  const int outer_x0 = 12;
-  const int outer_y0 = 12;
-  const int outer_x1 = kPanelWidth - 12;
-  const int outer_y1 = kPanelHeight - 12;
-
-  draw_outline_rect(image, outer_x0, outer_y0, outer_x1, outer_y1, 2);
-
-  draw_text_line(image, 26, 18, "MEMO", 3, 20);
-  const int open_count = static_cast<int>(rows.size());
-  const int reminder_count = static_cast<int>(dashboard.reminder_items.size());
-  const int inventory_count = static_cast<int>(dashboard.inventory_items.size());
-  const std::string header_status =
-      std::string("OPEN ") + std::to_string(open_count) + "  R " + std::to_string(reminder_count) +
-      "  P " + std::to_string(inventory_count);
-  draw_right_aligned_text(image, outer_x1 - 12, 24, header_status, 1, 260);
-  draw_text_line(image, 28, 52, "PORTRAIT FAMILY BOARD", 1, 32);
-  draw_rule(image, outer_x0 + 12, outer_x1 - 12, 68);
-
-  draw_memo_card(image, dashboard, 24, 84, kPanelWidth - 24, 214);
-
-  draw_rows_section(image, rows, 24, 228, kPanelWidth - 24, 416);
-
-  draw_rule(image, outer_x0 + 12, outer_x1 - 12, 430);
-  draw_text_line(image, 28, 442, "VOICE: ADD | DELETE | CLEAR", 1, 34);
-  draw_right_aligned_text(
-      image,
-      outer_x1 - 12,
-      442,
-      "ROTATE TO BROWSE OPEN ITEMS",
+  draw_text_line(image, left, 16, "FAMILY BOARD", 3, 20);
+  const std::string hint = truncate_text_px(
+      "ROTATE=SELECT  |  CLICK=ENTER  |  HOLD=HOME",
       1,
-      240);
+      std::max(80, right - left));
+  const int hint_w = text_width_px(hint, 1);
+  draw_text_line(image, std::max(left, right - hint_w), 52, hint, 1, 0);
+  fill_black_rect(image, left, 68, right, 70);
+
+  const auto& memos = state.dashboard.memos;
+  const int total = static_cast<int>(memos.size());
+  const int selected = selected_memo_index(state);
+
+  if (total <= 0) {
+    draw_text_line(image, left + 4, content_top + 8, "NO FAMILY NOTES YET", 2, 24);
+    draw_text_line(
+        image,
+        left + 4,
+        content_top + 42,
+        "TRY VOICE: LEAVE A NOTE DINNER IS READY",
+        1,
+        52);
+  } else {
+    int unread = 0;
+    for (const auto& memo : memos) {
+      if (memo.is_new) {
+        ++unread;
+      }
+    }
+
+    const std::string summary =
+        "TOTAL " + std::to_string(total) +
+        "   NEW " + std::to_string(unread) +
+        "   FOCUS " + std::to_string(selected + 1) + "/" + std::to_string(total);
+    draw_text_line(image, left + 4, content_top, truncate_text_px(summary, 1, right - left - 8), 1, 0);
+
+    const int row_h = 64;
+    const int row_gap = 6;
+    const int list_top = content_top + 22;
+    const int available_h = std::max(1, content_bottom - list_top);
+    const int slots = std::max(1, (available_h + row_gap) / (row_h + row_gap));
+    const int start = window_start(total, slots, selected);
+    const bool expanded = state.memo.expanded;
+
+    for (int i = 0; i < slots; ++i) {
+      const int idx = start + i;
+      if (idx >= total) {
+        break;
+      }
+      const int y0 = list_top + i * (row_h + row_gap);
+      const int y1 = std::min(content_bottom, y0 + row_h);
+      if (y1 <= y0) {
+        continue;
+      }
+
+      const bool is_selected = idx == selected;
+      const int cx0 = left + 4;
+      const int cx1 = right - 4;
+      if (is_selected) {
+        fill_black_rect(image, cx0, y0 + 1, cx1, y1 - 1);
+      } else {
+        fill_black_rect(image, cx0 + 8, y1 - 1, cx1, y1);
+      }
+
+      const auto& memo = memos[static_cast<std::size_t>(idx)];
+      const std::string author = upper_copy(trim_or_default(memo.author, "UNKNOWN"));
+      const std::string posted = upper_copy(trim_or_default(memo.posted, "UNKNOWN TIME"));
+      const std::string body = trim_or_default(memo.text, "No content.");
+
+      const int content_x0 = cx0 + 10;
+      const int content_x1 = cx1 - 10;
+      const int posted_w = text_width_px(posted, 1);
+      const int posted_x = std::max(content_x0, content_x1 - posted_w);
+      const int author_max_w = std::max(56, posted_x - content_x0 - 8);
+      const std::string author_fit = truncate_text_px(author, 2, author_max_w);
+
+      if (is_selected) {
+        draw_text_line_inverted(image, content_x0, y0 + 6, author_fit, 2, 0);
+        draw_text_line_inverted(image, posted_x, y0 + 10, posted, 1, 0);
+      } else {
+        draw_text_line(image, content_x0, y0 + 6, author_fit, 2, 0);
+        draw_text_line(image, posted_x, y0 + 10, posted, 1, 0);
+      }
+
+      const int body_width = std::max(48, content_x1 - content_x0);
+      const int max_body_lines = (is_selected && expanded) ? 2 : 1;
+      const int chars_per_line = std::max(8, body_width / 10);
+      const std::vector<std::string> wrapped = wrap_words(body, static_cast<std::size_t>(chars_per_line));
+      const int lines = std::min(max_body_lines, static_cast<int>(wrapped.size()));
+      int body_y = y0 + 34;
+      for (int ln = 0; ln < lines; ++ln) {
+        const std::string line = truncate_text_px(wrapped[static_cast<std::size_t>(ln)], 2, body_width);
+        if (is_selected) {
+          draw_text_line_inverted(image, content_x0, body_y, line, 2, 0);
+        } else {
+          draw_text_line(image, content_x0, body_y, line, 2, 0);
+        }
+        body_y += 24;
+      }
+      if (static_cast<int>(wrapped.size()) > lines && lines > 0) {
+        if (is_selected) {
+          draw_text_line_inverted(image, content_x1 - 24, body_y - 10, "...", 1, 3);
+        } else {
+          draw_text_line(image, content_x1 - 24, body_y - 10, "...", 1, 3);
+        }
+      }
+
+      if (memo.is_new) {
+        const std::string badge = "NEW";
+        const int badge_w = text_width_px(badge, 1);
+        const int badge_x = std::max(content_x0, content_x1 - badge_w);
+        if (is_selected) {
+          draw_text_line_inverted(image, badge_x, y1 - 18, badge, 1, 3);
+        } else {
+          draw_text_line(image, badge_x, y1 - 18, badge, 1, 3);
+        }
+      }
+    }
+  }
+
+  draw_text_line(
+      image,
+      left,
+      kPanelHeight - 40,
+      "VOICE CMD: ADD | DELETE | CLEAR",
+      1,
+      40);
 
   return image;
 }

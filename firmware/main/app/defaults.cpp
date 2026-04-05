@@ -189,9 +189,29 @@ ProductDefaults make_factory_defaults() {
       false,
       false,
   };
-  defaults.dashboard.family_memo_text.clear();
-  defaults.dashboard.family_memo_author.clear();
-  defaults.dashboard.family_memo_posted.clear();
+  defaults.dashboard.memos = {
+      {
+          "Please wipe the fridge shelf after dinner. Leftovers on top rack.",
+          "Mom",
+          "2H AGO",
+          true,
+      },
+      {
+          "Trash pickup is tomorrow morning. Move the blue bin outside before bed.",
+          "Dad",
+          "YESTERDAY",
+          false,
+      },
+      {
+          "Guest coming on Sunday. Buy fruit and sparkling water.",
+          "Family",
+          "MAR 31",
+          false,
+      },
+  };
+  defaults.dashboard.family_memo_text = defaults.dashboard.memos.front().text;
+  defaults.dashboard.family_memo_author = defaults.dashboard.memos.front().author;
+  defaults.dashboard.family_memo_posted = defaults.dashboard.memos.front().posted;
   return defaults;
 }
 
@@ -237,6 +257,8 @@ AppState make_state_from_defaults(
   state.timer.minutes_remaining = 0;
   state.timer.focused_index = 2;
   state.timer.last_tick_ms = now_ms;
+  state.memo.index = 0;
+  state.memo.expanded = false;
   state.calendar.day_of_month = 26;
   state.calendar.month_label = "March 2026";
   state.weather.temperature_c = 4;
