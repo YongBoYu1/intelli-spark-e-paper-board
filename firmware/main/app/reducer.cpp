@@ -909,7 +909,17 @@ void handle_click(AppState& state, const Event& event) {
 
   if (state.screen == Screen::Memo) {
     if (!state.dashboard.memos.empty()) {
+      clamp_memo_index(state);
       state.memo.expanded = !state.memo.expanded;
+      const int index = std::max(
+          0,
+          std::min(
+              state.memo.index,
+              static_cast<int>(state.dashboard.memos.size()) - 1));
+      auto& memo = state.dashboard.memos[static_cast<std::size_t>(index)];
+      if (memo.is_new) {
+        memo.is_new = false;
+      }
     }
     return;
   }
