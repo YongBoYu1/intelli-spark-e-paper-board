@@ -987,6 +987,97 @@ int visible_reminder_count(const app::AppState& state) {
   return static_cast<int>(visible_reminder_indices(state).size());
 }
 
+struct FamilyBoardView {
+  std::string memo_text{};
+  std::string memo_author{};
+  std::string memo_posted{};
+  std::vector<std::string> author_tags{};
+};
+
+int normalized_memo_index(const app::AppState& state) {
+  const int total = static_cast<int>(state.dashboard.memos.size());
+  if (total <= 0) {
+    return -1;
+  }
+  int index = state.memo.index;
+  if (index < 0) {
+    index = total - 1;
+  } else if (index >= total) {
+    index = 0;
+  }
+  return index;
+}
+
+FamilyBoardView resolve_family_board_view(const app::AppState& state) {
+  FamilyBoardView view{};
+  const auto& memos = state.dashboard.memos;
+  const int selected = normalized_memo_index(state);
+  if (!memos.empty() && selected >= 0 && selected < static_cast<int>(memos.size())) {
+    const app::MemoItem& memo = memos[static_cast<std::size_t>(selected)];
+    view.memo_text = memo.text;
+    view.memo_author = memo.author;
+    view.memo_posted = memo.posted;
+  } else {
+    view.memo_text = state.dashboard.family_memo_text;
+    view.memo_author = state.dashboard.family_memo_author;
+    view.memo_posted = state.dashboard.family_memo_posted;
+  }
+
+  if (!view.memo_author.empty()) {
+    view.author_tags.push_back(uppercase_copy(trim_copy(view.memo_author)));
+  }
+  for (const auto& memo : memos) {
+    const std::string author = uppercase_copy(trim_copy(memo.author));
+    if (author.empty()) {
+      continue;
+    }
+    if (std::find(view.author_tags.begin(), view.author_tags.end(), author) != view.author_tags.end()) {
+      continue;
+    }
+    view.author_tags.push_back(author);
+    if (static_cast<int>(view.author_tags.size()) >= 4) {
+      break;
+    }
+  }
+
+  return view;
+}
+
+std::vector<std::string> wrap_text_with_font(
+    const std::string& text,
+    const BitmapFont& font,
+    const int max_width,
+    const int spacing = 0) {
+  std::vector<std::string> lines{};
+  if (text.empty() || max_width <= 0) {
+    return lines;
+  }
+
+  std::istringstream stream(text);
+  std::string word;
+  std::string line;
+  while (stream >> word) {
+    if (line.empty()) {
+      line = word;
+      continue;
+    }
+    const std::string candidate = line + " " + word;
+    if (text_width_with_font_spaced(candidate, font, spacing) <= max_width) {
+      line = candidate;
+    } else {
+      lines.push_back(line);
+      line = word;
+    }
+  }
+  if (!line.empty()) {
+    lines.push_back(line);
+  }
+  if (lines.empty()) {
+    lines.push_back(truncate_text_with_font(text, font, max_width, spacing));
+  }
+  return lines;
+}
+
 int open_item_count(const int total_items, const std::vector<bool>& completed_items) {
   int open_count = 0;
   for (int i = 0; i < total_items; ++i) {
@@ -1217,32 +1308,94 @@ void draw_family_board(
     const int label_y,
     const int rule_y,
     const int bottom_y,
-    const app::DashboardSummary& dashboard) {
+    const app::AppState& state) {
   const BitmapFont& label_font = platform::panel_font_assets::kFontJetExtraBold16;
+  const BitmapFont& family_name_font = platform::panel_font_assets::kFontJetBold15;
+  const BitmapFont& quote_font = platform::panel_font_assets::kFontInterMedium18;
   const BitmapFont& meta_font = platform::panel_font_assets::kFontJetBold13;
-  draw_text_with_font_spaced(image, x0, label_y, "FAMILY BOARD", label_font, 3);
-  if (!dashboard.family_memo_author.empty()) {
-    draw_right_aligned_text_with_font(
+  const FamilyBoardView view = resolve_family_board_view(state);
+
+  constexpr int title_spacing = 3;
+  draw_text_with_font_spaced(image, x0, label_y, "FAMILY BOARD", label_font, title_spacing);
+
+  constexpr int family_spacing = 1;
+  constexpr int family_gap = 16;
+  constexpr int underline_gap = 3;
+  constexpr int underline_w = 2;
+  const int title_w = text_width_with_font_spaced("FAMILY BOARD", label_font, title_spacing);
+  const int max_row_w = std::max(64, x1 - (x0 + title_w + 22));
+  std::vector<std::pair<std::string, int>> labels{};
+  labels.reserve(view.author_tags.size());
+  int row_total = 0;
+  for (const std::string& author : view.author_tags) {
+    const int avail = max_row_w - row_total - (labels.empty() ? 0 : family_gap);
+    if (avail <= 0) {
+      break;
+    }
+    const std::string shown = truncate_text_with_font(author, family_name_font, avail, family_spacing);
+    const int width = text_width_with_font_spaced(shown, family_name_font, family_spacing);
+    const int extra = (labels.empty() ? 0 : family_gap) + width;
+    if (width <= 0 || row_total + extra > max_row_w) {
+      break;
+    }
+    labels.push_back({shown, width});
+    row_total += extra;
+  }
+
+  const int min_row_x = x0 + title_w + 14;
+  int row_x = x1 - row_total - 14;
+  if (row_x < min_row_x) {
+    row_x = min_row_x;
+  }
+  const int row_y = label_y + 1;
+  const int name_h = text_height_with_font("Ag", family_name_font);
+  int cx = row_x;
+  for (std::size_t i = 0; i < labels.size(); ++i) {
+    const auto& [name, width] = labels[i];
+    draw_text_with_font_spaced(
         image,
-        x1,
-        label_y,
-        uppercase_copy(dashboard.family_memo_author),
-        meta_font);
+        cx,
+        row_y,
+        name,
+        family_name_font,
+        family_spacing);
+    if (i == 0) {
+      const int uy = row_y + name_h + underline_gap;
+      fill_black_rect(image, cx, uy, cx + width, uy + underline_w);
+    }
+    cx += width + family_gap;
   }
-  draw_section_rule(image, x0, x1, rule_y);
 
-  const int memo_y = rule_y + 14;
+  const int dynamic_rule_y = std::max(rule_y, row_y + name_h + underline_gap + underline_w + 6);
+  draw_section_rule(image, x0, x1, dynamic_rule_y);
+
+  const int memo_y = dynamic_rule_y + 14;
   const int memo_width = x1 - x0 - 8;
-  if (!dashboard.family_memo_text.empty()) {
-    draw_text_wrapped(image, x0, memo_y, memo_width, dashboard.family_memo_text, 2, 5);
+  if (!view.memo_text.empty()) {
+    const std::vector<std::string> lines = wrap_text_with_font(
+        view.memo_text,
+        quote_font,
+        memo_width,
+        0);
+    const int line_h = text_height_with_font("Ag", quote_font) + 4;
+    const int posted_reserved = view.memo_posted.empty() ? 0 : (text_height_with_font("Ag", meta_font) + 8);
+    const int text_bottom = std::max(memo_y + line_h, bottom_y - 8 - posted_reserved);
+    int y = memo_y;
+    for (const auto& line : lines) {
+      if (y + line_h > text_bottom) {
+        break;
+      }
+      draw_text_with_font(image, x0, y, line, quote_font);
+      y += line_h;
+    }
   }
 
-  if (!dashboard.family_memo_posted.empty()) {
+  if (!view.memo_posted.empty()) {
     draw_right_aligned_text_with_font(
         image,
         x1,
         bottom_y - 18,
-        uppercase_copy(dashboard.family_memo_posted),
+        uppercase_copy(view.memo_posted),
         meta_font);
   }
 }
@@ -1561,7 +1714,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       family_label_y,
       family_rule_y,
       voice_lane_y - 4,
-      state.dashboard);
+      state);
   draw_voice_lane(image, 14, voice_lane_y, 14 + 340);
 
   draw_inventory_section(image, right_x0, right_x1, render_metrics.inv_y, state);
@@ -1588,9 +1741,10 @@ HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
   snapshot.weather_temperature_c = state.dashboard.weather_temperature_c;
   snapshot.weather_humidity_percent = state.dashboard.weather_humidity_percent;
   snapshot.location = state.dashboard.location;
-  snapshot.family_memo_text = state.dashboard.family_memo_text;
-  snapshot.family_memo_author = state.dashboard.family_memo_author;
-  snapshot.family_memo_posted = state.dashboard.family_memo_posted;
+  const FamilyBoardView family_view = resolve_family_board_view(state);
+  snapshot.family_memo_text = family_view.memo_text;
+  snapshot.family_memo_author = family_view.memo_author;
+  snapshot.family_memo_posted = family_view.memo_posted;
   const int count = std::min(
       snapshot.inventory_count,
       static_cast<int>(snapshot.inventory_completed.size()));

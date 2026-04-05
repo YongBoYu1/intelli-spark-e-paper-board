@@ -16,9 +16,11 @@ using platform::panel_font_assets::BitmapFont;
 using platform::panel_font_assets::Glyph;
 
 constexpr int kMarginX = 24;
-constexpr int kHintY = 8;
-constexpr int kDividerY = 26;
-constexpr int kContentTop = 70;
+constexpr int kTitleX = 24;
+constexpr int kTitleY = 16;
+constexpr int kHintY = 52;
+constexpr int kDividerY = 68;
+constexpr int kContentTop = 112;
 constexpr int kStatusGap = 38;
 constexpr int kButtonGap = 12;
 constexpr int kButtonHeight = 60;
@@ -85,6 +87,34 @@ int text_width_with_font(const std::string& text, const BitmapFont& font) {
     width += font.glyphs[glyph_index(ch)].advance;
   }
   return width;
+}
+
+std::string truncate_text_with_font(
+    const std::string& text,
+    const BitmapFont& font,
+    const int max_width_px) {
+  if (text.empty() || max_width_px <= 0) {
+    return "";
+  }
+  if (text_width_with_font(text, font) <= max_width_px) {
+    return text;
+  }
+
+  const std::string ellipsis = "...";
+  const int ellipsis_w = text_width_with_font(ellipsis, font);
+  if (ellipsis_w >= max_width_px) {
+    return ellipsis;
+  }
+  const int budget = max_width_px - ellipsis_w;
+  std::string out;
+  for (const char ch : text) {
+    const std::string candidate = out + ch;
+    if (text_width_with_font(candidate, font) > budget) {
+      break;
+    }
+    out = candidate;
+  }
+  return out.empty() ? ellipsis : (out + ellipsis);
 }
 
 struct TextVerticalBounds {
@@ -203,17 +233,23 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
 
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
+  const BitmapFont& title_font = platform::panel_font_assets::kFontInterBlack29;
+  const BitmapFont& hint_font = platform::panel_font_assets::kFontJetBold13;
   const BitmapFont& status_font = platform::panel_font_assets::kFontInterBold18;
   const BitmapFont& button_font = platform::panel_font_assets::kFontInterBold18;
 
   const std::string hint_raw = "ROTATE=SELECT  |  CLICK=ENTER  |  HOLD=HOME";
-  const std::string hint_text = truncate_text_px(hint_raw, 1, std::max(80, kPanelWidth - 48));
+  const std::string hint_text = truncate_text_with_font(
+      hint_raw,
+      hint_font,
+      std::max(80, kPanelWidth - 48));
   const std::string time_text = format_timer_value(state.timer.minutes_remaining);
   const std::string status_text = timer_status_text(state.timer);
 
-  const int hint_w = text_width_px(hint_text, 1);
-  const int hint_x = std::max(kMarginX, ((kPanelWidth - hint_w) / 2));
-  draw_text_line(image, hint_x, kHintY, hint_text, 1, 0);
+  draw_text_with_font(image, kTitleX, kTitleY, "TIMER", title_font);
+  const int hint_w = text_width_with_font(hint_text, hint_font);
+  const int hint_x = std::max(kMarginX, (kPanelWidth - kMarginX) - hint_w);
+  draw_text_with_font(image, hint_x, kHintY, hint_text, hint_font);
   fill_black_rect(image, kMarginX, kDividerY, kPanelWidth - kMarginX, kDividerY + 2);
 
   const int controls_y = kPanelHeight - kButtonBottomGap;
