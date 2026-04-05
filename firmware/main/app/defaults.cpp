@@ -228,11 +228,13 @@ AppState make_state_from_defaults(
   state.home.clock_seed_monotonic_ms = now_ms;
   state.home.show_focus = true;
   state.home.menu_overlay_active = false;
+  state.home.pending_reorder = false;
+  state.home.reorder_due_ms = 0;
   state.home.last_interaction_ms = now_ms;
   // Python parity: HOME overlay menu defaults to LIST.
   state.menu.focused_index = 1;
   state.timer.running = false;
-  state.timer.minutes_remaining = 12;
+  state.timer.minutes_remaining = 0;
   state.timer.focused_index = 2;
   state.timer.last_tick_ms = now_ms;
   state.calendar.day_of_month = 26;

@@ -15,6 +15,9 @@ constexpr int kHomeInventoryVisibleMax = 3;
 constexpr int kHomeReminderVisibleMax = 5;
 constexpr std::uint64_t kHomeCompletedHideGraceMs = 15000;
 constexpr std::uint64_t kHomeCompletedHideSettleMs = 600;
+constexpr std::uint64_t kReminderReorderDelayMs = 2000;
+constexpr int kTimerDefaultMinutes = 5;
+constexpr int kTimerMaxMinutes = 180;
 constexpr std::size_t kOnboardingStepCount = 4;
 constexpr std::array<const char*, 4> kTimezoneChoices = {
     "America/Toronto",
@@ -333,6 +336,104 @@ bool promote_pending_reminder_hide(AppState& state) {
   return changed;
 }
 
+void schedule_reminder_reorder(AppState& state, const std::uint64_t now_ms) {
+  const std::uint64_t base_ms = now_ms > 0 ? now_ms : state.last_tick_ms;
+  state.home.pending_reorder = true;
+  state.home.reorder_due_ms = base_ms + kReminderReorderDelayMs;
+}
+
+void remap_index_list(
+    std::vector<int>& values,
+    const std::vector<int>& old_to_new,
+    const int item_count) {
+  std::vector<int> remapped{};
+  remapped.reserve(values.size());
+  for (const int old_index : values) {
+    if (old_index < 0 || old_index >= static_cast<int>(old_to_new.size())) {
+      continue;
+    }
+    const int mapped_index = old_to_new[static_cast<std::size_t>(old_index)];
+    if (mapped_index < 0 || mapped_index >= item_count) {
+      continue;
+    }
+    if (!contains_index(remapped, mapped_index)) {
+      remapped.push_back(mapped_index);
+    }
+  }
+  values = std::move(remapped);
+}
+
+void apply_reminder_reorder(AppState& state) {
+  auto& reminders = state.dashboard.reminder_items;
+  auto& completed = state.dashboard.reminder_completed;
+  ensure_completion_flags(completed, reminders.size());
+  const int item_count = static_cast<int>(reminders.size());
+
+  if (item_count <= 1) {
+    state.home.pending_reorder = false;
+    state.home.reorder_due_ms = 0;
+    return;
+  }
+
+  struct ReminderRow {
+    std::string title{};
+    bool done{false};
+    int old_index{0};
+  };
+
+  std::vector<ReminderRow> rows{};
+  rows.reserve(static_cast<std::size_t>(item_count));
+  for (int i = 0; i < item_count; ++i) {
+    rows.push_back(ReminderRow{
+        reminders[static_cast<std::size_t>(i)],
+        completed[static_cast<std::size_t>(i)],
+        i,
+    });
+  }
+
+  std::stable_sort(
+      rows.begin(),
+      rows.end(),
+      [](const ReminderRow& lhs, const ReminderRow& rhs) {
+        return static_cast<int>(lhs.done) < static_cast<int>(rhs.done);
+      });
+
+  bool changed = false;
+  std::vector<int> old_to_new(static_cast<std::size_t>(item_count), -1);
+  for (int new_index = 0; new_index < item_count; ++new_index) {
+    const int old_index = rows[static_cast<std::size_t>(new_index)].old_index;
+    old_to_new[static_cast<std::size_t>(old_index)] = new_index;
+    if (old_index != new_index) {
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    state.home.pending_reorder = false;
+    state.home.reorder_due_ms = 0;
+    return;
+  }
+
+  for (int i = 0; i < item_count; ++i) {
+    const auto& row = rows[static_cast<std::size_t>(i)];
+    reminders[static_cast<std::size_t>(i)] = row.title;
+    completed[static_cast<std::size_t>(i)] = row.done;
+  }
+
+  remap_index_list(
+      state.home.pending_hide_reminder_indices,
+      old_to_new,
+      item_count);
+  remap_index_list(
+      state.home.hidden_reminder_indices,
+      old_to_new,
+      item_count);
+
+  clamp_home_focus(state);
+  state.home.pending_reorder = false;
+  state.home.reorder_due_ms = 0;
+}
+
 void enter_onboarding_start(AppState& state) {
   state.screen = Screen::Onboarding;
   state.onboarding.step_index = 0;
@@ -387,7 +488,7 @@ void enter_home(AppState& state) {
   state.onboarding.status = "Setup complete.";
 }
 
-void open_menu_target(AppState& state) {
+void open_menu_target(AppState& state, const std::uint64_t now_ms) {
   state.home.menu_overlay_active = false;
   switch (state.menu.focused_index % kMenuItemCount) {
     case 0:
@@ -399,6 +500,11 @@ void open_menu_target(AppState& state) {
       return;
     case 2:
       state.home.widget_mode = WidgetMode::Timer;
+      if (state.timer.minutes_remaining <= 0 && !state.timer.running) {
+        state.timer.minutes_remaining = kTimerDefaultMinutes;
+      }
+      state.timer.focused_index = 2;
+      state.timer.last_tick_ms = now_ms > 0 ? now_ms : state.last_tick_ms;
       state.screen = Screen::Timer;
       return;
     case 3:
@@ -479,6 +585,12 @@ void handle_tick(AppState& state, const Event& event) {
     }
   } else {
     state.timer.last_tick_ms = event.now_ms;
+  }
+
+  if (state.home.pending_reorder &&
+      state.home.reorder_due_ms > 0 &&
+      event.now_ms >= state.home.reorder_due_ms) {
+    apply_reminder_reorder(state);
   }
 
   if (state.screen == Screen::Landing) {
@@ -651,7 +763,7 @@ void handle_click(AppState& state, const Event& event) {
 
   if (state.screen == Screen::Home) {
     if (state.home.menu_overlay_active) {
-      open_menu_target(state);
+      open_menu_target(state, event.now_ms);
       return;
     }
     clamp_home_focus(state);
@@ -696,6 +808,7 @@ void handle_click(AppState& state, const Event& event) {
           } else {
             remove_reminder_visibility_tracking(state, target.item_index, true);
           }
+          schedule_reminder_reorder(state, event.now_ms);
         }
         return;
     }
@@ -703,7 +816,7 @@ void handle_click(AppState& state, const Event& event) {
   }
 
   if (state.screen == Screen::Menu) {
-    open_menu_target(state);
+    open_menu_target(state, event.now_ms);
     return;
   }
 
@@ -723,7 +836,9 @@ void handle_click(AppState& state, const Event& event) {
         state.timer.last_tick_ms = base_ms;
         return;
       case 1:
-        state.timer.minutes_remaining = std::min(180, state.timer.minutes_remaining + 1);
+        state.timer.minutes_remaining = std::min(
+            kTimerMaxMinutes,
+            state.timer.minutes_remaining + 1);
         state.timer.last_tick_ms = base_ms;
         return;
       case 2:
@@ -731,7 +846,7 @@ void handle_click(AppState& state, const Event& event) {
           state.timer.running = false;
         } else {
           if (state.timer.minutes_remaining <= 0) {
-            state.timer.minutes_remaining = 5;
+            state.timer.minutes_remaining = kTimerDefaultMinutes;
           }
           state.timer.running = true;
         }
@@ -783,6 +898,7 @@ void handle_click(AppState& state, const Event& event) {
     if (!next_completed) {
       remove_reminder_visibility_tracking(state, reminder_index, true);
     }
+    schedule_reminder_reorder(state, event.now_ms);
     return;
   }
 

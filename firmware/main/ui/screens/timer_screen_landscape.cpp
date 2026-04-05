@@ -2,6 +2,7 @@
 
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
+#include "ui/panel_font_assets_generated.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -9,23 +10,138 @@
 #include <vector>
 
 namespace fridge_ink::ui {
-
 namespace {
 
+using platform::panel_font_assets::BitmapFont;
+using platform::panel_font_assets::Glyph;
+
 constexpr int kMarginX = 24;
-constexpr int kHeaderTop = 18;
-constexpr int kHintTop = 30;
-constexpr int kDividerY = 72;
-constexpr int kContentTop = 118;
-constexpr int kControlsBottomMargin = 32;
-constexpr int kControlsHeight = 56;
-constexpr int kControlsGap = 12;
-constexpr int kControlsRadius = 18;
+constexpr int kTitleY = 16;
+constexpr int kHintY = 52;
+constexpr int kDividerY = 68;
+constexpr int kContentTop = 112;
+constexpr int kStatusGap = 38;
+constexpr int kButtonGap = 12;
+constexpr int kButtonHeight = 60;
+constexpr int kButtonRadius = 12;
+constexpr int kButtonBottomGap = 90;
+
+std::size_t glyph_index(const char ch) {
+  const unsigned char code = static_cast<unsigned char>(ch);
+  if (code < 32 || code > 126) {
+    return static_cast<std::size_t>('?' - 32);
+  }
+  return static_cast<std::size_t>(code - 32);
+}
+
+void draw_glyph_with_font(
+    std::vector<uint8_t>& image,
+    const int x,
+    const int y,
+    const char ch,
+    const BitmapFont& font,
+    const bool black = true) {
+  const Glyph& glyph = font.glyphs[glyph_index(ch)];
+  if (glyph.width == 0 || glyph.height == 0) {
+    return;
+  }
+
+  const int glyph_x0 = x + glyph.left;
+  const int glyph_y0 = y + glyph.top;
+  const int row_bytes = (glyph.width + 7) / 8;
+  const std::uint8_t* bitmap = font.bitmap + glyph.bitmap_offset;
+  for (int row = 0; row < glyph.height; ++row) {
+    for (int col = 0; col < glyph.width; ++col) {
+      const std::uint8_t byte = bitmap[row * row_bytes + (col / 8)];
+      const bool on = (byte & (0x80U >> (col % 8))) != 0;
+      if (!on) {
+        continue;
+      }
+      if (black) {
+        set_black_pixel(image, glyph_x0 + col, glyph_y0 + row);
+      } else {
+        clear_pixel(image, glyph_x0 + col, glyph_y0 + row);
+      }
+    }
+  }
+}
+
+void draw_text_with_font(
+    std::vector<uint8_t>& image,
+    const int x,
+    const int y,
+    const std::string& text,
+    const BitmapFont& font,
+    const bool black = true) {
+  int cursor_x = x;
+  for (const char ch : text) {
+    draw_glyph_with_font(image, cursor_x, y, ch, font, black);
+    cursor_x += font.glyphs[glyph_index(ch)].advance;
+  }
+}
+
+int text_width_with_font(const std::string& text, const BitmapFont& font) {
+  int width = 0;
+  for (const char ch : text) {
+    width += font.glyphs[glyph_index(ch)].advance;
+  }
+  return width;
+}
+
+struct TextVerticalBounds {
+  int top{0};
+  int bottom{0};
+  bool valid{false};
+};
+
+TextVerticalBounds text_vertical_bounds_with_font(
+    const std::string& text,
+    const BitmapFont& font) {
+  TextVerticalBounds bounds{};
+  for (const char ch : text) {
+    const Glyph& glyph = font.glyphs[glyph_index(ch)];
+    if (glyph.width == 0 || glyph.height == 0) {
+      continue;
+    }
+    const int top = glyph.top;
+    const int bottom = glyph.top + glyph.height;
+    if (!bounds.valid) {
+      bounds.top = top;
+      bounds.bottom = bottom;
+      bounds.valid = true;
+      continue;
+    }
+    bounds.top = std::min(bounds.top, top);
+    bounds.bottom = std::max(bounds.bottom, bottom);
+  }
+  return bounds;
+}
+
+int text_height_with_font(const std::string& text, const BitmapFont& font) {
+  const TextVerticalBounds bounds = text_vertical_bounds_with_font(text, font);
+  if (!bounds.valid) {
+    return font.line_height;
+  }
+  return std::max(1, bounds.bottom - bounds.top);
+}
+
+int centered_text_y_with_font(
+    const int row_top,
+    const int row_height,
+    const std::string& text,
+    const BitmapFont& font) {
+  const TextVerticalBounds bounds = text_vertical_bounds_with_font(text, font);
+  if (!bounds.valid) {
+    return row_top + ((row_height - static_cast<int>(font.line_height)) / 2);
+  }
+  const int text_h = bounds.bottom - bounds.top;
+  return row_top + ((row_height - text_h) / 2) - bounds.top;
+}
 
 std::string format_timer_value(const int minutes_remaining) {
   const int minutes = std::max(0, minutes_remaining);
-  char buffer[16];
-  std::snprintf(buffer, sizeof(buffer), "%d:00", minutes);
+  char buffer[24];
+  std::snprintf(buffer, sizeof(buffer), "%02d:00", minutes);
   return std::string(buffer);
 }
 
@@ -39,6 +155,25 @@ std::string timer_status_text(const app::TimerState& timer) {
   return "READY";
 }
 
+const BitmapFont& pick_time_font(
+    const std::string& text,
+    const int max_width,
+    const int max_height) {
+  static constexpr const BitmapFont* kCandidates[] = {
+      &platform::panel_font_assets::kFontInterBlack109,
+      &platform::panel_font_assets::kFontInterBlack87,
+      &platform::panel_font_assets::kFontInterBlack84,
+      &platform::panel_font_assets::kFontInterBlack66,
+  };
+  for (const BitmapFont* font : kCandidates) {
+    if (text_width_with_font(text, *font) <= max_width &&
+        text_height_with_font(text, *font) <= max_height) {
+      return *font;
+    }
+  }
+  return *kCandidates[(sizeof(kCandidates) / sizeof(kCandidates[0])) - 1];
+}
+
 void draw_control_pill(
     std::vector<uint8_t>& image,
     const int x0,
@@ -46,47 +181,69 @@ void draw_control_pill(
     const int x1,
     const int y1,
     const std::string& label,
-    const bool active) {
-  if (active) {
-    fill_rounded_rect(image, x0, y0, x1, y1, kControlsRadius, true);
-    draw_text_centered_inverted(image, x0, x1, y0 + 16, label, 2, 16);
-    return;
+    const bool focused,
+    const BitmapFont& font) {
+  if (focused) {
+    fill_rounded_rect(image, x0, y0, x1, y1, kButtonRadius, true);
+  } else {
+    draw_rounded_rect_outline(image, x0, y0, x1, y1, kButtonRadius, 2);
   }
 
-  draw_rounded_rect_outline(image, x0, y0, x1, y1, kControlsRadius, 2);
-  draw_text_centered(image, x0, x1, y0 + 16, label, 2, 16);
+  const int text_w = text_width_with_font(label, font);
+  const int text_x = x0 + std::max(0, ((x1 - x0) - text_w) / 2);
+  const int text_y = centered_text_y_with_font(y0, y1 - y0, label, font);
+  draw_text_with_font(image, text_x, text_y, label, font, !focused);
 }
 
 }  // namespace
 
 std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
+  using platform::kPanelBufferSize;
   using platform::kPanelHeight;
   using platform::kPanelWidth;
 
-  std::vector<uint8_t> image(platform::kPanelBufferSize, 0xFF);
+  std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
-  const std::string title = "TIMER";
-  const std::string hint = "ROTATE=SELECT  |  CLICK=ENTER  |  HOLD=HOME";
+  const BitmapFont& title_font = platform::panel_font_assets::kFontInterBlack29;
+  const BitmapFont& status_font = platform::panel_font_assets::kFontInterBold18;
+  const BitmapFont& button_font = platform::panel_font_assets::kFontInterBold18;
+
+  const std::string title_text = "TIMER";
+  const std::string hint_raw = "ROTATE=SELECT  |  CLICK=ENTER  |  HOLD=HOME";
+  const std::string hint_text = truncate_text_px(hint_raw, 1, std::max(80, kPanelWidth - 48));
   const std::string time_text = format_timer_value(state.timer.minutes_remaining);
   const std::string status_text = timer_status_text(state.timer);
 
-  draw_text_line(image, kMarginX, kHeaderTop, title, 2, 16);
-
-  const int hint_max_width = (kPanelWidth - (kMarginX * 2));
-  const std::string hint_text = truncate_text_px(hint, 1, hint_max_width);
-  const int hint_width = text_width_px(hint_text, 1);
-  const int hint_x = std::max(kMarginX, kPanelWidth - kMarginX - hint_width);
-  draw_text_line(image, hint_x, kHintTop, hint_text, 1, 80);
-
+  draw_text_with_font(image, kMarginX, kTitleY, title_text, title_font);
+  const int hint_w = text_width_px(hint_text, 1);
+  const int hint_x = std::max(kMarginX, (kPanelWidth - kMarginX) - hint_w);
+  draw_text_line(image, hint_x, kHintY, hint_text, 1, 0);
   fill_black_rect(image, kMarginX, kDividerY, kPanelWidth - kMarginX, kDividerY + 2);
 
-  const int time_width = text_width_px(time_text, 3);
-  const int time_x = std::max(kMarginX, (kPanelWidth - time_width) / 2);
-  draw_text_line(image, time_x, kContentTop, time_text, 3, 16);
+  const int controls_y = kPanelHeight - kButtonBottomGap;
+  const int available_bottom = controls_y - 26;
+  const int status_h = text_height_with_font(status_text, status_font);
+  const int time_area_bottom = std::max(kContentTop + 1, available_bottom - kStatusGap - status_h);
+  const int time_area_h = std::max(1, time_area_bottom - kContentTop);
 
-  const int status_width = text_width_px(status_text, 2);
-  const int status_x = std::max(kMarginX, (kPanelWidth - status_width) / 2);
-  draw_text_line(image, status_x, 238, status_text, 2, 24);
+  const BitmapFont& time_font = pick_time_font(
+      time_text,
+      kPanelWidth - 120,
+      time_area_h);
+  const int time_w = text_width_with_font(time_text, time_font);
+  const int time_x = std::max(kMarginX, (kPanelWidth - time_w) / 2);
+  const int time_y = centered_text_y_with_font(kContentTop, time_area_h, time_text, time_font);
+  draw_text_with_font(image, time_x, time_y, time_text, time_font);
+
+  const TextVerticalBounds time_bounds = text_vertical_bounds_with_font(time_text, time_font);
+  const int time_bottom = time_y + (time_bounds.valid ? time_bounds.bottom : time_font.line_height);
+  int status_y = time_bottom + kStatusGap;
+  if (status_y + status_h > available_bottom) {
+    status_y = std::max(kContentTop + 8, available_bottom - status_h);
+  }
+  const int status_w = text_width_with_font(status_text, status_font);
+  const int status_x = std::max(kMarginX, (kPanelWidth - status_w) / 2);
+  draw_text_with_font(image, status_x, status_y, status_text, status_font);
 
   const std::string controls[] = {
       "-1M",
@@ -94,15 +251,20 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
       state.timer.running ? "PAUSE" : "START",
       "RESET",
   };
-
-  const int controls_y = kPanelHeight - kControlsBottomMargin - kControlsHeight;
-  const int available_width = kPanelWidth - (kMarginX * 2) - (kControlsGap * 3);
-  const int control_width = available_width / 4;
+  const int focused = std::max(0, std::min(state.timer.focused_index, 3));
+  const int button_width = (kPanelWidth - (kMarginX * 2) - (kButtonGap * 3)) / 4;
   for (int idx = 0; idx < 4; ++idx) {
-    const int x0 = kMarginX + idx * (control_width + kControlsGap);
-    const int x1 = x0 + control_width;
-    const bool active = idx == std::max(0, std::min(state.timer.focused_index, 3));
-    draw_control_pill(image, x0, controls_y, x1, controls_y + kControlsHeight, controls[idx], active);
+    const int x0 = kMarginX + idx * (button_width + kButtonGap);
+    const int x1 = x0 + button_width;
+    draw_control_pill(
+        image,
+        x0,
+        controls_y,
+        x1,
+        controls_y + kButtonHeight,
+        controls[idx],
+        idx == focused,
+        button_font);
   }
 
   return image;

@@ -65,6 +65,8 @@ struct HomeState {
   std::vector<int> pending_hide_reminder_indices{};
   std::vector<int> hidden_reminder_indices{};
   std::uint64_t hide_due_ms{0};
+  bool pending_reorder{false};
+  std::uint64_t reorder_due_ms{0};
   std::uint64_t last_interaction_ms{0};
 };
 
