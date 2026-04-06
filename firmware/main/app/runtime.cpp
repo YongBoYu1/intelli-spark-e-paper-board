@@ -25,6 +25,8 @@ constexpr bool kRefreshDebugLogs = true;
 constexpr double kDiffFallbackMinRatio = 0.10;
 constexpr double kHomeFamilyAreaLimitOverride = 0.30;
 constexpr double kHomeMenuOverlayAreaLimitOverride = 0.60;
+constexpr double kHomeReminderReorderAreaLimitOverride = 0.30;
+constexpr double kHomeReminderCompactAreaLimitOverride = 0.40;
 
 void add_reason_once(
     std::vector<std::string>& reasons,
@@ -342,6 +344,14 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
          has_reason(pending_render_.dirty_reasons, "home.menu_overlay_focus"))) {
       effective_mode_limit = std::max(effective_mode_limit, kHomeMenuOverlayAreaLimitOverride);
     }
+    if (pending_screen_ == Screen::Home &&
+        has_reason(pending_render_.dirty_reasons, "home.reminder_reorder")) {
+      effective_mode_limit = std::max(effective_mode_limit, kHomeReminderReorderAreaLimitOverride);
+    }
+    if (pending_screen_ == Screen::Home &&
+        has_reason(pending_render_.dirty_reasons, "home.reminder_compact")) {
+      effective_mode_limit = std::max(effective_mode_limit, kHomeReminderCompactAreaLimitOverride);
+    }
     const double gate_area_ratio =
         refresh_policy::partial_gate_area_ratio(
             aligned_rects,
@@ -354,12 +364,14 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         !aligned_rects.empty() &&
         gate_area_ratio <= effective_mode_limit;
     if (allow_partial) {
-      const bool reinforce_row_toggle =
+      const bool reinforce_home_reminder =
           pending_screen_ == Screen::Home &&
-          has_reason(pending_render_.dirty_reasons, "home.reminder_row_update");
+          (has_reason(pending_render_.dirty_reasons, "home.reminder_row_update") ||
+           has_reason(pending_render_.dirty_reasons, "home.reminder_reorder") ||
+           has_reason(pending_render_.dirty_reasons, "home.reminder_compact"));
 
       int partial_passes = 1;
-      if (reinforce_row_toggle) {
+      if (reinforce_home_reminder) {
         partial_passes = std::max(partial_passes, 2);
       }
 
@@ -371,7 +383,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         ESP_LOGI(
             kTag,
             "[refresh] R1_PARTIAL_RECTS screen=%s count=%u rects=%s gate_ratio=%.3f limit=%.3f "
-            "partial_count=%d/%d budget=%s passes=%d reinforce_row=%s mode=%s dirty=%s",
+            "partial_count=%d/%d budget=%s passes=%d reinforce_home_reminder=%s mode=%s dirty=%s",
             screen_name(pending_screen_),
             static_cast<unsigned>(aligned_rects.size()),
             format_rects(aligned_rects).c_str(),
@@ -381,7 +393,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             full_every,
             state_.settings.partial_refresh_budget_enabled ? "on" : "off",
             partial_passes,
-            reinforce_row_toggle ? "on" : "off",
+            reinforce_home_reminder ? "on" : "off",
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());
       }
@@ -401,11 +413,12 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
       if (kRefreshDebugLogs) {
         ESP_LOGI(
             kTag,
-            "[refresh] R2_FAST_FULL screen=%s reason=%s gate_ratio=%.3f limit=%.3f mode=%s dirty=%s",
+            "[refresh] R2_FAST_FULL screen=%s reason=%s gate_ratio=%.3f limit=%.3f rects=%s mode=%s dirty=%s",
             screen_name(pending_screen_),
             why,
             gate_area_ratio,
             effective_mode_limit,
+            format_rects(aligned_rects).c_str(),
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());
       }

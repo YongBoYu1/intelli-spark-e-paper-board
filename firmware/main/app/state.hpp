@@ -70,6 +70,8 @@ struct HomeState {
   bool show_focus{false};
   bool menu_overlay_active{false};
   WidgetMode widget_mode{WidgetMode::Clock};
+  std::vector<int> pending_hide_inventory_indices{};
+  std::vector<int> hidden_inventory_indices{};
   std::vector<int> pending_hide_reminder_indices{};
   std::vector<int> hidden_reminder_indices{};
   std::uint64_t hide_due_ms{0};

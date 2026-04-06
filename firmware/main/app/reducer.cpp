@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <ctime>
+#include <sstream>
 #include <string>
 
 namespace fridge_ink::app {
@@ -16,7 +17,7 @@ constexpr int kMenuItemCount = 5;
 constexpr int kSettingsItemCount = 8;
 constexpr int kHomeInventoryVisibleMax = 3;
 constexpr int kHomeReminderVisibleMax = 5;
-constexpr std::uint64_t kHomeCompletedHideGraceMs = 15000;
+constexpr std::uint64_t kHomeCompletedHideGraceMs = 10000;
 constexpr std::uint64_t kHomeCompletedHideSettleMs = 600;
 constexpr std::uint64_t kReminderReorderDelayMs = 2000;
 constexpr int kTimerStepSeconds = 60;
@@ -71,6 +72,28 @@ void remove_index(std::vector<int>& values, const int index) {
       values.end());
 }
 
+std::string format_index_list(const std::vector<int>& values) {
+  std::ostringstream out;
+  out << "[";
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << values[i];
+  }
+  out << "]";
+  return out.str();
+}
+
+std::string format_home_hide_state(const AppState& state) {
+  std::ostringstream out;
+  out << "pending_inv=" << format_index_list(state.home.pending_hide_inventory_indices)
+      << " hidden_inv=" << format_index_list(state.home.hidden_inventory_indices)
+      << " pending_rem=" << format_index_list(state.home.pending_hide_reminder_indices)
+      << " hidden_rem=" << format_index_list(state.home.hidden_reminder_indices);
+  return out.str();
+}
+
 int clamp_int(const int value, const int low, const int high) {
   return std::max(low, std::min(value, high));
 }
@@ -100,11 +123,11 @@ void clamp_memo_index(AppState& state) {
     state.memo.index = 0;
     return;
   }
-  if (state.memo.index < 0) {
-    state.memo.index = total - 1;
-  } else if (state.memo.index >= total) {
-    state.memo.index = 0;
+  int normalized = state.memo.index % total;
+  if (normalized < 0) {
+    normalized += total;
   }
+  state.memo.index = normalized;
 }
 
 void clamp_list_focus(AppState& state) {
@@ -265,6 +288,22 @@ void handle_settings_click(AppState& state, const Event& event) {
   }
 }
 
+std::vector<int> visible_inventory_indices(const AppState& state) {
+  std::vector<int> indices{};
+  const int total = static_cast<int>(state.dashboard.inventory_items.size());
+  indices.reserve(std::min(total, kHomeInventoryVisibleMax));
+  for (int i = 0; i < total; ++i) {
+    if (contains_index(state.home.hidden_inventory_indices, i)) {
+      continue;
+    }
+    indices.push_back(i);
+    if (static_cast<int>(indices.size()) >= kHomeInventoryVisibleMax) {
+      break;
+    }
+  }
+  return indices;
+}
+
 std::vector<int> visible_reminder_indices(const AppState& state) {
   std::vector<int> indices{};
   const int total = static_cast<int>(state.dashboard.reminder_items.size());
@@ -282,9 +321,7 @@ std::vector<int> visible_reminder_indices(const AppState& state) {
 }
 
 int home_inventory_count(const AppState& state) {
-  return std::min(
-      static_cast<int>(state.dashboard.inventory_items.size()),
-      kHomeInventoryVisibleMax);
+  return static_cast<int>(visible_inventory_indices(state).size());
 }
 
 int home_reminder_count(const AppState& state) {
@@ -321,11 +358,11 @@ HomeFocusTarget home_focus_target(const AppState& state) {
   }
 
   int pos = focused_index - 2;
-  const int inventory_count = home_inventory_count(state);
-  if (pos < inventory_count) {
-    return {HomeFocusTargetKind::InventoryItem, pos};
+  const std::vector<int> inventory_indices = visible_inventory_indices(state);
+  if (pos < static_cast<int>(inventory_indices.size())) {
+    return {HomeFocusTargetKind::InventoryItem, inventory_indices[static_cast<std::size_t>(pos)]};
   }
-  pos -= inventory_count;
+  pos -= static_cast<int>(inventory_indices.size());
 
   const std::vector<int> reminder_indices = visible_reminder_indices(state);
   if (pos < static_cast<int>(reminder_indices.size())) {
@@ -342,6 +379,35 @@ void ensure_completion_flags(
     return;
   }
   completed.resize(item_count, false);
+}
+
+bool remove_inventory_visibility_tracking(
+    AppState& state,
+    const int item_index,
+    const bool restore_visible) {
+  if (item_index < 0) {
+    return false;
+  }
+  bool changed = false;
+  const auto pending_before = state.home.pending_hide_inventory_indices.size();
+  remove_index(state.home.pending_hide_inventory_indices, item_index);
+  if (state.home.pending_hide_inventory_indices.size() != pending_before) {
+    changed = true;
+  }
+
+  if (restore_visible) {
+    const auto hidden_before = state.home.hidden_inventory_indices.size();
+    remove_index(state.home.hidden_inventory_indices, item_index);
+    if (state.home.hidden_inventory_indices.size() != hidden_before) {
+      changed = true;
+    }
+  }
+
+  if (state.home.pending_hide_inventory_indices.empty() &&
+      state.home.pending_hide_reminder_indices.empty()) {
+    state.home.hide_due_ms = 0;
+  }
+  return changed;
 }
 
 bool remove_reminder_visibility_tracking(
@@ -366,10 +432,26 @@ bool remove_reminder_visibility_tracking(
     }
   }
 
-  if (state.home.pending_hide_reminder_indices.empty()) {
+  if (state.home.pending_hide_inventory_indices.empty() &&
+      state.home.pending_hide_reminder_indices.empty()) {
     state.home.hide_due_ms = 0;
   }
   return changed;
+}
+
+void mark_pending_inventory_hide(
+    AppState& state,
+    const int item_index,
+    const std::uint64_t now_ms) {
+  if (item_index < 0) {
+    return;
+  }
+  remove_index(state.home.hidden_inventory_indices, item_index);
+  if (!contains_index(state.home.pending_hide_inventory_indices, item_index)) {
+    state.home.pending_hide_inventory_indices.push_back(item_index);
+  }
+  const std::uint64_t base_ms = now_ms > 0 ? now_ms : state.last_tick_ms;
+  state.home.hide_due_ms = base_ms + kHomeCompletedHideGraceMs;
 }
 
 void mark_pending_reminder_hide(
@@ -388,7 +470,8 @@ void mark_pending_reminder_hide(
 }
 
 bool home_hide_ready(const AppState& state, const std::uint64_t now_ms) {
-  if (state.home.pending_hide_reminder_indices.empty()) {
+  if (state.home.pending_hide_inventory_indices.empty() &&
+      state.home.pending_hide_reminder_indices.empty()) {
     return false;
   }
   if (state.home.hide_due_ms == 0 || now_ms < state.home.hide_due_ms) {
@@ -398,10 +481,21 @@ bool home_hide_ready(const AppState& state, const std::uint64_t now_ms) {
 }
 
 bool promote_pending_reminder_hide(AppState& state) {
-  if (state.home.pending_hide_reminder_indices.empty()) {
+  if (state.home.pending_hide_inventory_indices.empty() &&
+      state.home.pending_hide_reminder_indices.empty()) {
     return false;
   }
   bool changed = false;
+  for (const int index : state.home.pending_hide_inventory_indices) {
+    if (index < 0 ||
+        index >= static_cast<int>(state.dashboard.inventory_items.size())) {
+      continue;
+    }
+    if (!contains_index(state.home.hidden_inventory_indices, index)) {
+      state.home.hidden_inventory_indices.push_back(index);
+      changed = true;
+    }
+  }
   for (const int index : state.home.pending_hide_reminder_indices) {
     if (index < 0 ||
         index >= static_cast<int>(state.dashboard.reminder_items.size())) {
@@ -412,15 +506,26 @@ bool promote_pending_reminder_hide(AppState& state) {
       changed = true;
     }
   }
+  state.home.pending_hide_inventory_indices.clear();
   state.home.pending_hide_reminder_indices.clear();
   state.home.hide_due_ms = 0;
   return changed;
 }
 
-void schedule_reminder_reorder(AppState& state, const std::uint64_t now_ms) {
+void schedule_reminder_reorder(
+    AppState& state,
+    const std::uint64_t now_ms,
+    const char* source) {
   const std::uint64_t base_ms = now_ms > 0 ? now_ms : state.last_tick_ms;
   state.home.pending_reorder = true;
   state.home.reorder_due_ms = base_ms + kReminderReorderDelayMs;
+  ESP_LOGI(
+      kTag,
+      "[link] reorder.schedule source=%s now_ms=%llu due_ms=%llu %s",
+      source != nullptr ? source : "unknown",
+      static_cast<unsigned long long>(base_ms),
+      static_cast<unsigned long long>(state.home.reorder_due_ms),
+      format_home_hide_state(state).c_str());
 }
 
 void remap_index_list(
@@ -444,15 +549,25 @@ void remap_index_list(
   values = std::move(remapped);
 }
 
-void apply_reminder_reorder(AppState& state) {
+void apply_reminder_reorder(
+    AppState& state,
+    const std::uint64_t now_ms) {
   auto& reminders = state.dashboard.reminder_items;
   auto& completed = state.dashboard.reminder_completed;
   ensure_completion_flags(completed, reminders.size());
   const int item_count = static_cast<int>(reminders.size());
+  const std::uint64_t due_ms = state.home.reorder_due_ms;
+  const std::string hide_state_before = format_home_hide_state(state);
 
   if (item_count <= 1) {
     state.home.pending_reorder = false;
     state.home.reorder_due_ms = 0;
+    ESP_LOGI(
+        kTag,
+        "[link] reorder.apply now_ms=%llu due_ms=%llu changed=0 reason=item_count<=1 %s",
+        static_cast<unsigned long long>(now_ms),
+        static_cast<unsigned long long>(due_ms),
+        hide_state_before.c_str());
     return;
   }
 
@@ -492,6 +607,12 @@ void apply_reminder_reorder(AppState& state) {
   if (!changed) {
     state.home.pending_reorder = false;
     state.home.reorder_due_ms = 0;
+    ESP_LOGI(
+        kTag,
+        "[link] reorder.apply now_ms=%llu due_ms=%llu changed=0 reason=already_stable %s",
+        static_cast<unsigned long long>(now_ms),
+        static_cast<unsigned long long>(due_ms),
+        hide_state_before.c_str());
     return;
   }
 
@@ -513,6 +634,13 @@ void apply_reminder_reorder(AppState& state) {
   clamp_home_focus(state);
   state.home.pending_reorder = false;
   state.home.reorder_due_ms = 0;
+  ESP_LOGI(
+      kTag,
+      "[link] reorder.apply now_ms=%llu due_ms=%llu changed=1 before={%s} after={%s}",
+      static_cast<unsigned long long>(now_ms),
+      static_cast<unsigned long long>(due_ms),
+      hide_state_before.c_str(),
+      format_home_hide_state(state).c_str());
 }
 
 void enter_onboarding_start(AppState& state) {
@@ -685,7 +813,7 @@ void handle_tick(AppState& state, const Event& event) {
   if (state.home.pending_reorder &&
       state.home.reorder_due_ms > 0 &&
       event.now_ms >= state.home.reorder_due_ms) {
-    apply_reminder_reorder(state);
+    apply_reminder_reorder(state, event.now_ms);
   }
 
   if (state.screen == Screen::Landing) {
@@ -702,9 +830,17 @@ void handle_tick(AppState& state, const Event& event) {
   }
 
   if (state.screen == Screen::Home &&
-      home_hide_ready(state, event.now_ms) &&
-      promote_pending_reminder_hide(state)) {
-    clamp_home_focus(state);
+      home_hide_ready(state, event.now_ms)) {
+    const std::string hide_state_before = format_home_hide_state(state);
+    if (promote_pending_reminder_hide(state)) {
+      ESP_LOGI(
+          kTag,
+          "[link] hide.promote now_ms=%llu before={%s} after={%s}",
+          static_cast<unsigned long long>(event.now_ms),
+          hide_state_before.c_str(),
+          format_home_hide_state(state).c_str());
+      clamp_home_focus(state);
+    }
   }
 
   if (!state.settings.notice.empty() &&
@@ -891,8 +1027,20 @@ void handle_click(AppState& state, const Event& event) {
             state.dashboard.inventory_items.size());
         if (target.item_index >= 0 &&
             target.item_index < static_cast<int>(state.dashboard.inventory_completed.size())) {
-          state.dashboard.inventory_completed[static_cast<std::size_t>(target.item_index)] =
-              !state.dashboard.inventory_completed[static_cast<std::size_t>(target.item_index)];
+          const std::size_t index = static_cast<std::size_t>(target.item_index);
+          const bool next_completed = !state.dashboard.inventory_completed[index];
+          state.dashboard.inventory_completed[index] = next_completed;
+          if (next_completed) {
+            mark_pending_inventory_hide(state, target.item_index, event.now_ms);
+          } else {
+            remove_inventory_visibility_tracking(state, target.item_index, true);
+          }
+          ESP_LOGI(
+              kTag,
+              "[link] toggle source=home.inventory index=%d completed=%d %s",
+              target.item_index,
+              next_completed ? 1 : 0,
+              format_home_hide_state(state).c_str());
         }
         return;
       case HomeFocusTargetKind::ReminderItem:
@@ -909,7 +1057,13 @@ void handle_click(AppState& state, const Event& event) {
           } else {
             remove_reminder_visibility_tracking(state, target.item_index, true);
           }
-          schedule_reminder_reorder(state, event.now_ms);
+          schedule_reminder_reorder(state, event.now_ms, "home");
+          ESP_LOGI(
+              kTag,
+              "[link] toggle source=home.reminder index=%d completed=%d %s",
+              target.item_index,
+              state.dashboard.reminder_completed[index] ? 1 : 0,
+              format_home_hide_state(state).c_str());
         }
         return;
     }
@@ -997,8 +1151,20 @@ void handle_click(AppState& state, const Event& event) {
           state.dashboard.inventory_completed,
           state.dashboard.inventory_items.size());
       const int index = state.inventory.focused_index;
-      state.dashboard.inventory_completed[static_cast<std::size_t>(index)] =
+      const bool next_completed =
           !state.dashboard.inventory_completed[static_cast<std::size_t>(index)];
+      state.dashboard.inventory_completed[static_cast<std::size_t>(index)] = next_completed;
+      if (next_completed) {
+        mark_pending_inventory_hide(state, index, event.now_ms);
+      } else {
+        remove_inventory_visibility_tracking(state, index, true);
+      }
+      ESP_LOGI(
+          kTag,
+          "[link] toggle source=list.inventory index=%d completed=%d %s",
+          index,
+          next_completed ? 1 : 0,
+          format_home_hide_state(state).c_str());
       return;
     }
 
@@ -1013,10 +1179,18 @@ void handle_click(AppState& state, const Event& event) {
     const std::size_t index = static_cast<std::size_t>(reminder_index);
     const bool next_completed = !state.dashboard.reminder_completed[index];
     state.dashboard.reminder_completed[index] = next_completed;
-    if (!next_completed) {
+    if (next_completed) {
+      mark_pending_reminder_hide(state, reminder_index, event.now_ms);
+    } else {
       remove_reminder_visibility_tracking(state, reminder_index, true);
     }
-    schedule_reminder_reorder(state, event.now_ms);
+    schedule_reminder_reorder(state, event.now_ms, "list");
+    ESP_LOGI(
+        kTag,
+        "[link] toggle source=list.reminder index=%d completed=%d %s",
+        reminder_index,
+        next_completed ? 1 : 0,
+        format_home_hide_state(state).c_str());
     return;
   }
 

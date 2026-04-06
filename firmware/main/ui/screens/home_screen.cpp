@@ -121,7 +121,8 @@ struct HomeMenuOverlayLayout {
   bool compact{false};
 };
 
-int visible_inventory_count(const app::DashboardSummary& dashboard);
+std::vector<int> visible_inventory_indices(const app::AppState& state);
+int visible_inventory_count(const app::AppState& state);
 std::vector<int> visible_reminder_indices(const app::AppState& state);
 int visible_reminder_count(const app::AppState& state);
 
@@ -372,6 +373,39 @@ platform::DirtyRect home_right_list_rect(const HomeDirtySnapshot& snapshot) {
   const int y1 = std::min(
       metrics.oy1,
       home_shopping_row_y(metrics, inventory_rows) + (reminder_rows * metrics.shop_row_h) + 12);
+  return clip_rect(
+      {metrics.row_x0, y0, metrics.row_x1, std::max(y0 + 8, y1)},
+      metrics.width,
+      metrics.height);
+}
+
+platform::DirtyRect home_inventory_section_rect(const HomeDirtySnapshot& snapshot) {
+  const HomeLandscapeMetrics metrics = home_landscape_metrics();
+  const int inventory_rows = std::max(0, snapshot.inventory_count);
+  const int y0 = std::max(metrics.oy0, metrics.inv_y - 8);
+  const int y1 = std::min(
+      metrics.oy1,
+      metrics.inv_row_y + (inventory_rows * metrics.inv_row_h) + 10);
+  return clip_rect(
+      {metrics.row_x0, y0, metrics.row_x1, std::max(y0 + 8, y1)},
+      metrics.width,
+      metrics.height);
+}
+
+platform::DirtyRect home_reminder_section_rect(const HomeDirtySnapshot& snapshot) {
+  const HomeLandscapeMetrics metrics = home_landscape_metrics();
+  const int inventory_rows = std::max(0, snapshot.inventory_count);
+  const int reminder_rows = std::max(0, snapshot.reminder_count);
+  const int inv_bottom_y = metrics.inv_row_y + (inventory_rows * metrics.inv_row_h);
+  const int shop_rule_y =
+      std::max(metrics.family_rule_y, inv_bottom_y + metrics.shop_rule_y_min_gap);
+  const int title_y = shop_rule_y - metrics.shop_title_h - metrics.shop_line_gap;
+  const int row_start_y =
+      std::max(title_y + metrics.shop_header_gap, shop_rule_y + 10);
+  const int y0 = std::max(metrics.oy0, title_y - 8);
+  const int y1 = std::min(
+      metrics.oy1,
+      row_start_y + (reminder_rows * metrics.shop_row_h) + 12);
   return clip_rect(
       {metrics.row_x0, y0, metrics.row_x1, std::max(y0 + 8, y1)},
       metrics.width,
@@ -958,12 +992,42 @@ void draw_right_panel_focus_row(
   draw_focus_stroke(image, x0 - 6, row_y + 4, x1 + 6, row_y + row_h - 4);
 }
 
-int visible_inventory_count(const app::DashboardSummary& dashboard) {
-  return std::min(static_cast<int>(dashboard.inventory_items.size()), kInventoryVisibleMax);
-}
-
 bool contains_index(const std::vector<int>& values, const int index) {
   return std::find(values.begin(), values.end(), index) != values.end();
+}
+
+std::uint64_t index_list_digest(const std::vector<int>& values) {
+  constexpr std::uint64_t kFnvOffset = 1469598103934665603ULL;
+  constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+  std::uint64_t digest = kFnvOffset;
+  for (const int value : values) {
+    digest ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(value));
+    digest *= kFnvPrime;
+  }
+  digest ^= static_cast<std::uint64_t>(values.size());
+  digest *= kFnvPrime;
+  return digest;
+}
+
+std::vector<int> visible_inventory_indices(const app::AppState& state) {
+  const app::DashboardSummary& dashboard = state.dashboard;
+  std::vector<int> indices{};
+  const int total = static_cast<int>(dashboard.inventory_items.size());
+  indices.reserve(std::min(total, kInventoryVisibleMax));
+  for (int i = 0; i < total; ++i) {
+    if (contains_index(state.home.hidden_inventory_indices, i)) {
+      continue;
+    }
+    indices.push_back(i);
+    if (static_cast<int>(indices.size()) >= kInventoryVisibleMax) {
+      break;
+    }
+  }
+  return indices;
+}
+
+int visible_inventory_count(const app::AppState& state) {
+  return static_cast<int>(visible_inventory_indices(state).size());
 }
 
 std::vector<int> visible_reminder_indices(const app::AppState& state) {
@@ -999,11 +1063,9 @@ int normalized_memo_index(const app::AppState& state) {
   if (total <= 0) {
     return -1;
   }
-  int index = state.memo.index;
+  int index = state.memo.index % total;
   if (index < 0) {
-    index = total - 1;
-  } else if (index >= total) {
-    index = 0;
+    index += total;
   }
   return index;
 }
@@ -1096,14 +1158,14 @@ int home_focus_inventory_index(const app::AppState& state) {
     return -1;
   }
   const int index = state.home.focused_index - 2;
-  return index < visible_inventory_count(state.dashboard) ? index : -1;
+  return index < visible_inventory_count(state) ? index : -1;
 }
 
 int home_focus_reminder_index(const app::AppState& state) {
   if (!state.home.show_focus) {
     return -1;
   }
-  const int base = 2 + visible_inventory_count(state.dashboard);
+  const int base = 2 + visible_inventory_count(state);
   const int index = state.home.focused_index - base;
   return (index >= 0 && index < visible_reminder_count(state)) ? index : -1;
 }
@@ -1118,7 +1180,8 @@ void draw_inventory_section(
   const BitmapFont& title_font = platform::panel_font_assets::kFontInterBold13;
   constexpr int title_spacing = 2;
   draw_text_with_font_spaced(image, x0, title_y, "INVENTORY", title_font, title_spacing);
-  const int visible_count = visible_inventory_count(dashboard);
+  const std::vector<int> inventory_indices = visible_inventory_indices(state);
+  const int visible_count = static_cast<int>(inventory_indices.size());
   const int open_count = open_item_count(
       static_cast<int>(dashboard.inventory_items.size()),
       dashboard.inventory_completed);
@@ -1140,17 +1203,20 @@ void draw_inventory_section(
   const HomeDirtySnapshot snapshot = capture_home_dirty_snapshot(state);
   for (int i = 0; i < visible_count; ++i) {
     const int row_y = title_y + 34 + i * row_h;
+    const int item_index = inventory_indices[static_cast<std::size_t>(i)];
     const bool completed =
-        i < static_cast<int>(dashboard.inventory_completed.size()) &&
-        dashboard.inventory_completed[static_cast<std::size_t>(i)];
+        item_index >= 0 &&
+        item_index < static_cast<int>(dashboard.inventory_completed.size()) &&
+        dashboard.inventory_completed[static_cast<std::size_t>(item_index)];
     std::string badge = "STOCKED";
     if (completed) {
       badge = "OUT";
     }
-    if (i < static_cast<int>(dashboard.inventory_badges.size()) &&
-        !dashboard.inventory_badges[i].empty() &&
+    if (item_index >= 0 &&
+        item_index < static_cast<int>(dashboard.inventory_badges.size()) &&
+        !dashboard.inventory_badges[static_cast<std::size_t>(item_index)].empty() &&
         !completed) {
-      badge = uppercase_copy(dashboard.inventory_badges[i]);
+      badge = uppercase_copy(dashboard.inventory_badges[static_cast<std::size_t>(item_index)]);
     }
     badge = truncate_text_px(badge, 1, 84);
     const BitmapFont& badge_font = platform::panel_font_assets::kFontJetBold13;
@@ -1159,7 +1225,7 @@ void draw_inventory_section(
     const int title_max_w =
         std::max(86, (badge_right_x - badge_width - 14) - item_text_x);
     const std::string title =
-        truncate_text_px(dashboard.inventory_items[i], 2, title_max_w);
+        truncate_text_px(dashboard.inventory_items[static_cast<std::size_t>(item_index)], 2, title_max_w);
 
     if (focused_row == i) {
       const FocusBox box = home_focus_row_box(snapshot, state.home.focused_index);
@@ -1240,7 +1306,7 @@ void draw_reminders_section(
     const app::AppState& state,
     const HomeLandscapeMetrics& metrics) {
   const app::DashboardSummary& dashboard = state.dashboard;
-  const int inventory_rows = visible_inventory_count(dashboard);
+  const int inventory_rows = visible_inventory_count(state);
   const int inv_bottom_y = metrics.inv_row_y + (inventory_rows * metrics.inv_row_h);
   const int shop_rule_y =
       std::max(metrics.family_rule_y, inv_bottom_y + metrics.shop_rule_y_min_gap);
@@ -1395,7 +1461,7 @@ void draw_family_board(
         image,
         x1,
         bottom_y - 18,
-        uppercase_copy(view.memo_posted),
+        view.memo_posted,
         meta_font);
   }
 }
@@ -1735,8 +1801,16 @@ HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
   snapshot.menu_focused_index = normalized_menu_focus_index(state.menu.focused_index);
   snapshot.clock_minute_bucket = state.home.clock_minute_bucket;
   snapshot.widget_mode = state.home.widget_mode;
-  snapshot.inventory_count = visible_inventory_count(state.dashboard);
+  snapshot.inventory_count = visible_inventory_count(state);
   snapshot.reminder_count = visible_reminder_count(state);
+  snapshot.hidden_inventory_digest =
+      index_list_digest(state.home.hidden_inventory_indices);
+  snapshot.hidden_inventory_count =
+      static_cast<int>(state.home.hidden_inventory_indices.size());
+  snapshot.hidden_reminder_digest =
+      index_list_digest(state.home.hidden_reminder_indices);
+  snapshot.hidden_reminder_count =
+      static_cast<int>(state.home.hidden_reminder_indices.size());
   snapshot.weather_condition = state.dashboard.weather_condition;
   snapshot.weather_temperature_c = state.dashboard.weather_temperature_c;
   snapshot.weather_humidity_percent = state.dashboard.weather_humidity_percent;
@@ -1745,13 +1819,17 @@ HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
   snapshot.family_memo_text = family_view.memo_text;
   snapshot.family_memo_author = family_view.memo_author;
   snapshot.family_memo_posted = family_view.memo_posted;
-  const int count = std::min(
-      snapshot.inventory_count,
+  const std::vector<int> inventory_indices = visible_inventory_indices(state);
+  const int inventory_count = std::min(
+      static_cast<int>(inventory_indices.size()),
       static_cast<int>(snapshot.inventory_completed.size()));
-  for (int i = 0; i < count; ++i) {
+  for (int i = 0; i < inventory_count; ++i) {
+    const int item_index = inventory_indices[static_cast<std::size_t>(i)];
+    snapshot.visible_inventory_ids[static_cast<std::size_t>(i)] = item_index;
     snapshot.inventory_completed[static_cast<std::size_t>(i)] =
-        i < static_cast<int>(state.dashboard.inventory_completed.size()) &&
-        state.dashboard.inventory_completed[static_cast<std::size_t>(i)];
+        item_index >= 0 &&
+        item_index < static_cast<int>(state.dashboard.inventory_completed.size()) &&
+        state.dashboard.inventory_completed[static_cast<std::size_t>(item_index)];
   }
 
   const std::vector<int> reminder_indices = visible_reminder_indices(state);
@@ -1848,30 +1926,68 @@ HomeDirtyPlan home_dirty_plan(
     add_reason("home.weather_update");
   }
 
+  const bool inventory_ids_changed =
+      previous.visible_inventory_ids != current.visible_inventory_ids;
   const bool reminder_ids_changed =
       previous.visible_reminder_ids != current.visible_reminder_ids;
-  const bool reminder_rows_changed =
-      previous.reminder_completed != current.reminder_completed ||
+  const bool inventory_rows_changed =
       previous.inventory_completed != current.inventory_completed;
+  const bool reminder_rows_changed =
+      previous.reminder_completed != current.reminder_completed;
   const bool section_count_changed =
       previous.inventory_count != current.inventory_count ||
       previous.reminder_count != current.reminder_count;
-  if (previous.inventory_completed != current.inventory_completed ||
-      previous.reminder_completed != current.reminder_completed ||
+  const bool hidden_inventory_changed =
+      previous.hidden_inventory_count != current.hidden_inventory_count ||
+      previous.hidden_inventory_digest != current.hidden_inventory_digest;
+  const bool hidden_reminder_changed =
+      previous.hidden_reminder_count != current.hidden_reminder_count ||
+      previous.hidden_reminder_digest != current.hidden_reminder_digest;
+  const bool hidden_changed = hidden_inventory_changed || hidden_reminder_changed;
+  const bool reminder_changed =
+      inventory_ids_changed ||
+      inventory_rows_changed ||
+      reminder_rows_changed ||
       reminder_ids_changed ||
-      section_count_changed) {
-    std::size_t rect_count_before = plan.rects.size();
-    if (!reminder_ids_changed && !section_count_changed && reminder_rows_changed) {
+      section_count_changed ||
+      hidden_changed;
+  if (reminder_changed) {
+    const bool should_compact =
+        section_count_changed ||
+        hidden_changed;
+    const bool should_reorder =
+        reminder_ids_changed &&
+        !should_compact;
+
+    if (should_compact) {
+      append_rect_if_valid(plan.rects, home_right_list_rect(current));
+      add_reason("home.reminder_compact");
+    } else if (should_reorder) {
+      bool section_rect_added = false;
+      if (inventory_rows_changed ||
+          inventory_ids_changed ||
+          previous.inventory_count != current.inventory_count) {
+        append_rect_if_valid(plan.rects, home_inventory_section_rect(current));
+        section_rect_added = true;
+      }
+      if (reminder_rows_changed ||
+          reminder_ids_changed ||
+          previous.reminder_count != current.reminder_count) {
+        append_rect_if_valid(plan.rects, home_reminder_section_rect(current));
+        section_rect_added = true;
+      }
+      if (!section_rect_added) {
+        append_rect_if_valid(plan.rects, home_right_list_rect(current));
+      }
+      add_reason("home.reminder_reorder");
+    } else {
+      std::size_t rect_count_before = plan.rects.size();
       append_rect_if_valid(plan.rects, home_focus_row_rect(previous, previous.focused_index));
       append_rect_if_valid(plan.rects, home_focus_row_rect(current, current.focused_index));
-    }
-    const bool row_rect_added = plan.rects.size() > rect_count_before;
-    if (!row_rect_added || reminder_ids_changed || section_count_changed) {
-      append_rect_if_valid(plan.rects, home_right_list_rect(current));
-    }
-    if (reminder_ids_changed || section_count_changed) {
-      add_reason("home.reminder_compact");
-    } else {
+      const bool row_rect_added = plan.rects.size() > rect_count_before;
+      if (!row_rect_added) {
+        append_rect_if_valid(plan.rects, home_right_list_rect(current));
+      }
       add_reason("home.reminder_row_update");
     }
   }

@@ -21,8 +21,13 @@ struct HomeDirtySnapshot {
   int inventory_count{0};
   int reminder_count{0};
   std::array<bool, 3> inventory_completed{};
+  std::array<int, 3> visible_inventory_ids{{-1, -1, -1}};
   std::array<bool, 5> reminder_completed{};
   std::array<int, 5> visible_reminder_ids{{-1, -1, -1, -1, -1}};
+  std::uint64_t hidden_inventory_digest{0};
+  int hidden_inventory_count{0};
+  std::uint64_t hidden_reminder_digest{0};
+  int hidden_reminder_count{0};
   std::string weather_condition{};
   int weather_temperature_c{0};
   int weather_humidity_percent{0};
