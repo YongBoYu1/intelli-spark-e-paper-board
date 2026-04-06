@@ -1311,7 +1311,7 @@ void draw_family_board(
     const app::AppState& state) {
   const BitmapFont& label_font = platform::panel_font_assets::kFontJetExtraBold16;
   const BitmapFont& family_name_font = platform::panel_font_assets::kFontJetBold15;
-  const BitmapFont& quote_font = platform::panel_font_assets::kFontInterMedium18;
+  const BitmapFont& quote_font = platform::panel_font_assets::kFontPlayfairBold28;
   const BitmapFont& meta_font = platform::panel_font_assets::kFontJetBold13;
   const FamilyBoardView view = resolve_family_board_view(state);
 

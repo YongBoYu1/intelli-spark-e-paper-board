@@ -191,6 +191,9 @@ const BitmapFont& pick_time_font(
     const int max_width,
     const int max_height) {
   static constexpr const BitmapFont* kCandidates[] = {
+      &platform::panel_font_assets::kFontJetExtraBold109,
+      &platform::panel_font_assets::kFontJetExtraBold87,
+      &platform::panel_font_assets::kFontJetExtraBold66,
       &platform::panel_font_assets::kFontInterBlack109,
       &platform::panel_font_assets::kFontInterBlack87,
       &platform::panel_font_assets::kFontInterBlack84,
@@ -235,10 +238,10 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
 
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
-  const BitmapFont& title_font = platform::panel_font_assets::kFontInterBlack29;
+  const BitmapFont& title_font = platform::panel_font_assets::kFontInterBold29;
   const BitmapFont& hint_font = platform::panel_font_assets::kFontJetBold13;
-  const BitmapFont& status_font = platform::panel_font_assets::kFontInterBold18;
-  const BitmapFont& button_font = platform::panel_font_assets::kFontInterBold18;
+  const BitmapFont& status_font = platform::panel_font_assets::kFontInterBold22;
+  const BitmapFont& button_font = platform::panel_font_assets::kFontInterBold20;
 
   const std::string hint_raw = "ROTATE=SELECT  |  CLICK=ENTER  |  HOLD=HOME";
   const std::string hint_text = truncate_text_with_font(

@@ -31,6 +31,9 @@ FONT_SPECS = (
     FontSpec("kFontInterBlack66", "inter_black_66", "Inter-Black.ttf", 66),
     FontSpec("kFontInterBlack36", "inter_black_36", "Inter-Black.ttf", 36),
     FontSpec("kFontInterBlack29", "inter_black_29", "Inter-Black.ttf", 29),
+    FontSpec("kFontInterBold29", "inter_bold_29", "Inter-Bold.ttf", 29),
+    FontSpec("kFontInterBold22", "inter_bold_22", "Inter-Bold.ttf", 22),
+    FontSpec("kFontInterBold20", "inter_bold_20", "Inter-Bold.ttf", 20),
     FontSpec("kFontInterMedium18", "inter_medium_18", "Inter-Medium.ttf", 18),
     FontSpec("kFontInterMedium13", "inter_medium_13", "Inter-Medium.ttf", 13),
     FontSpec("kFontInterBold18", "inter_bold_18", "Inter-Bold.ttf", 18),
@@ -38,9 +41,13 @@ FONT_SPECS = (
     FontSpec("kFontInterBold13", "inter_bold_13", "Inter-Bold.ttf", 13),
     FontSpec("kFontInterSemiBold15", "inter_semibold_15", "Inter-SemiBold.ttf", 15),
     FontSpec("kFontInterSemiBold13", "inter_semibold_13", "Inter-SemiBold.ttf", 13),
+    FontSpec("kFontJetExtraBold109", "jet_extrabold_109", "JetBrainsMono-ExtraBold.ttf", 109),
+    FontSpec("kFontJetExtraBold87", "jet_extrabold_87", "JetBrainsMono-ExtraBold.ttf", 87),
+    FontSpec("kFontJetExtraBold66", "jet_extrabold_66", "JetBrainsMono-ExtraBold.ttf", 66),
     FontSpec("kFontJetExtraBold16", "jet_extrabold_16", "JetBrainsMono-ExtraBold.ttf", 16),
     FontSpec("kFontJetBold15", "jet_bold_15", "JetBrainsMono-Bold.ttf", 15),
     FontSpec("kFontJetBold13", "jet_bold_13", "JetBrainsMono-Bold.ttf", 13),
+    FontSpec("kFontPlayfairBold28", "playfair_bold_28", "PlayfairDisplay-Bold.ttf", 28),
 )
 
 
