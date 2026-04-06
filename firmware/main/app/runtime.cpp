@@ -118,6 +118,20 @@ bool has_reason(
   return false;
 }
 
+bool has_reason_prefix(
+    const std::vector<std::string>& reasons,
+    const char* prefix) {
+  if (prefix == nullptr || prefix[0] == '\0') {
+    return false;
+  }
+  for (const auto& item : reasons) {
+    if (item.rfind(prefix, 0) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void reorder_home_transition_rects_for_partial(
     const std::vector<std::string>& reasons,
     std::vector<platform::DirtyRect>& rects) {
@@ -358,11 +372,14 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             platform::kPanelWidth,
             platform::kPanelHeight);
     const bool partial_enabled = state_.settings.partial_refresh_enabled;
+    const bool calendar_force_partial =
+        pending_screen_ == Screen::Calendar &&
+        has_reason_prefix(pending_render_.dirty_reasons, "calendar.");
     const bool allow_partial =
         !screen_changed &&
         partial_enabled &&
         !aligned_rects.empty() &&
-        gate_area_ratio <= effective_mode_limit;
+        (gate_area_ratio <= effective_mode_limit || calendar_force_partial);
     if (allow_partial) {
       const bool reinforce_home_reminder =
           pending_screen_ == Screen::Home &&
@@ -383,7 +400,8 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
         ESP_LOGI(
             kTag,
             "[refresh] R1_PARTIAL_RECTS screen=%s count=%u rects=%s gate_ratio=%.3f limit=%.3f "
-            "partial_count=%d/%d budget=%s passes=%d reinforce_home_reminder=%s mode=%s dirty=%s",
+            "partial_count=%d/%d budget=%s passes=%d reinforce_home_reminder=%s "
+            "force_calendar_partial=%s mode=%s dirty=%s",
             screen_name(pending_screen_),
             static_cast<unsigned>(aligned_rects.size()),
             format_rects(aligned_rects).c_str(),
@@ -394,6 +412,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             state_.settings.partial_refresh_budget_enabled ? "on" : "off",
             partial_passes,
             reinforce_home_reminder ? "on" : "off",
+            calendar_force_partial ? "on" : "off",
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());
       }
