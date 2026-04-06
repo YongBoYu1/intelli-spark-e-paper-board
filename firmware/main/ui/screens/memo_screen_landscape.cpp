@@ -37,11 +37,9 @@ void clamp_memo_state(const app::AppState& state, int& selected_index) {
     selected_index = 0;
     return;
   }
-  selected_index = state.memo.index;
+  selected_index = state.memo.index % total;
   if (selected_index < 0) {
-    selected_index = 0;
-  } else if (selected_index >= total) {
-    selected_index = total - 1;
+    selected_index += total;
   }
 }
 
