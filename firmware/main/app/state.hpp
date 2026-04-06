@@ -38,6 +38,19 @@ struct MemoItem {
   bool is_new{false};
 };
 
+struct ReminderMetaItem {
+  std::string rid{};
+  std::string right{};
+  std::string date_iso{};
+};
+
+struct CalendarEventItem {
+  std::string eid{};
+  std::string title{};
+  std::string when{};
+  std::string date_iso{};
+};
+
 struct DashboardSummary {
   std::string location{"Kitchen"};
   int battery_percent{84};
@@ -50,6 +63,8 @@ struct DashboardSummary {
   std::vector<bool> inventory_completed{};
   std::vector<std::string> reminder_items{};
   std::vector<bool> reminder_completed{};
+  std::vector<ReminderMetaItem> reminder_meta{};
+  std::vector<CalendarEventItem> calendar_events{};
   std::string family_memo_text{};
   std::string family_memo_author{};
   std::string family_memo_posted{};
@@ -103,6 +118,9 @@ struct MemoState {
 };
 
 struct CalendarState {
+  int offset_days{0};
+  std::string mode{"date"};
+  int selected_index{0};
   int day_of_month{26};
   std::string month_label{"March 2026"};
 };

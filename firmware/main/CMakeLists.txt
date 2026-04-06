@@ -6,6 +6,7 @@ idf_component_register(
         "app/state.cpp"
         "app/reducer.cpp"
         "app/defaults.cpp"
+        "app/calendar_runtime.cpp"
         "ui/draw.cpp"
         "ui/primitives.cpp"
         "ui/render_app.cpp"

@@ -1,45 +1,27 @@
 #include "ui/screens/calendar_screen.hpp"
 
+#include "app/calendar_runtime.hpp"
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <ctime>
 #include <string>
 #include <vector>
 
 namespace fridge_ink::ui {
-
 namespace {
 
-struct ParsedMonthLabel {
-  std::string month_name;
-  int month{3};
-  int year{2026};
+struct AgendaRow {
+  bool reminder{false};
+  bool completed{false};
+  int reminder_index{-1};
+  std::string when{};
+  std::string title{};
 };
 
-struct AgendaItem {
-  const char* time;
-  const char* title;
-  const char* detail;
-};
-
-constexpr std::array<const char*, 12> kMonthNames = {
-    "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
-    "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"};
-
-constexpr std::array<const char*, 7> kWeekdayNames = {
-    "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-
-constexpr std::array<AgendaItem, 3> kAgendaItems = {{
-    {"08:30", "PLANNING WINDOW", "Review the selected day and set priorities."},
-    {"12:00", "MIDDAY CHECK-IN", "Confirm notes, calls, and follow-ups."},
-    {"17:30", "WRAP-UP", "Close the loop and prep the next day."},
-}};
-
-std::string to_upper_copy(const std::string& text) {
+std::string upper_copy(const std::string& text) {
   std::string out;
   out.reserve(text.size());
   for (const char ch : text) {
@@ -48,203 +30,204 @@ std::string to_upper_copy(const std::string& text) {
   return out;
 }
 
-std::string normalize_token(const std::string& token) {
+std::string normalized_mode(const std::string& raw) {
   std::string out;
-  out.reserve(token.size());
-  for (const char ch : token) {
-    const unsigned char c = static_cast<unsigned char>(ch);
-    if (std::isalpha(c)) {
-      out.push_back(static_cast<char>(std::toupper(c)));
-    } else if (std::isdigit(c)) {
-      out.push_back(static_cast<char>(c));
-    }
+  out.reserve(raw.size());
+  for (const char ch : raw) {
+    out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
   }
-  return out;
+  return out == "agenda" ? "agenda" : "date";
 }
 
-int parse_positive_int(const std::string& token, const int fallback) {
-  if (token.empty()) {
-    return fallback;
-  }
-  int value = 0;
-  for (const char ch : token) {
-    const unsigned char c = static_cast<unsigned char>(ch);
-    if (!std::isdigit(c)) {
-      return fallback;
-    }
-    value = (value * 10) + (ch - '0');
-  }
-  return value;
+int days_in_month(int year, int month) {
+  return app::calendar_runtime::days_in_month(year, month);
 }
 
-int month_from_token(const std::string& token) {
-  const std::string normalized = normalize_token(token);
-  for (std::size_t i = 0; i < kMonthNames.size(); ++i) {
-    const std::string full = kMonthNames[i];
-    const std::string short_name = full.substr(0, 3);
-    if (normalized == full || normalized == short_name) {
-      return static_cast<int>(i) + 1;
-    }
-  }
-  return 0;
+int start_weekday_sunday0(int year, int month) {
+  return app::calendar_runtime::weekday_sunday0(app::calendar_runtime::DateValue{year, month, 1});
 }
 
-std::vector<std::string> split_words(const std::string& text) {
-  std::vector<std::string> words;
-  std::string current;
-  for (const char ch : text) {
-    const unsigned char c = static_cast<unsigned char>(ch);
-    if (std::isspace(c)) {
-      if (!current.empty()) {
-        words.push_back(current);
-        current.clear();
-      }
+std::vector<AgendaRow> build_agenda_rows(
+    const app::AppState& state,
+    const app::calendar_runtime::AgendaSelection& selection) {
+  std::vector<AgendaRow> rows;
+  rows.reserve(selection.event_indices.size() + selection.reminder_indices.size());
+
+  for (const int event_index : selection.event_indices) {
+    if (event_index < 0 || event_index >= static_cast<int>(state.dashboard.calendar_events.size())) {
       continue;
     }
-    current.push_back(ch);
-  }
-  if (!current.empty()) {
-    words.push_back(current);
-  }
-  return words;
-}
-
-ParsedMonthLabel parse_month_label(const std::string& label) {
-  ParsedMonthLabel parsed;
-  const std::string trimmed = trim_copy(label);
-  if (trimmed.empty()) {
-    return parsed;
+    const auto& event = state.dashboard.calendar_events[static_cast<std::size_t>(event_index)];
+    rows.push_back(AgendaRow{
+        false,
+        false,
+        -1,
+        event.when.empty() ? "EVENT" : event.when,
+        event.title,
+    });
   }
 
-  const std::vector<std::string> words = split_words(trimmed);
-  if (!words.empty()) {
-    const int month = month_from_token(words[0]);
-    if (month > 0) {
-      parsed.month = month;
-      parsed.month_name = kMonthNames[static_cast<std::size_t>(month - 1)];
-    } else {
-      parsed.month_name = to_upper_copy(words[0]);
+  for (const int reminder_index : selection.reminder_indices) {
+    if (reminder_index < 0 || reminder_index >= static_cast<int>(state.dashboard.reminder_items.size())) {
+      continue;
     }
+    bool completed = false;
+    if (reminder_index < static_cast<int>(state.dashboard.reminder_completed.size())) {
+      completed = state.dashboard.reminder_completed[static_cast<std::size_t>(reminder_index)];
+    }
+
+    std::string right_text;
+    if (reminder_index < static_cast<int>(state.dashboard.reminder_meta.size())) {
+      right_text = state.dashboard.reminder_meta[static_cast<std::size_t>(reminder_index)].right;
+    }
+    if (right_text.empty()) {
+      right_text = "REMINDER";
+    }
+
+    rows.push_back(AgendaRow{
+        true,
+        completed,
+        reminder_index,
+        right_text,
+        state.dashboard.reminder_items[static_cast<std::size_t>(reminder_index)],
+    });
   }
-  if (words.size() >= 2) {
-    parsed.year = parse_positive_int(words[1], parsed.year);
-  }
 
-  return parsed;
-}
-
-bool is_leap_year(const int year) {
-  return ((year % 4) == 0 && (year % 100) != 0) || ((year % 400) == 0);
-}
-
-int days_in_month(const int year, const int month) {
-  static constexpr std::array<int, 12> kDays = {
-      31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  if (month == 2 && is_leap_year(year)) {
-    return 29;
-  }
-  return kDays[static_cast<std::size_t>(std::clamp(month, 1, 12) - 1)];
-}
-
-int weekday_index(const int year, const int month, const int day) {
-  std::tm tm{};
-  tm.tm_year = year - 1900;
-  tm.tm_mon = month - 1;
-  tm.tm_mday = day;
-  tm.tm_isdst = -1;
-  if (std::mktime(&tm) == static_cast<std::time_t>(-1)) {
-    return 0;
-  }
-  return tm.tm_wday;
-}
-
-const char* weekday_name(const int index) {
-  const int clamped = std::clamp(index, 0, 6);
-  return kWeekdayNames[static_cast<std::size_t>(clamped)];
-}
-
-void draw_chip(std::vector<uint8_t>& image,
-               const int x0, const int y0, const int x1, const int y1,
-               const std::string& text) {
-  fill_black_rect(image, x0, y0, x1, y1);
-  draw_text_centered_inverted(image, x0 + 2, x1 - 2, y0 + 10, text, 1, 32);
+  return rows;
 }
 
 void draw_month_grid(
     std::vector<uint8_t>& image,
-    const int x0, const int y0, const int x1, const int y1,
-    const int year, const int month, const int selected_day) {
-  const int start_offset = weekday_index(year, month, 1);
-  const int month_days = days_in_month(year, month);
-  const int grid_w = x1 - x0;
-  const int grid_h = y1 - y0;
-  const int cell_w = std::max(34, grid_w / 7);
-  const int cell_h = std::max(34, grid_h / 6);
-  const int grid_draw_w = cell_w * 7;
-  const int grid_draw_h = cell_h * 6;
-  const int grid_x = x0 + ((grid_w - grid_draw_w) / 2);
-  const int grid_y = y0 + ((grid_h - grid_draw_h) / 2);
-  const int number_scale = cell_h >= 40 ? 2 : 1;
+    const app::AppState& state,
+    const app::calendar_runtime::DateValue& base_date,
+    const app::calendar_runtime::DateValue& cursor,
+    int x0,
+    int y0,
+    int x1,
+    int y1) {
+  static constexpr std::array<const char*, 7> kWeek = {
+      "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+
+  const int month_days = days_in_month(cursor.year, cursor.month);
+  const int offset = start_weekday_sunday0(cursor.year, cursor.month);
+  const int grid_w = std::max(1, x1 - x0);
+  const int grid_h = std::max(1, y1 - y0);
+  const int cell_w = std::max(28, grid_w / 7);
+  const int cell_h = std::max(28, grid_h / 6);
+  const int draw_w = cell_w * 7;
+  const int draw_h = cell_h * 6;
+  const int gx = x0 + (grid_w - draw_w) / 2;
+  const int gy = y0 + (grid_h - draw_h) / 2;
 
   for (int i = 0; i < 7; ++i) {
-    draw_text_centered(image,
-        grid_x + (i * cell_w), grid_x + ((i + 1) * cell_w),
-        y0 - 22,
-        kWeekdayNames[static_cast<std::size_t>(i)],
-        1, 3);
+    const int wx0 = gx + i * cell_w;
+    const int wx1 = wx0 + cell_w - 2;
+    draw_text_centered(image, wx0, wx1, y0 - 20, kWeek[static_cast<std::size_t>(i)], 1, 3);
   }
 
   for (int day = 1; day <= month_days; ++day) {
-    const int index = start_offset + (day - 1);
+    const int index = offset + (day - 1);
     const int row = index / 7;
     const int col = index % 7;
-    const int cx0 = grid_x + (col * cell_w);
-    const int cy0 = grid_y + (row * cell_h);
+    const int cx0 = gx + col * cell_w;
+    const int cy0 = gy + row * cell_h;
     const int cx1 = cx0 + cell_w - 4;
     const int cy1 = cy0 + cell_h - 4;
-    const bool is_selected = day == selected_day;
+    const bool selected = day == cursor.day;
 
     draw_outline_rect(image, cx0, cy0, cx1, cy1, 1);
-    if (is_selected) {
+
+    const auto date = app::calendar_runtime::DateValue{cursor.year, cursor.month, day};
+    const auto day_items = app::calendar_runtime::agenda_selection_for_date(state, date, base_date);
+    const bool has_items =
+        !day_items.event_indices.empty() || !day_items.reminder_indices.empty();
+
+    if (selected) {
       fill_black_rect(image, cx0 + 1, cy0 + 1, cx1 - 1, cy1 - 1);
       draw_text_centered_inverted(
-          image, cx0, cx1, cy0 + ((cy1 - cy0) / 2) - 8,
-          std::to_string(day), number_scale, 2);
+          image,
+          cx0,
+          cx1,
+          cy0 + ((cy1 - cy0) / 2) - 7,
+          std::to_string(day),
+          1,
+          2);
     } else {
       draw_text_centered(
-          image, cx0, cx1, cy0 + ((cy1 - cy0) / 2) - 8,
-          std::to_string(day), number_scale, 2);
+          image,
+          cx0,
+          cx1,
+          cy0 + ((cy1 - cy0) / 2) - 7,
+          std::to_string(day),
+          1,
+          2);
+    }
+
+    if (has_items) {
+      const int dot_x0 = cx0 + (cell_w / 2) - 2;
+      const int dot_y0 = cy1 - 6;
+      fill_black_rect(image, dot_x0, dot_y0, dot_x0 + 4, dot_y0 + 3);
+    }
+
+    if (day == base_date.day && cursor.month == base_date.month && cursor.year == base_date.year) {
+      draw_outline_rect(image, cx0 + 3, cy0 + 3, cx0 + 10, cy0 + 10, 1);
     }
   }
 }
 
-void draw_agenda_card(
+void draw_agenda_rows(
     std::vector<uint8_t>& image,
-    const int x0, const int y0, const int x1, const int y1,
-    const AgendaItem& item,
-    const bool selected) {
-  draw_outline_rect(image, x0, y0, x1, y1, 1);
-  if (selected) {
-    fill_black_rect(image, x0 + 1, y0 + 1, x1 - 1, y1 - 1);
-  }
+    int x0,
+    int y0,
+    int x1,
+    int y1,
+    const std::vector<AgendaRow>& rows,
+    int selected_index,
+    bool agenda_mode) {
+  const int available_h = std::max(1, y1 - y0);
+  const int gap = 8;
+  const int max_rows = std::max(1, (available_h + gap) / 72);
+  const int visible = std::min(max_rows, static_cast<int>(rows.size()));
+  const int row_h = std::max(60, (available_h - gap * std::max(0, visible - 1)) / std::max(1, visible));
 
-  const int text_x = x0 + 12;
-  const int text_w = x1 - text_x - 14;
-  const std::string time_text = truncate_text_px(item.time, 1, std::max(32, text_w / 3));
-  const std::string title_text = truncate_text_px(item.title, 2, std::max(64, text_w - 48));
-  const std::string detail_text = truncate_text_px(item.detail, 1, std::max(48, text_w));
+  int yy = y0;
+  for (int i = 0; i < visible; ++i) {
+    const auto& row = rows[static_cast<std::size_t>(i)];
+    const bool selected = agenda_mode && i == selected_index;
 
-  const int time_w = text_width_px(time_text, 1);
-  const int title_y = y0 + 14;
-  const int detail_y = y0 + 44;
-  if (selected) {
-    draw_text_line_inverted(image, text_x, title_y, title_text, 2, 24);
-    draw_text_line_inverted(image, x1 - 12 - time_w, y0 + 12, time_text, 1, 8);
-    draw_text_wrapped_inverted(image, text_x, detail_y, text_w, detail_text, 1, 2);
-  } else {
-    draw_text_line(image, text_x, title_y, title_text, 2, 24);
-    draw_text_line(image, x1 - 12 - time_w, y0 + 12, time_text, 1, 8);
-    draw_text_wrapped(image, text_x, detail_y, text_w, detail_text, 1, 2);
+    draw_outline_rect(image, x0, yy, x1, yy + row_h, 1);
+    if (selected) {
+      fill_black_rect(image, x0 + 1, yy + 1, x1 - 1, yy + row_h - 1);
+    }
+
+    const std::string type_prefix = row.reminder ? (row.completed ? "[x] " : "[ ] ") : "[E] ";
+    const std::string title = truncate_text_px(type_prefix + upper_copy(row.title), 1, std::max(80, x1 - x0 - 24));
+    const std::string when_text = truncate_text_px(upper_copy(row.when), 1, std::max(40, (x1 - x0) / 3));
+
+    const int when_w = text_width_px(when_text, 1);
+    if (selected) {
+      draw_text_line_inverted(image, x0 + 10, yy + 10, title, 1, 42);
+      draw_text_line_inverted(image, x1 - 10 - when_w, yy + 10, when_text, 1, 20);
+      draw_text_line_inverted(
+          image,
+          x0 + 10,
+          yy + 34,
+          row.reminder ? "CLICK TO TOGGLE" : "EVENT (READ ONLY)",
+          1,
+          28);
+    } else {
+      draw_text_line(image, x0 + 10, yy + 10, title, 1, 42);
+      draw_text_line(image, x1 - 10 - when_w, yy + 10, when_text, 1, 20);
+      draw_text_line(
+          image,
+          x0 + 10,
+          yy + 34,
+          row.reminder ? "REMINDER" : "EVENT",
+          1,
+          16);
+    }
+
+    yy += row_h + gap;
   }
 }
 
@@ -255,81 +238,93 @@ std::vector<uint8_t> render_calendar_landscape_bitmap(const app::AppState& state
   using platform::kPanelHeight;
   using platform::kPanelWidth;
 
-  const ParsedMonthLabel month = parse_month_label(state.calendar.month_label);
-  const int selected_day = std::clamp(
-      state.calendar.day_of_month, 1, days_in_month(month.year, month.month));
-  const int selected_weekday = weekday_index(month.year, month.month, selected_day);
-  const std::string month_header = month.month_name.empty() ? "CALENDAR" : month.month_name;
-  const std::string year_text = std::to_string(month.year);
-  const std::string selected_label = std::string("DAY ") + std::to_string(selected_day);
-  const std::string weekday_text = weekday_name(selected_weekday);
-  const std::string month_line = to_upper_copy(state.calendar.month_label);
-
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
-  draw_outline_rect(image, 12, 12, kPanelWidth - 12, kPanelHeight - 12, 3);
 
+  const auto base_date = app::calendar_runtime::today_local_date(state);
+  const auto cursor = app::calendar_runtime::cursor_date(state, base_date);
+  const std::string mode = normalized_mode(state.calendar.mode);
+  const bool agenda_mode = mode == "agenda";
+
+  const auto selection = app::calendar_runtime::agenda_selection_for_cursor(state, base_date);
+  const auto rows = build_agenda_rows(state, selection);
+  const int selected_index = std::max(
+      0,
+      std::min(state.calendar.selected_index, std::max(0, static_cast<int>(rows.size()) - 1)));
+
+  const int frame_pad = 12;
   const int content_x0 = 24;
   const int content_x1 = kPanelWidth - 24;
   const int content_y0 = 24;
   const int content_y1 = kPanelHeight - 24;
-  const int split_x = content_x0 + std::clamp((content_x1 - content_x0) * 44 / 100, 316, 356);
-
-  draw_outline_rect(image, split_x, content_y0, split_x + 2, content_y1, 1);
-
+  const int right_x0 = std::max(1, std::min(kPanelWidth - 1, static_cast<int>(kPanelWidth * 0.45)));
   const int left_x0 = content_x0;
-  const int left_x1 = split_x - 12;
-  draw_text_line(image, left_x0, 36, month_header, 3, 16);
-  draw_text_line(image, left_x0 + 2, 78, year_text, 1, 8);
-  draw_text_line(image, left_x0 + 2, 100, "MONTH VIEW", 1, 16);
-
-  const int left_grid_top = 138;
-  const int left_grid_bottom = kPanelHeight - 74;
-  draw_month_grid(image, left_x0, left_grid_top, left_x1, left_grid_bottom,
-      month.year, month.month, selected_day);
-
-  const int left_chip_w = std::max(88, text_width_px(selected_label, 1) + 20);
-  draw_chip(
-      image,
-      left_x0,
-      kPanelHeight - 60,
-      left_x0 + left_chip_w,
-      kPanelHeight - 36,
-      selected_label);
-
-  const int right_x0 = split_x + 18;
+  const int left_x1 = right_x0 - 14;
   const int right_x1 = content_x1;
-  const int right_w = right_x1 - right_x0;
 
-  draw_text_line(image, right_x0, 36, "AGENDA", 3, 12);
-  draw_text_line(image, right_x0, 78, weekday_text, 1, 8);
-  draw_text_line(image, right_x0, 102, month_line, 1, 24);
+  draw_outline_rect(image, frame_pad, frame_pad, kPanelWidth - frame_pad, kPanelHeight - frame_pad, 2);
+  fill_black_rect(image, right_x0, content_y0, right_x0 + 2, content_y1);
 
-  const int chip_w = std::max(92, text_width_px(selected_label, 1) + 18);
-  draw_chip(
+  const std::string month_name = app::calendar_runtime::month_name_upper(cursor.month);
+  draw_text_line(image, left_x0, 34, month_name, 3, 18);
+  draw_text_line(image, left_x0 + 2, 74, std::to_string(cursor.year), 1, 8);
+  draw_text_line(image, left_x0 + 2, 96, "MONTH VIEW", 1, 16);
+
+  draw_month_grid(
       image,
-      right_x1 - chip_w,
-      34,
-      right_x1,
-      58,
-      selected_label);
+      state,
+      base_date,
+      cursor,
+      left_x0,
+      134,
+      left_x1,
+      kPanelHeight - 52);
 
-  fill_black_rect(image, right_x0, 118, right_x1, 120);
+  const std::string day_chip = "DAY " + std::to_string(cursor.day);
+  const int chip_w = std::max(84, text_width_px(day_chip, 1) + 18);
+  fill_black_rect(image, left_x0, kPanelHeight - 42, left_x0 + chip_w, kPanelHeight - 18);
+  draw_text_centered_inverted(image, left_x0 + 2, left_x0 + chip_w - 2, kPanelHeight - 34, day_chip, 1, 20);
 
-  const int card_top = 136;
-  const int card_gap = 10;
-  const int footer_y = kPanelHeight - 34;
-  const int card_bottom = footer_y - 8;
-  const int available_h = card_bottom - card_top;
-  const int card_h = std::max(84, (available_h - (card_gap * 2)) / 3);
-  int card_y = card_top;
-  for (std::size_t i = 0; i < kAgendaItems.size(); ++i) {
-    const bool selected = i == 0;
-    draw_agenda_card(image, right_x0, card_y, right_x1, card_y + card_h, kAgendaItems[i], selected);
-    card_y += card_h + card_gap;
+  draw_text_line(image, right_x0 + 14, 34, "AGENDA", 3, 12);
+  const int weekday = app::calendar_runtime::weekday_sunday0(cursor);
+  const std::string weekday_label = app::calendar_runtime::weekday_name_upper(weekday);
+  draw_text_line(image, right_x0 + 14, 74, weekday_label, 1, 12);
+
+  const std::string date_label =
+      std::string(app::calendar_runtime::month_name_upper(cursor.month)) + " " + std::to_string(cursor.day);
+  draw_text_line(image, right_x0 + 14, 96, date_label, 1, 22);
+
+  const std::string mode_text = agenda_mode ? "MODE: AGENDA" : "MODE: DATE";
+  const int mode_w = text_width_px(mode_text, 1);
+  draw_text_line(image, right_x1 - mode_w - 2, 34, mode_text, 1, 20);
+  fill_black_rect(image, right_x0 + 14, 114, right_x1, 116);
+
+  if (rows.empty()) {
+    draw_text_line(image, right_x0 + 14, 154, "NO EVENTS", 2, 14);
+    draw_text_wrapped(
+        image,
+        right_x0 + 14,
+        186,
+        std::max(80, right_x1 - right_x0 - 20),
+        "Voice can add reminders and memos",
+        1,
+        3);
+  } else {
+    draw_agenda_rows(
+        image,
+        right_x0 + 14,
+        126,
+        right_x1,
+        kPanelHeight - 46,
+        rows,
+        selected_index,
+        agenda_mode);
   }
 
-  std::string footer = "ROTATE=DATE  |  CLICK=AGENDA  |  HOLD=HOME";
-  footer = truncate_text_px(footer, 1, std::max(80, right_w));
+  std::string footer = "Rotate=Date | Click=Agenda | Hold=Home";
+  if (agenda_mode) {
+    footer = "Rotate=Item | Click=Toggle | Hold=Home";
+  }
+  footer = truncate_text_px(footer, 1, std::max(80, content_x1 - content_x0));
   draw_text_centered(image, content_x0, content_x1, kPanelHeight - 18, footer, 1, 64);
 
   return image;

@@ -1,128 +1,67 @@
 #include "app/defaults.hpp"
 
 #include "platform/clock.hpp"
-#include "esp_app_desc.h"
 
-#include <algorithm>
-#include <cstdlib>
 #include <ctime>
-#include <string>
 
 namespace fridge_ink::app {
 namespace {
 
 constexpr const char* kDefaultTimezone = "America/Toronto";
-const bool kAllowBuildTimestampFallback = true;
 
-int month_index_from_abbrev(const char* month) {
+int month_from_abbrev(const char* text3) {
   static constexpr const char* kMonths[] = {
       "Jan", "Feb", "Mar", "Apr", "May", "Jun",
       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
   for (int i = 0; i < 12; ++i) {
-    if (month[0] == kMonths[i][0] &&
-        month[1] == kMonths[i][1] &&
-        month[2] == kMonths[i][2]) {
+    if (text3[0] == kMonths[i][0] &&
+        text3[1] == kMonths[i][1] &&
+        text3[2] == kMonths[i][2]) {
       return i;
     }
   }
   return 0;
 }
 
-int parse_two_digits(const char tens, const char ones) {
-  if (tens < '0' || tens > '9' || ones < '0' || ones > '9') {
+int parse_two_digits(const char a, const char b) {
+  if (a < '0' || a > '9' || b < '0' || b > '9') {
     return -1;
   }
-  return ((tens - '0') * 10) + (ones - '0');
+  return (a - '0') * 10 + (b - '0');
 }
 
-void apply_posix_timezone(const char* zone_name) {
-  static std::string active_tz{};
-  std::string posix = "UTC0";
-  const std::string zone = zone_name == nullptr ? "" : std::string(zone_name);
-  if (zone == "America/Toronto" || zone == "America/New_York") {
-    posix = "EST5EDT,M3.2.0/2,M11.1.0/2";
-  } else if (zone == "America/Los_Angeles") {
-    posix = "PST8PDT,M3.2.0/2,M11.1.0/2";
-  }
-  if (active_tz == posix) {
-    return;
-  }
-  setenv("TZ", posix.c_str(), 1);
-  tzset();
-  active_tz = posix;
-}
-
-std::uint64_t minute_bucket_from_build_stamp(
-    const char* date_stamp,
-    const char* time_stamp,
-    const char* zone_name) {
-  if (date_stamp == nullptr || time_stamp == nullptr) {
-    return 0;
-  }
-  apply_posix_timezone(zone_name);
-
+std::uint64_t build_minute_bucket_fallback() {
   std::tm tm{};
-  tm.tm_mon = month_index_from_abbrev(date_stamp);
-  const int day_ones = (date_stamp[5] >= '0' && date_stamp[5] <= '9')
-                           ? (date_stamp[5] - '0')
-                           : -1;
-  const int day_tens = (date_stamp[4] == ' ')
-                           ? 0
-                           : ((date_stamp[4] >= '0' && date_stamp[4] <= '9')
-                                  ? (date_stamp[4] - '0')
-                                  : -1);
-  if (day_tens < 0 || day_ones < 0) {
+  tm.tm_mon = month_from_abbrev(__DATE__);
+  const int day_tens = (__DATE__[4] == ' ') ? 0 : (__DATE__[4] - '0');
+  const int day_ones = __DATE__[5] - '0';
+  if (day_tens < 0 || day_tens > 9 || day_ones < 0 || day_ones > 9) {
     return 0;
   }
   tm.tm_mday = day_tens * 10 + day_ones;
 
-  const int year_thousands = (date_stamp[7] >= '0' && date_stamp[7] <= '9')
-                                 ? (date_stamp[7] - '0')
-                                 : -1;
-  const int year_hundreds = (date_stamp[8] >= '0' && date_stamp[8] <= '9')
-                                ? (date_stamp[8] - '0')
-                                : -1;
-  const int year_tens = (date_stamp[9] >= '0' && date_stamp[9] <= '9')
-                            ? (date_stamp[9] - '0')
-                            : -1;
-  const int year_ones = (date_stamp[10] >= '0' && date_stamp[10] <= '9')
-                            ? (date_stamp[10] - '0')
-                            : -1;
-  if (year_thousands < 0 || year_hundreds < 0 || year_tens < 0 || year_ones < 0) {
+  const int year = (__DATE__[7] - '0') * 1000 +
+                   (__DATE__[8] - '0') * 100 +
+                   (__DATE__[9] - '0') * 10 +
+                   (__DATE__[10] - '0');
+  if (year < 1970 || year > 9999) {
     return 0;
   }
-  tm.tm_year =
-      (year_thousands * 1000 + year_hundreds * 100 + year_tens * 10 + year_ones) - 1900;
+  tm.tm_year = year - 1900;
 
-  tm.tm_hour = parse_two_digits(time_stamp[0], time_stamp[1]);
-  tm.tm_min = parse_two_digits(time_stamp[3], time_stamp[4]);
-  tm.tm_sec = parse_two_digits(time_stamp[6], time_stamp[7]);
+  tm.tm_hour = parse_two_digits(__TIME__[0], __TIME__[1]);
+  tm.tm_min = parse_two_digits(__TIME__[3], __TIME__[4]);
+  tm.tm_sec = parse_two_digits(__TIME__[6], __TIME__[7]);
   if (tm.tm_hour < 0 || tm.tm_min < 0 || tm.tm_sec < 0) {
     return 0;
   }
   tm.tm_isdst = -1;
 
-  const std::time_t compiled_at = std::mktime(&tm);
-  if (compiled_at <= 0) {
+  const std::time_t compiled_local = std::mktime(&tm);
+  if (compiled_local <= 0) {
     return 0;
   }
-  return static_cast<std::uint64_t>(compiled_at / 60);
-}
-
-std::uint64_t app_build_minute_bucket() {
-  const std::uint64_t from_translation_unit = minute_bucket_from_build_stamp(
-      __DATE__,
-      __TIME__,
-      kDefaultTimezone);
-  const esp_app_desc_t* app_desc = esp_app_get_description();
-  if (app_desc == nullptr) {
-    return from_translation_unit;
-  }
-  const std::uint64_t from_app_desc = minute_bucket_from_build_stamp(
-      app_desc->date,
-      app_desc->time,
-      kDefaultTimezone);
-  return std::max(from_translation_unit, from_app_desc);
+  return static_cast<std::uint64_t>(compiled_local / 60);
 }
 
 std::uint64_t current_minute_bucket(bool* is_real) {
@@ -136,10 +75,7 @@ std::uint64_t current_minute_bucket(bool* is_real) {
   if (is_real != nullptr) {
     *is_real = false;
   }
-  if (kAllowBuildTimestampFallback) {
-    return app_build_minute_bucket();
-  }
-  return 0;
+  return build_minute_bucket_fallback();
 }
 
 }  // namespace
@@ -188,6 +124,20 @@ ProductDefaults make_factory_defaults() {
       false,
       false,
       false,
+  };
+  defaults.dashboard.reminder_meta = {
+      {"r_doctor", "Tomorrow 09:00", "2026-04-07"},
+      {"r_yogurt", "Friday", ""},
+      {"r_yoga", "Mon 07:00", ""},
+      {"r_milk", "Apr 09", ""},
+      {"r_trash", "Tue", ""},
+      {"r_rent", "May 01", "2026-05-01"},
+      {"r_mom", "Tonight", ""},
+  };
+  defaults.dashboard.calendar_events = {
+      {"e_team", "Team standup", "09:30", "2026-04-06"},
+      {"e_clinic", "Dental clinic", "14:00", "2026-04-07"},
+      {"e_school", "Parent meeting", "18:30", "2026-04-09"},
   };
   defaults.dashboard.memos = {
       {
@@ -240,7 +190,7 @@ AppState make_state_from_defaults(
   state.onboarding.prefs_focus_index = 0;
   state.onboarding.pair_token = "A1B2-C3D4";
   state.onboarding.wifi_ssid = "";
-  state.onboarding.timezone = "America/Toronto";
+  state.onboarding.timezone = kDefaultTimezone;
   state.onboarding.auto_sync_enabled = true;
   state.onboarding.status = "";
   state.home.focused_index = 0;
@@ -265,6 +215,9 @@ AppState make_state_from_defaults(
   state.timer.last_tick_ms = now_ms;
   state.memo.index = 0;
   state.memo.expanded = false;
+  state.calendar.offset_days = 0;
+  state.calendar.mode = "date";
+  state.calendar.selected_index = 0;
   state.calendar.day_of_month = 26;
   state.calendar.month_label = "March 2026";
   state.weather.temperature_c = 4;

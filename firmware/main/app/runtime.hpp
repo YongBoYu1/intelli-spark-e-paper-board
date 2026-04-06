@@ -53,6 +53,16 @@ class Runtime {
   bool committed_timer_alert_blink_on_{true};
   int committed_timer_last_completed_seconds_{0};
   WidgetMode committed_timer_widget_mode_{WidgetMode::Clock};
+  bool committed_calendar_snapshot_valid_{false};
+  bool committed_calendar_landscape_{true};
+  int committed_calendar_cursor_year_{1970};
+  int committed_calendar_cursor_month_{1};
+  int committed_calendar_cursor_day_{1};
+  int committed_calendar_offset_days_{0};
+  std::string committed_calendar_mode_{"date"};
+  int committed_calendar_selected_index_{0};
+  std::uint64_t committed_calendar_events_digest_{0};
+  std::uint64_t committed_calendar_reminders_digest_{0};
 
   bool pending_render_valid_{false};
   ui::RenderOutput pending_render_{};

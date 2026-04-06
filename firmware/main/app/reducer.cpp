@@ -1,9 +1,11 @@
 #include "app/reducer.hpp"
+#include "app/calendar_runtime.hpp"
 #include "platform/clock.hpp"
 #include "esp_log.h"
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <ctime>
 #include <sstream>
 #include <string>
@@ -697,6 +699,23 @@ void enter_home(AppState& state) {
   state.onboarding.status = "Setup complete.";
 }
 
+std::string normalized_calendar_mode(const std::string& raw_mode) {
+  std::string out;
+  out.reserve(raw_mode.size());
+  for (const char ch : raw_mode) {
+    out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+  }
+  return out == "agenda" ? "agenda" : "date";
+}
+
+void open_calendar_from_home(AppState& state) {
+  state.screen = Screen::Calendar;
+  state.calendar.offset_days = 0;
+  state.calendar.mode = "date";
+  state.calendar.selected_index = 0;
+  calendar_runtime::sync_calendar_cursor_fields(state);
+}
+
 void open_menu_target(AppState& state, const std::uint64_t now_ms) {
   state.home.menu_overlay_active = false;
   switch (state.menu.focused_index % kMenuItemCount) {
@@ -723,7 +742,7 @@ void open_menu_target(AppState& state, const std::uint64_t now_ms) {
       state.screen = Screen::Timer;
       return;
     case 3:
-      state.screen = Screen::Calendar;
+      open_calendar_from_home(state);
       return;
     case 4:
       state.screen = Screen::Settings;
@@ -905,6 +924,30 @@ void handle_rotate(AppState& state, const Event& event) {
     return;
   }
 
+  if (state.screen == Screen::Calendar) {
+    const int delta = event.rotate_delta >= 0 ? 1 : -1;
+    state.calendar.mode = normalized_calendar_mode(state.calendar.mode);
+    if (state.calendar.mode == "agenda") {
+      const auto base_date = calendar_runtime::today_local_date(state);
+      const auto selection = calendar_runtime::agenda_selection_for_cursor(state, base_date);
+      const int agenda_count =
+          static_cast<int>(selection.event_indices.size() + selection.reminder_indices.size());
+      if (agenda_count <= 0) {
+        state.calendar.selected_index = 0;
+      } else {
+        state.calendar.selected_index = std::max(
+            0,
+            std::min(state.calendar.selected_index + delta, agenda_count - 1));
+      }
+      return;
+    }
+
+    state.calendar.offset_days += delta;
+    state.calendar.selected_index = 0;
+    calendar_runtime::sync_calendar_cursor_fields(state);
+    return;
+  }
+
   if (state.screen == Screen::Settings) {
     const int delta = event.rotate_delta >= 0 ? 1 : -1;
     state.settings.focused_index += delta;
@@ -1015,7 +1058,7 @@ void handle_click(AppState& state, const Event& event) {
           return;
         }
         state.home.menu_overlay_active = false;
-        state.screen = Screen::Calendar;
+        open_calendar_from_home(state);
         return;
       case HomeFocusTargetKind::Weather:
         state.home.menu_overlay_active = false;
@@ -1117,6 +1160,68 @@ void handle_click(AppState& state, const Event& event) {
 
   if (state.screen == Screen::Settings) {
     handle_settings_click(state, event);
+    return;
+  }
+
+  if (state.screen == Screen::Calendar) {
+    state.calendar.mode = normalized_calendar_mode(state.calendar.mode);
+    const auto base_date = calendar_runtime::today_local_date(state);
+    const auto selection = calendar_runtime::agenda_selection_for_cursor(state, base_date);
+    const int event_count = static_cast<int>(selection.event_indices.size());
+    const int reminder_count = static_cast<int>(selection.reminder_indices.size());
+    const int agenda_count = event_count + reminder_count;
+
+    if (state.calendar.mode != "agenda") {
+      state.calendar.mode = "agenda";
+      state.calendar.selected_index = 0;
+      return;
+    }
+
+    if (agenda_count <= 0) {
+      state.calendar.mode = "date";
+      state.calendar.selected_index = 0;
+      return;
+    }
+
+    state.calendar.selected_index = clamp_int(state.calendar.selected_index, 0, agenda_count - 1);
+    if (state.calendar.selected_index < event_count) {
+      // Calendar events are read-only in agenda mode.
+      return;
+    }
+
+    const int reminder_slot = state.calendar.selected_index - event_count;
+    if (reminder_slot < 0 || reminder_slot >= reminder_count) {
+      state.calendar.mode = "date";
+      state.calendar.selected_index = 0;
+      return;
+    }
+
+    const int reminder_index = selection.reminder_indices[static_cast<std::size_t>(reminder_slot)];
+    ensure_completion_flags(
+        state.dashboard.reminder_completed,
+        state.dashboard.reminder_items.size());
+    if (reminder_index < 0 ||
+        reminder_index >= static_cast<int>(state.dashboard.reminder_completed.size())) {
+      state.calendar.mode = "date";
+      state.calendar.selected_index = 0;
+      return;
+    }
+
+    const std::size_t idx = static_cast<std::size_t>(reminder_index);
+    const bool next_completed = !state.dashboard.reminder_completed[idx];
+    state.dashboard.reminder_completed[idx] = next_completed;
+    if (next_completed) {
+      mark_pending_reminder_hide(state, reminder_index, event.now_ms);
+    } else {
+      remove_reminder_visibility_tracking(state, reminder_index, true);
+    }
+    schedule_reminder_reorder(state, event.now_ms, "calendar");
+    ESP_LOGI(
+        kTag,
+        "[link] toggle source=calendar.reminder index=%d completed=%d %s",
+        reminder_index,
+        next_completed ? 1 : 0,
+        format_home_hide_state(state).c_str());
     return;
   }
 

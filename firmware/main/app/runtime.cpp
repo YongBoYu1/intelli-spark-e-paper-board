@@ -1,5 +1,6 @@
 #include "app/runtime.hpp"
 
+#include "app/calendar_runtime.hpp"
 #include "app/defaults.hpp"
 #include "app/reducer.hpp"
 #include "platform/clock.hpp"
@@ -11,6 +12,7 @@
 #include "esp_log.h"
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <unordered_set>
 #include <utility>
@@ -27,6 +29,41 @@ constexpr double kHomeFamilyAreaLimitOverride = 0.30;
 constexpr double kHomeMenuOverlayAreaLimitOverride = 0.60;
 constexpr double kHomeReminderReorderAreaLimitOverride = 0.30;
 constexpr double kHomeReminderCompactAreaLimitOverride = 0.40;
+
+struct CalendarLandscapeRegions {
+  platform::DirtyRect left_panel{};
+  platform::DirtyRect left_grid{};
+  platform::DirtyRect right_panel{};
+  platform::DirtyRect right_header{};
+  platform::DirtyRect right_agenda{};
+};
+
+bool calendar_uses_landscape_layout(const AppState& state) {
+  const int deg = ((state.settings.rotation_deg % 360) + 360) % 360;
+  return !(deg == 90 || deg == 270);
+}
+
+std::string normalized_calendar_mode(const std::string& raw) {
+  std::string out;
+  out.reserve(raw.size());
+  for (const char ch : raw) {
+    out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+  }
+  return out == "agenda" ? "agenda" : "date";
+}
+
+CalendarLandscapeRegions calendar_landscape_regions() {
+  const int w = platform::kPanelWidth;
+  const int h = platform::kPanelHeight;
+  const int right_x = std::max(1, std::min(w - 1, static_cast<int>(w * 0.45)));
+  return CalendarLandscapeRegions{
+      {0, 0, right_x, h},
+      {24, 120, std::max(25, right_x - 20), std::max(121, h - 46)},
+      {right_x, 0, w, h},
+      {right_x, 0, w, 90},
+      {right_x, 90, w, h},
+  };
+}
 
 void add_reason_once(
     std::vector<std::string>& reasons,
@@ -159,18 +196,24 @@ void reorder_home_transition_rects_for_partial(
 Runtime::Runtime(platform::Display& display) : display_(display) {}
 
 void Runtime::boot() {
+  const std::uint64_t now_ms = platform::monotonic_ms();
   const auto defaults = make_factory_defaults();
-  state_ = make_state_from_defaults(defaults, platform::monotonic_ms());
+  state_ = make_state_from_defaults(defaults, now_ms);
+  platform::apply_timezone(state_.onboarding.timezone);
   display_.init();
   stage_render();
-  flush_pending(platform::monotonic_ms());
+  flush_pending(now_ms);
 }
 
 void Runtime::dispatch(const Event& event) {
-  reduce(state_, event);
+  Event effective = event;
+  if (effective.now_ms == 0) {
+    effective.now_ms = platform::monotonic_ms();
+  }
+  reduce(state_, effective);
+  platform::apply_timezone(state_.onboarding.timezone);
   stage_render();
-  const std::uint64_t now_ms = event.now_ms > 0 ? event.now_ms : platform::monotonic_ms();
-  flush_pending(now_ms);
+  flush_pending(effective.now_ms);
 }
 
 void Runtime::flush_deferred(const std::uint64_t now_ms) {
@@ -208,6 +251,52 @@ void Runtime::stage_render() {
         add_rect_once(render_output.dirty_rects, timer_controls_rect());
       }
       add_reason_once(render_output.dirty_reasons, "timer.time_or_state");
+    }
+  }
+
+  if (state_.screen == Screen::Calendar &&
+      calendar_uses_landscape_layout(state_)) {
+    const CalendarLandscapeRegions regions = calendar_landscape_regions();
+    if (!committed_frame_valid_ || committed_screen_ != Screen::Calendar) {
+      add_rect_once(render_output.dirty_rects, regions.left_panel);
+      add_rect_once(render_output.dirty_rects, regions.right_panel);
+    } else if (committed_calendar_snapshot_valid_ && committed_calendar_landscape_) {
+      const auto base_date = calendar_runtime::today_local_date(state_);
+      const auto cursor = calendar_runtime::cursor_date(state_, base_date);
+      const int curr_offset = state_.calendar.offset_days;
+      const std::string curr_mode = normalized_calendar_mode(state_.calendar.mode);
+      const int curr_selected = std::max(0, state_.calendar.selected_index);
+      const std::uint64_t curr_calendar_digest = calendar_runtime::calendar_events_digest(state_);
+      const std::uint64_t curr_reminders_digest = calendar_runtime::reminders_calendar_digest(state_);
+
+      const bool offset_changed = committed_calendar_offset_days_ != curr_offset;
+      const bool mode_changed = committed_calendar_mode_ != curr_mode;
+      const bool data_changed =
+          committed_calendar_events_digest_ != curr_calendar_digest ||
+          committed_calendar_reminders_digest_ != curr_reminders_digest;
+
+      if (offset_changed || mode_changed || data_changed) {
+        if (offset_changed) {
+          if (committed_calendar_cursor_year_ != cursor.year ||
+              committed_calendar_cursor_month_ != cursor.month) {
+            add_rect_once(render_output.dirty_rects, regions.left_panel);
+          } else {
+            add_rect_once(render_output.dirty_rects, regions.left_grid);
+          }
+          add_rect_once(render_output.dirty_rects, regions.right_header);
+          add_rect_once(render_output.dirty_rects, regions.right_agenda);
+        } else if (mode_changed) {
+          add_rect_once(render_output.dirty_rects, regions.right_header);
+          add_rect_once(render_output.dirty_rects, regions.right_agenda);
+        } else {
+          add_rect_once(render_output.dirty_rects, regions.left_grid);
+          add_rect_once(render_output.dirty_rects, regions.right_agenda);
+        }
+        add_reason_once(render_output.dirty_reasons, "calendar.date_or_mode_or_data");
+      } else if (committed_calendar_selected_index_ != curr_selected) {
+        add_rect_once(render_output.dirty_rects, regions.right_agenda);
+        add_reason_once(render_output.dirty_reasons, "calendar.agenda_focus_move");
+      }
     }
   }
 
@@ -524,6 +613,23 @@ void Runtime::mark_committed_snapshot() {
     committed_timer_widget_mode_ = state_.home.widget_mode;
   } else {
     committed_timer_snapshot_valid_ = false;
+  }
+
+  if (state_.screen == Screen::Calendar) {
+    committed_calendar_snapshot_valid_ = true;
+    committed_calendar_landscape_ = calendar_uses_landscape_layout(state_);
+    const auto base_date = calendar_runtime::today_local_date(state_);
+    const auto cursor = calendar_runtime::cursor_date(state_, base_date);
+    committed_calendar_cursor_year_ = cursor.year;
+    committed_calendar_cursor_month_ = cursor.month;
+    committed_calendar_cursor_day_ = cursor.day;
+    committed_calendar_offset_days_ = state_.calendar.offset_days;
+    committed_calendar_mode_ = normalized_calendar_mode(state_.calendar.mode);
+    committed_calendar_selected_index_ = std::max(0, state_.calendar.selected_index);
+    committed_calendar_events_digest_ = calendar_runtime::calendar_events_digest(state_);
+    committed_calendar_reminders_digest_ = calendar_runtime::reminders_calendar_digest(state_);
+  } else {
+    committed_calendar_snapshot_valid_ = false;
   }
 }
 
