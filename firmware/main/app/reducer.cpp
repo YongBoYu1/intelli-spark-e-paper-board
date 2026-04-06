@@ -22,6 +22,8 @@ constexpr std::uint64_t kReminderReorderDelayMs = 2000;
 constexpr int kTimerStepSeconds = 60;
 constexpr int kTimerDefaultSeconds = 5 * 60;
 constexpr int kTimerMaxSeconds = 180 * 60;
+constexpr std::uint64_t kTimerAlertShowMs = 6000;
+constexpr std::uint64_t kTimerAlertBlinkPeriodMs = 450;
 constexpr std::size_t kOnboardingStepCount = 4;
 constexpr std::array<const char*, 4> kTimezoneChoices = {
     "America/Toronto",
@@ -162,6 +164,52 @@ int cycle_full_refresh_every(const int current) {
     return 30;
   }
   return 10;
+}
+
+void clear_timer_alert(AppState& state) {
+  state.timer.alert_active = false;
+  state.timer.alert_blink_on = true;
+  state.timer.alert_started_ms = 0;
+  state.timer.alert_until_ms = 0;
+}
+
+void start_timer_alert(
+    AppState& state,
+    const std::uint64_t now_ms,
+    const int completed_seconds) {
+  const int done_seconds = std::max(1, completed_seconds);
+  state.timer.last_completed_seconds = done_seconds;
+  state.timer.alert_active = true;
+  state.timer.alert_blink_on = true;
+  state.timer.alert_started_ms = now_ms;
+  state.timer.alert_until_ms = now_ms + kTimerAlertShowMs;
+}
+
+void tick_timer_alert(AppState& state, const std::uint64_t now_ms) {
+  if (!state.timer.alert_active) {
+    return;
+  }
+  if (state.timer.alert_until_ms == 0 || now_ms >= state.timer.alert_until_ms) {
+    clear_timer_alert(state);
+    return;
+  }
+  const std::uint64_t started_ms =
+      state.timer.alert_started_ms > 0 ? state.timer.alert_started_ms : now_ms;
+  const std::uint64_t elapsed_ms = now_ms > started_ms ? (now_ms - started_ms) : 0ULL;
+  const int phase = static_cast<int>(elapsed_ms / kTimerAlertBlinkPeriodMs);
+  state.timer.alert_blink_on = (phase % 2) == 0;
+}
+
+void adjust_timer_seconds(
+    AppState& state,
+    const int delta_seconds) {
+  const int next_seconds =
+      clamp_int(state.timer.seconds_remaining + delta_seconds, 0, kTimerMaxSeconds);
+  state.timer.seconds_remaining = next_seconds;
+  state.timer.target_seconds = next_seconds;
+  if (next_seconds <= 0) {
+    state.timer.running = false;
+  }
 }
 
 void handle_settings_click(AppState& state, const Event& event) {
@@ -535,11 +583,15 @@ void open_menu_target(AppState& state, const std::uint64_t now_ms) {
       return;
     case 2:
       state.home.widget_mode = WidgetMode::Timer;
-      if (state.timer.seconds_remaining <= 0 && !state.timer.running) {
+      if (state.timer.seconds_remaining <= 0 && !state.timer.alert_active) {
         state.timer.seconds_remaining = kTimerDefaultSeconds;
+      }
+      if (state.timer.target_seconds <= 0) {
+        state.timer.target_seconds = state.timer.seconds_remaining;
       }
       state.timer.focused_index = 2;
       state.timer.last_tick_ms = now_ms > 0 ? now_ms : state.last_tick_ms;
+      clear_timer_alert(state);
       state.screen = Screen::Timer;
       return;
     case 3:
@@ -602,25 +654,33 @@ void handle_tick(AppState& state, const Event& event) {
   }
   state.last_tick_ms = event.now_ms;
 
-  if (state.timer.running && state.timer.seconds_remaining > 0) {
+  if (state.home.widget_mode == WidgetMode::Timer &&
+      state.timer.running &&
+      state.timer.seconds_remaining > 0) {
     const std::uint64_t base_ms =
         state.timer.last_tick_ms > 0 ? state.timer.last_tick_ms : event.now_ms;
     if (event.now_ms > base_ms) {
       const std::uint64_t elapsed_ms = event.now_ms - base_ms;
       const int elapsed_seconds = static_cast<int>(elapsed_ms / 1000ULL);
       if (elapsed_seconds > 0) {
+        const int before_seconds = state.timer.seconds_remaining;
         state.timer.seconds_remaining =
             std::max(0, state.timer.seconds_remaining - elapsed_seconds);
         state.timer.last_tick_ms = base_ms + static_cast<std::uint64_t>(elapsed_seconds) * 1000ULL;
         if (state.timer.seconds_remaining <= 0) {
+          const int completed = state.timer.target_seconds > 0
+                                    ? state.timer.target_seconds
+                                    : std::max(1, before_seconds);
           state.timer.running = false;
           state.timer.seconds_remaining = 0;
+          start_timer_alert(state, event.now_ms, completed);
         }
       }
     }
   } else {
     state.timer.last_tick_ms = event.now_ms;
   }
+  tick_timer_alert(state, event.now_ms);
 
   if (state.home.pending_reorder &&
       state.home.reorder_due_ms > 0 &&
@@ -721,13 +781,9 @@ void handle_rotate(AppState& state, const Event& event) {
   }
 
   if (state.screen == Screen::Timer) {
+    clear_timer_alert(state);
     const int delta = event.rotate_delta >= 0 ? 1 : -1;
-    state.timer.focused_index += delta;
-    if (state.timer.focused_index < 0) {
-      state.timer.focused_index = 3;
-    } else if (state.timer.focused_index > 3) {
-      state.timer.focused_index = 0;
-    }
+    state.timer.focused_index = (state.timer.focused_index + delta + 4) % 4;
     return;
   }
 
@@ -866,6 +922,7 @@ void handle_click(AppState& state, const Event& event) {
   }
 
   if (state.screen == Screen::Timer) {
+    clear_timer_alert(state);
     int focus = state.timer.focused_index;
     if (focus < 0 || focus > 3) {
       focus = 2;
@@ -874,18 +931,11 @@ void handle_click(AppState& state, const Event& event) {
     const std::uint64_t base_ms = event.now_ms > 0 ? event.now_ms : state.last_tick_ms;
     switch (focus) {
       case 0:
-        state.timer.seconds_remaining = std::max(
-            0,
-            state.timer.seconds_remaining - kTimerStepSeconds);
-        if (state.timer.seconds_remaining == 0) {
-          state.timer.running = false;
-        }
+        adjust_timer_seconds(state, -kTimerStepSeconds);
         state.timer.last_tick_ms = base_ms;
         return;
       case 1:
-        state.timer.seconds_remaining = std::min(
-            kTimerMaxSeconds,
-            state.timer.seconds_remaining + kTimerStepSeconds);
+        adjust_timer_seconds(state, kTimerStepSeconds);
         state.timer.last_tick_ms = base_ms;
         return;
       case 2:
@@ -894,6 +944,9 @@ void handle_click(AppState& state, const Event& event) {
         } else {
           if (state.timer.seconds_remaining <= 0) {
             state.timer.seconds_remaining = kTimerDefaultSeconds;
+            state.timer.target_seconds = state.timer.seconds_remaining;
+          } else if (state.timer.target_seconds <= 0) {
+            state.timer.target_seconds = state.timer.seconds_remaining;
           }
           state.timer.running = true;
         }
@@ -902,6 +955,7 @@ void handle_click(AppState& state, const Event& event) {
       case 3:
         state.timer.running = false;
         state.timer.seconds_remaining = 0;
+        state.timer.target_seconds = 0;
         state.timer.last_tick_ms = base_ms;
         return;
     }

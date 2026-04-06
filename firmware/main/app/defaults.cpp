@@ -255,6 +255,12 @@ AppState make_state_from_defaults(
   state.menu.focused_index = 1;
   state.timer.running = false;
   state.timer.seconds_remaining = 0;
+  state.timer.target_seconds = 0;
+  state.timer.alert_active = false;
+  state.timer.alert_blink_on = true;
+  state.timer.alert_started_ms = 0;
+  state.timer.alert_until_ms = 0;
+  state.timer.last_completed_seconds = 0;
   state.timer.focused_index = 2;
   state.timer.last_tick_ms = now_ms;
   state.memo.index = 0;

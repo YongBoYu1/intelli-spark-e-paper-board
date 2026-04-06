@@ -45,6 +45,14 @@ class Runtime {
   Screen committed_screen_{Screen::Landing};
   ui::HomeDirtySnapshot committed_home_snapshot_{};
   bool committed_home_snapshot_valid_{false};
+  bool committed_timer_snapshot_valid_{false};
+  int committed_timer_seconds_{0};
+  bool committed_timer_running_{false};
+  int committed_timer_focused_index_{2};
+  bool committed_timer_alert_active_{false};
+  bool committed_timer_alert_blink_on_{true};
+  int committed_timer_last_completed_seconds_{0};
+  WidgetMode committed_timer_widget_mode_{WidgetMode::Clock};
 
   bool pending_render_valid_{false};
   ui::RenderOutput pending_render_{};

@@ -85,6 +85,12 @@ struct MenuState {
 struct TimerState {
   bool running{false};
   int seconds_remaining{0};
+  int target_seconds{0};
+  bool alert_active{false};
+  bool alert_blink_on{true};
+  std::uint64_t alert_started_ms{0};
+  std::uint64_t alert_until_ms{0};
+  int last_completed_seconds{0};
   int focused_index{2};
   std::uint64_t last_tick_ms{0};
 };

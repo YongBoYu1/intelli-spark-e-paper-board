@@ -26,6 +26,53 @@ constexpr double kDiffFallbackMinRatio = 0.10;
 constexpr double kHomeFamilyAreaLimitOverride = 0.30;
 constexpr double kHomeMenuOverlayAreaLimitOverride = 0.60;
 
+void add_reason_once(
+    std::vector<std::string>& reasons,
+    const char* reason) {
+  if (reason == nullptr) {
+    return;
+  }
+  for (const auto& item : reasons) {
+    if (item == reason) {
+      return;
+    }
+  }
+  reasons.emplace_back(reason);
+}
+
+void add_rect_once(
+    std::vector<platform::DirtyRect>& rects,
+    const platform::DirtyRect rect) {
+  if (rect.x1 <= rect.x0 || rect.y1 <= rect.y0) {
+    return;
+  }
+  for (const auto& item : rects) {
+    if (item.x0 == rect.x0 && item.y0 == rect.y0 &&
+        item.x1 == rect.x1 && item.y1 == rect.y1) {
+      return;
+    }
+  }
+  rects.push_back(rect);
+}
+
+platform::DirtyRect timer_time_status_rect() {
+  return platform::DirtyRect{
+      56,
+      82,
+      std::max(57, platform::kPanelWidth - 56),
+      std::max(83, platform::kPanelHeight - 84),
+  };
+}
+
+platform::DirtyRect timer_controls_rect() {
+  return platform::DirtyRect{
+      24,
+      std::max(0, platform::kPanelHeight - 100),
+      std::max(25, platform::kPanelWidth - 24),
+      platform::kPanelHeight,
+  };
+}
+
 bool should_collapse_to_latest(
     const Screen screen,
     const std::vector<std::string>& reasons) {
@@ -125,6 +172,27 @@ void Runtime::stage_render() {
   ui::RenderOutput render_output = ui::render_app(state_, previous_home_snapshot);
   if (render_output.image.empty()) {
     return;
+  }
+
+  if (state_.screen == Screen::Timer &&
+      committed_screen_ == Screen::Timer &&
+      committed_timer_snapshot_valid_) {
+    if (committed_timer_focused_index_ != state_.timer.focused_index) {
+      add_rect_once(render_output.dirty_rects, timer_controls_rect());
+      add_reason_once(render_output.dirty_reasons, "timer.focus_move");
+    }
+    if (committed_timer_seconds_ != state_.timer.seconds_remaining ||
+        committed_timer_running_ != state_.timer.running ||
+        committed_timer_alert_active_ != state_.timer.alert_active ||
+        committed_timer_alert_blink_on_ != state_.timer.alert_blink_on ||
+        committed_timer_last_completed_seconds_ != state_.timer.last_completed_seconds ||
+        committed_timer_widget_mode_ != state_.home.widget_mode) {
+      add_rect_once(render_output.dirty_rects, timer_time_status_rect());
+      if (committed_timer_running_ != state_.timer.running) {
+        add_rect_once(render_output.dirty_rects, timer_controls_rect());
+      }
+      add_reason_once(render_output.dirty_reasons, "timer.time_or_state");
+    }
   }
 
   if (committed_frame_valid_) {
@@ -346,13 +414,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
 
   committed_frame_ = pending_render_.image;
   committed_frame_valid_ = true;
-  committed_screen_ = pending_screen_;
-  if (pending_screen_ == Screen::Home) {
-    committed_home_snapshot_ = pending_home_snapshot_;
-    committed_home_snapshot_valid_ = true;
-  } else {
-    committed_home_snapshot_valid_ = false;
-  }
+  mark_committed_snapshot();
 
   pending_render_valid_ = false;
   pending_render_ = {};
@@ -417,6 +479,19 @@ void Runtime::mark_committed_snapshot() {
     committed_home_snapshot_valid_ = true;
   } else {
     committed_home_snapshot_valid_ = false;
+  }
+
+  if (state_.screen == Screen::Timer) {
+    committed_timer_snapshot_valid_ = true;
+    committed_timer_seconds_ = state_.timer.seconds_remaining;
+    committed_timer_running_ = state_.timer.running;
+    committed_timer_focused_index_ = state_.timer.focused_index;
+    committed_timer_alert_active_ = state_.timer.alert_active;
+    committed_timer_alert_blink_on_ = state_.timer.alert_blink_on;
+    committed_timer_last_completed_seconds_ = state_.timer.last_completed_seconds;
+    committed_timer_widget_mode_ = state_.home.widget_mode;
+  } else {
+    committed_timer_snapshot_valid_ = false;
   }
 }
 
