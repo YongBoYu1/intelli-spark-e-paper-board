@@ -19,8 +19,9 @@ constexpr int kHomeReminderVisibleMax = 5;
 constexpr std::uint64_t kHomeCompletedHideGraceMs = 15000;
 constexpr std::uint64_t kHomeCompletedHideSettleMs = 600;
 constexpr std::uint64_t kReminderReorderDelayMs = 2000;
-constexpr int kTimerDefaultMinutes = 5;
-constexpr int kTimerMaxMinutes = 180;
+constexpr int kTimerStepSeconds = 60;
+constexpr int kTimerDefaultSeconds = 5 * 60;
+constexpr int kTimerMaxSeconds = 180 * 60;
 constexpr std::size_t kOnboardingStepCount = 4;
 constexpr std::array<const char*, 4> kTimezoneChoices = {
     "America/Toronto",
@@ -534,8 +535,8 @@ void open_menu_target(AppState& state, const std::uint64_t now_ms) {
       return;
     case 2:
       state.home.widget_mode = WidgetMode::Timer;
-      if (state.timer.minutes_remaining <= 0 && !state.timer.running) {
-        state.timer.minutes_remaining = kTimerDefaultMinutes;
+      if (state.timer.seconds_remaining <= 0 && !state.timer.running) {
+        state.timer.seconds_remaining = kTimerDefaultSeconds;
       }
       state.timer.focused_index = 2;
       state.timer.last_tick_ms = now_ms > 0 ? now_ms : state.last_tick_ms;
@@ -601,19 +602,19 @@ void handle_tick(AppState& state, const Event& event) {
   }
   state.last_tick_ms = event.now_ms;
 
-  if (state.timer.running && state.timer.minutes_remaining > 0) {
+  if (state.timer.running && state.timer.seconds_remaining > 0) {
     const std::uint64_t base_ms =
         state.timer.last_tick_ms > 0 ? state.timer.last_tick_ms : event.now_ms;
     if (event.now_ms > base_ms) {
       const std::uint64_t elapsed_ms = event.now_ms - base_ms;
-      const int elapsed_minutes = static_cast<int>(elapsed_ms / 60000ULL);
-      if (elapsed_minutes > 0) {
-        state.timer.minutes_remaining =
-            std::max(0, state.timer.minutes_remaining - elapsed_minutes);
-        state.timer.last_tick_ms = base_ms + static_cast<std::uint64_t>(elapsed_minutes) * 60000ULL;
-        if (state.timer.minutes_remaining <= 0) {
+      const int elapsed_seconds = static_cast<int>(elapsed_ms / 1000ULL);
+      if (elapsed_seconds > 0) {
+        state.timer.seconds_remaining =
+            std::max(0, state.timer.seconds_remaining - elapsed_seconds);
+        state.timer.last_tick_ms = base_ms + static_cast<std::uint64_t>(elapsed_seconds) * 1000ULL;
+        if (state.timer.seconds_remaining <= 0) {
           state.timer.running = false;
-          state.timer.minutes_remaining = 0;
+          state.timer.seconds_remaining = 0;
         }
       }
     }
@@ -816,7 +817,9 @@ void handle_click(AppState& state, const Event& event) {
         return;
       case HomeFocusTargetKind::Clock:
         if (state.home.widget_mode == WidgetMode::Timer) {
+          const std::uint64_t base_ms = event.now_ms > 0 ? event.now_ms : state.last_tick_ms;
           state.timer.running = !state.timer.running;
+          state.timer.last_tick_ms = base_ms;
           return;
         }
         state.home.menu_overlay_active = false;
@@ -871,24 +874,26 @@ void handle_click(AppState& state, const Event& event) {
     const std::uint64_t base_ms = event.now_ms > 0 ? event.now_ms : state.last_tick_ms;
     switch (focus) {
       case 0:
-        state.timer.minutes_remaining = std::max(0, state.timer.minutes_remaining - 1);
-        if (state.timer.minutes_remaining == 0) {
+        state.timer.seconds_remaining = std::max(
+            0,
+            state.timer.seconds_remaining - kTimerStepSeconds);
+        if (state.timer.seconds_remaining == 0) {
           state.timer.running = false;
         }
         state.timer.last_tick_ms = base_ms;
         return;
       case 1:
-        state.timer.minutes_remaining = std::min(
-            kTimerMaxMinutes,
-            state.timer.minutes_remaining + 1);
+        state.timer.seconds_remaining = std::min(
+            kTimerMaxSeconds,
+            state.timer.seconds_remaining + kTimerStepSeconds);
         state.timer.last_tick_ms = base_ms;
         return;
       case 2:
         if (state.timer.running) {
           state.timer.running = false;
         } else {
-          if (state.timer.minutes_remaining <= 0) {
-            state.timer.minutes_remaining = kTimerDefaultMinutes;
+          if (state.timer.seconds_remaining <= 0) {
+            state.timer.seconds_remaining = kTimerDefaultSeconds;
           }
           state.timer.running = true;
         }
@@ -896,7 +901,7 @@ void handle_click(AppState& state, const Event& event) {
         return;
       case 3:
         state.timer.running = false;
-        state.timer.minutes_remaining = 0;
+        state.timer.seconds_remaining = 0;
         state.timer.last_tick_ms = base_ms;
         return;
     }

@@ -9,15 +9,13 @@
 namespace fridge_ink::ui {
 namespace {
 
-std::string format_timer_display(const int minutes_remaining) {
-  const int minutes = std::max(0, minutes_remaining);
-  std::string out;
-  if (minutes < 10) {
-    out.push_back('0');
-  }
-  out += std::to_string(minutes);
-  out += ":00";
-  return out;
+std::string format_timer_display(const int seconds_remaining) {
+  const int seconds = std::max(0, seconds_remaining);
+  const int minutes = seconds / 60;
+  const int remain = seconds % 60;
+  char buffer[24];
+  std::snprintf(buffer, sizeof(buffer), "%02d:%02d", minutes, remain);
+  return std::string(buffer);
 }
 
 void draw_timer_button(
@@ -48,9 +46,9 @@ std::vector<uint8_t> render_timer_portrait_bitmap(const app::AppState& state) {
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
   const bool running = bool(state.timer.running);
-  const std::string time_text = format_timer_display(state.timer.minutes_remaining);
+  const std::string time_text = format_timer_display(state.timer.seconds_remaining);
   const std::string status_text =
-      running ? "RUNNING" : (state.timer.minutes_remaining > 0 ? "PAUSED" : "READY");
+      (state.timer.seconds_remaining <= 0) ? "READY" : (running ? "RUNNING" : "PAUSED");
   const std::string action_text = running ? "PAUSE" : "START";
   const int focused = std::max(0, std::min(state.timer.focused_index, 3));
 

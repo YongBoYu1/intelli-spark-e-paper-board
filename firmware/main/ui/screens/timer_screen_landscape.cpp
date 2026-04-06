@@ -167,21 +167,23 @@ int centered_text_y_with_font(
   return row_top + ((row_height - text_h) / 2) - bounds.top;
 }
 
-std::string format_timer_value(const int minutes_remaining) {
-  const int minutes = std::max(0, minutes_remaining);
+std::string format_timer_value(const int seconds_remaining) {
+  const int seconds = std::max(0, seconds_remaining);
+  const int minutes = seconds / 60;
+  const int remain = seconds % 60;
   char buffer[24];
-  std::snprintf(buffer, sizeof(buffer), "%02d:00", minutes);
+  std::snprintf(buffer, sizeof(buffer), "%02d:%02d", minutes, remain);
   return std::string(buffer);
 }
 
 std::string timer_status_text(const app::TimerState& timer) {
+  if (timer.seconds_remaining <= 0) {
+    return "READY";
+  }
   if (timer.running) {
     return "RUNNING";
   }
-  if (timer.minutes_remaining > 0) {
-    return "PAUSED";
-  }
-  return "READY";
+  return "PAUSED";
 }
 
 const BitmapFont& pick_time_font(
@@ -243,7 +245,7 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
       hint_raw,
       hint_font,
       std::max(80, kPanelWidth - 48));
-  const std::string time_text = format_timer_value(state.timer.minutes_remaining);
+  const std::string time_text = format_timer_value(state.timer.seconds_remaining);
   const std::string status_text = timer_status_text(state.timer);
 
   draw_text_with_font(image, kTitleX, kTitleY, "TIMER", title_font);

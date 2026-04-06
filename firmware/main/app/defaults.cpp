@@ -254,7 +254,7 @@ AppState make_state_from_defaults(
   // Python parity: HOME overlay menu defaults to LIST.
   state.menu.focused_index = 1;
   state.timer.running = false;
-  state.timer.minutes_remaining = 0;
+  state.timer.seconds_remaining = 0;
   state.timer.focused_index = 2;
   state.timer.last_tick_ms = now_ms;
   state.memo.index = 0;

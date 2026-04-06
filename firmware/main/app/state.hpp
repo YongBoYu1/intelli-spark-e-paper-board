@@ -84,7 +84,7 @@ struct MenuState {
 
 struct TimerState {
   bool running{false};
-  int minutes_remaining{0};
+  int seconds_remaining{0};
   int focused_index{2};
   std::uint64_t last_tick_ms{0};
 };
