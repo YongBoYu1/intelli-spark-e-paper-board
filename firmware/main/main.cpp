@@ -5,6 +5,7 @@
 #include "platform/display.hpp"
 #include "platform/mic_driver.hpp"
 #include "platform/voice_client.hpp"
+#include "platform/wifi_driver.hpp"
 
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
@@ -43,8 +44,10 @@ constexpr uint32_t kRecordDurationMs = 5000;
 // If WiFi / backend is not configured, the recording will still complete and
 // log audio stats; only the HTTP POST will fail gracefully.
 static const fridge_ink::platform::VoiceClientConfig kVoiceCfg = {
-    .base_url   = CONFIG_VOICE_API_URL,   // defined in sdkconfig / menuconfig
-    .auth_token = nullptr,                // set if VOICE_API_TOKEN is used
+    .base_url   = CONFIG_VOICE_API_URL,    // defined in sdkconfig / menuconfig
+    .auth_token = (sizeof(CONFIG_VOICE_API_TOKEN) > 1)
+                      ? CONFIG_VOICE_API_TOKEN
+                      : nullptr,           // nullptr disables Bearer header
     .timezone   = "UTC",
     .locale     = "en-US",
     .timeout_ms = 20000,
@@ -272,6 +275,18 @@ extern "C" void app_main(void) {
   fridge_ink::app::Runtime runtime(*display);
   runtime.boot();
 
+  // Connect to WiFi (credentials set via sdkconfig / menuconfig).
+  // Non-fatal: voice HTTP POST will simply fail if not connected.
+  {
+    constexpr const char* kSsid     = CONFIG_WIFI_SSID;
+    constexpr const char* kPassword = CONFIG_WIFI_PASSWORD;
+    if (kSsid[0] != '\0') {
+      fridge_ink::platform::wifi_connect(kSsid, kPassword, 15000);
+    } else {
+      ESP_LOGW(kTag, "CONFIG_WIFI_SSID not set — WiFi skipped");
+    }
+  }
+
   // Initialise I2S microphone driver (non-fatal if it fails).
   const auto& board = fridge_ink::platform::default_board_config();
   if (fridge_ink::platform::has_ready_mic_pin_map(board)) {
@@ -285,6 +300,12 @@ extern "C" void app_main(void) {
 
   const bool serial_input_ok = setup_serial_input();
   if (serial_input_ok) {
+    // Flush any garbage bytes buffered during USB-JTAG/bootloader init
+    // (prevents spurious 'r' keypresses triggering voice recording at boot).
+    {
+      std::uint8_t flush_buf[64];
+      while (usb_serial_jtag_read_bytes(flush_buf, sizeof(flush_buf), 0) > 0) {}
+    }
     // Keep startup print compact and robust after heavy panel-init logs.
     log_monitor_controls_summary();
   }

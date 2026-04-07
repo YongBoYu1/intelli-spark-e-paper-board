@@ -33,9 +33,10 @@ idf_component_register(
         "platform/board_config.cpp"
         "platform/display.cpp"
         "platform/clock.cpp"
-        # Voice / microphone
+        # Voice / microphone / WiFi
         "platform/mic_driver.cpp"
         "platform/voice_client.cpp"
+        "platform/wifi_driver.cpp"
     INCLUDE_DIRS "."
     EMBED_FILES
         "assets/landing_en.raw"
@@ -50,6 +51,11 @@ idf_component_register(
         mbedtls
         # Real-time clock for request timestamps
         esp_timer
+        # WiFi + networking stack
+        esp_wifi
+        esp_netif
+        esp_event
+        nvs_flash
 )
 
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_17)
