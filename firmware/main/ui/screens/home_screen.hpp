@@ -17,6 +17,9 @@ struct HomeDirtySnapshot {
   bool menu_overlay_active{false};
   int menu_focused_index{0};
   std::uint64_t clock_minute_bucket{0};
+  std::string clock_sync_state{};
+  std::string timezone{};
+  std::string weather_sync_state{};
   app::WidgetMode widget_mode{app::WidgetMode::Clock};
   int inventory_count{0};
   int reminder_count{0};

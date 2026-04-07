@@ -791,6 +791,7 @@ void handle_tick(AppState& state, const Event& event) {
     state.home.clock_minute_bucket = static_cast<std::uint64_t>(wall / 60);
     state.home.clock_is_real = true;
     state.home.clock_seed_monotonic_ms = event.now_ms;
+    state.home.clock_sync_state = "real_synced";
   } else if (state.home.clock_minute_bucket > 0) {
     const std::uint64_t elapsed_ms = event.now_ms - state.home.clock_seed_monotonic_ms;
     const std::uint64_t minutes_passed = elapsed_ms / 60000ULL;

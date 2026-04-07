@@ -1,5 +1,6 @@
 #include "ui/screens/home_screen.hpp"
 
+#include "platform/clock.hpp"
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
 #include "ui/primitives.hpp"
@@ -8,7 +9,6 @@
 #include <algorithm>
 #include <cmath>
 #include <ctime>
-#include <cstdlib>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -507,22 +507,7 @@ ClockSnapshot resolve_clock_snapshot(
   if (minute_bucket == 0) {
     return snapshot;
   }
-  const auto apply_posix_timezone = [&](const std::string& zone) {
-    static std::string active_tz{};
-    std::string posix = "UTC0";
-    if (zone == "America/Toronto" || zone == "America/New_York") {
-      posix = "EST5EDT,M3.2.0/2,M11.1.0/2";
-    } else if (zone == "America/Los_Angeles") {
-      posix = "PST8PDT,M3.2.0/2,M11.1.0/2";
-    }
-    if (active_tz == posix) {
-      return;
-    }
-    setenv("TZ", posix.c_str(), 1);
-    tzset();
-    active_tz = posix;
-  };
-  apply_posix_timezone(timezone_name);
+  platform::apply_timezone(timezone_name);
   const std::time_t now = static_cast<std::time_t>(minute_bucket * 60ULL);
 
   std::tm local_tm{};
@@ -1624,6 +1609,8 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
           state.home.clock_minute_bucket,
           state.onboarding.timezone,
           state.home.clock_is_real);
+  const bool clock_synced = state.home.clock_sync_state == "real_synced";
+  const ClockSnapshot display_clock = (state.home.clock_minute_bucket > 0) ? clock : ClockSnapshot{};
   const int weather_col_w = 142;
   const int weather_right = left_x1 - 2;
   const int weather_left = weather_right - weather_col_w;
@@ -1652,13 +1639,21 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   const BitmapFont& weather_meta_font = platform::panel_font_assets::kFontJetBold15;
   const BitmapFont& family_label_font = platform::panel_font_assets::kFontJetExtraBold16;
 
-  const std::string weekday = uppercase_copy(clock.weekday_label);
-  const std::string date = clock.date_label;
-  const std::string temp = std::to_string(state.dashboard.weather_temperature_c);
+  const bool weather_synced = state.home.weather_sync_state == "ok";
+  const std::string weekday = uppercase_copy(display_clock.weekday_label);
+  const std::string date = display_clock.date_label;
+  const std::string temp =
+      weather_synced ? std::to_string(state.dashboard.weather_temperature_c) : "--";
   const std::string weather =
-      right_fit_with_font(state.dashboard.weather_condition, weather_meta_font, weather_col_w, 1);
+      right_fit_with_font(
+          weather_synced ? state.dashboard.weather_condition : "UNSYNCED",
+          weather_meta_font,
+          weather_col_w,
+          1);
   const std::string humidity = right_fit_with_font(
-      "HUM " + std::to_string(state.dashboard.weather_humidity_percent) + "%",
+      weather_synced
+          ? ("HUM " + std::to_string(state.dashboard.weather_humidity_percent) + "%")
+          : "HUM --",
       weather_meta_font,
       weather_col_w,
       1);
@@ -1673,21 +1668,21 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   const int clock_weather_gap = 14;
   const int clock_budget_w = weather_left - clock_x - clock_weather_gap;
   const BitmapFont* time_display_font = &time_display_font_large;
-  if (text_width_with_font(clock.time_label, *time_display_font) > clock_budget_w) {
+  if (text_width_with_font(display_clock.time_label, *time_display_font) > clock_budget_w) {
     time_display_font = &time_display_font_mid;
   }
-  if (text_width_with_font(clock.time_label, *time_display_font) > clock_budget_w) {
+  if (text_width_with_font(display_clock.time_label, *time_display_font) > clock_budget_w) {
     time_display_font = &time_flow_font;
   }
-  draw_text_with_font(image, clock_x, clock_y, clock.time_label, *time_display_font);
+  draw_text_with_font(image, clock_x, clock_y, display_clock.time_label, *time_display_font);
 
   const TextVerticalBounds time_flow_bounds =
-      text_vertical_bounds_with_font(clock.time_label, time_flow_font);
+      text_vertical_bounds_with_font(display_clock.time_label, time_flow_font);
   const int time_flow_bottom =
       top_y + (time_flow_bounds.valid ? time_flow_bounds.bottom : time_flow_font.line_height);
   const int weekday_y = time_flow_bottom + 13;
   int weather_bottom = weekday_y;
-  if (clock.valid) {
+  if (display_clock.valid) {
     draw_text_with_font_spaced(image, left_x0, weekday_y, weekday, weekday_font, 4);
     const int weekday_h = text_height_with_font("Ag", weekday_font);
     const int date_y = weekday_y + weekday_h + 11;
@@ -1698,7 +1693,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
         image,
         left_x0,
         weekday_y,
-        "--",
+        "UNSYNCED",
         platform::panel_font_assets::kFontJetBold13);
   }
 
@@ -1709,7 +1704,9 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   const int temp_group_w = temp_w + degree_gap + degree_size;
   const int temp_x = weather_right - temp_group_w;
   draw_text_with_font(image, temp_x, temp_y, temp, temp_font);
-  draw_degree_mark(image, temp_x + temp_w + degree_gap, temp_y + 7, degree_size);
+  if (weather_synced) {
+    draw_degree_mark(image, temp_x + temp_w + degree_gap, temp_y + 7, degree_size);
+  }
   if (!location.empty()) {
     const int city_h = text_height_with_font(location, city_font);
     const int city_y = std::max(outer_y0 + 4, temp_y - city_h - 6);
@@ -1800,6 +1797,9 @@ HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
   snapshot.menu_overlay_active = state.home.menu_overlay_active;
   snapshot.menu_focused_index = normalized_menu_focus_index(state.menu.focused_index);
   snapshot.clock_minute_bucket = state.home.clock_minute_bucket;
+  snapshot.clock_sync_state = state.home.clock_sync_state;
+  snapshot.timezone = state.onboarding.timezone;
+  snapshot.weather_sync_state = state.home.weather_sync_state;
   snapshot.widget_mode = state.home.widget_mode;
   snapshot.inventory_count = visible_inventory_count(state);
   snapshot.reminder_count = visible_reminder_count(state);
@@ -1909,6 +1909,8 @@ HomeDirtyPlan home_dirty_plan(
   }
 
   if (previous.clock_minute_bucket != current.clock_minute_bucket ||
+      previous.clock_sync_state != current.clock_sync_state ||
+      previous.timezone != current.timezone ||
       previous.widget_mode != current.widget_mode) {
     append_rect_if_valid(
         plan.rects,
@@ -1919,6 +1921,7 @@ HomeDirtyPlan home_dirty_plan(
   if (previous.weather_condition != current.weather_condition ||
       previous.weather_temperature_c != current.weather_temperature_c ||
       previous.weather_humidity_percent != current.weather_humidity_percent ||
+      previous.weather_sync_state != current.weather_sync_state ||
       previous.location != current.location) {
     append_rect_if_valid(
         plan.rects,

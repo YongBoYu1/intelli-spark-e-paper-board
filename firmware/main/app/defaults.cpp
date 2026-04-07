@@ -196,6 +196,8 @@ AppState make_state_from_defaults(
   state.home.focused_index = 0;
   state.home.clock_minute_bucket = current_minute_bucket(&state.home.clock_is_real);
   state.home.clock_seed_monotonic_ms = now_ms;
+  state.home.clock_sync_state = state.home.clock_is_real ? "real_synced" : "fallback_unsynced";
+  state.home.weather_sync_state = "ok";
   state.home.show_focus = true;
   state.home.menu_overlay_active = false;
   state.home.pending_reorder = false;

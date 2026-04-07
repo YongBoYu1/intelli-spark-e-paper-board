@@ -111,6 +111,9 @@ std::string sync_footer_status(const app::AppState& state) {
   if (state.settings.sync_state == "ok") {
     return "LAST SYNC OK";
   }
+  if (state.settings.sync_state == "pending") {
+    return "SYNC IN PROGRESS";
+  }
   if (state.settings.sync_state == "fail") {
     return "LAST SYNC FAIL";
   }

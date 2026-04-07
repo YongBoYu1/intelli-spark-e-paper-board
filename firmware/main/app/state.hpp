@@ -82,6 +82,8 @@ struct HomeState {
   std::uint64_t clock_minute_bucket{0};
   std::uint64_t clock_seed_monotonic_ms{0};
   bool clock_is_real{false};
+  std::string clock_sync_state{"fallback_unsynced"};
+  std::string weather_sync_state{"unsynced"};
   bool show_focus{false};
   bool menu_overlay_active{false};
   WidgetMode widget_mode{WidgetMode::Clock};
