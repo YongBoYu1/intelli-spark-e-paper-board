@@ -289,7 +289,9 @@ VoiceResponse voice_interpret_pcm(const VoiceClientConfig& cfg,
   body += "\"request_time\":" + json_str(ts) + ',';
   body += "\"timezone\":"     + json_str(cfg.timezone) + ',';
   body += "\"locale\":"       + json_str(cfg.locale) + ',';
-  body += "\"audio_base64\":" + '"' + b64 + '"';
+  body += "\"audio_base64\":\"";
+  body += b64;
+  body += '"';
   body += '}';
 
   // Free b64 string immediately.

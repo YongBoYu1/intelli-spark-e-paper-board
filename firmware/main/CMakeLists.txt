@@ -40,6 +40,8 @@ idf_component_register(
     EMBED_FILES
         "assets/landing_en.raw"
     PRIV_REQUIRES
+        # esp_app_desc.h (used by app/defaults.cpp)
+        esp_app_format
         # I2S microphone driver
         driver
         # HTTP client for voice backend

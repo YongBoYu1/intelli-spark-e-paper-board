@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include <cinttypes>
 #include <cstring>
 
 namespace fridge_ink::platform {
@@ -81,7 +82,7 @@ bool mic_driver_init(const MicPins& pins) {
   }
 
   g_ready = true;
-  ESP_LOGI(kTag, "I2S mic ready  SCK=%d WS=%d SD=%d  %u Hz mono 16-bit",
+  ESP_LOGI(kTag, "I2S mic ready  SCK=%d WS=%d SD=%d  %" PRIu32 " Hz mono 16-bit",
            pins.sck, pins.ws, pins.sd, kSampleRateHz);
   return true;
 }
@@ -107,7 +108,7 @@ std::vector<int16_t> mic_record_pcm(uint32_t max_ms) {
   const TickType_t deadline =
       xTaskGetTickCount() + pdMS_TO_TICKS(max_ms + 500 /*margin*/);
 
-  ESP_LOGI(kTag, "Recording %u ms  (%zu samples expected)…", max_ms, target_samples);
+  ESP_LOGI(kTag, "Recording %" PRIu32 " ms  (%zu samples expected)", max_ms, target_samples);
 
   while (pcm.size() < target_samples) {
     if (xTaskGetTickCount() > deadline) {

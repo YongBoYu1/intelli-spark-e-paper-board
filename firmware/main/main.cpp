@@ -14,6 +14,7 @@
 #include "esp_log.h"
 
 #include <atomic>
+#include <cinttypes>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
@@ -60,7 +61,7 @@ static void voice_record_task(void* /*arg*/) {
   char req_id[32];
   snprintf(req_id, sizeof(req_id), "esp32-%04lu", static_cast<unsigned long>(seq));
 
-  ESP_LOGI(kTag, "[voice] Recording %u ms  req=%s", kRecordDurationMs, req_id);
+  ESP_LOGI(kTag, "[voice] Recording %" PRIu32 " ms  req=%s", kRecordDurationMs, req_id);
 
   auto pcm = fridge_ink::platform::mic_record_pcm(kRecordDurationMs);
   if (pcm.empty()) {
