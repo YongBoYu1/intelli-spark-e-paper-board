@@ -17,9 +17,10 @@ constexpr const char* kTag = "reducer";
 
 constexpr int kMenuItemCount = 5;
 constexpr int kSettingsItemCount = 8;
-constexpr int kHomeInventoryVisibleMax = 3;
+constexpr int kHomeInventoryVisibleLandscapeMax = 3;
+constexpr int kHomeInventoryVisiblePortraitMax = 4;
 constexpr int kHomeReminderVisibleMax = 5;
-constexpr std::uint64_t kHomeCompletedHideGraceMs = 10000;
+constexpr std::uint64_t kHomeCompletedHideGraceMs = 15000;
 constexpr std::uint64_t kHomeCompletedHideSettleMs = 600;
 constexpr std::uint64_t kReminderReorderDelayMs = 2000;
 constexpr int kTimerStepSeconds = 60;
@@ -112,6 +113,17 @@ int normalize_rotation_deg(const int raw) {
     return 180;
   }
   return 270;
+}
+
+bool home_uses_portrait_layout(const AppState& state) {
+  const int deg = normalize_rotation_deg(state.settings.rotation_deg);
+  return deg == 90 || deg == 270;
+}
+
+int home_inventory_visible_max(const AppState& state) {
+  return home_uses_portrait_layout(state)
+             ? kHomeInventoryVisiblePortraitMax
+             : kHomeInventoryVisibleLandscapeMax;
 }
 
 int list_item_count(const AppState& state) {
@@ -293,13 +305,14 @@ void handle_settings_click(AppState& state, const Event& event) {
 std::vector<int> visible_inventory_indices(const AppState& state) {
   std::vector<int> indices{};
   const int total = static_cast<int>(state.dashboard.inventory_items.size());
-  indices.reserve(std::min(total, kHomeInventoryVisibleMax));
+  const int visible_max = home_inventory_visible_max(state);
+  indices.reserve(std::min(total, visible_max));
   for (int i = 0; i < total; ++i) {
     if (contains_index(state.home.hidden_inventory_indices, i)) {
       continue;
     }
     indices.push_back(i);
-    if (static_cast<int>(indices.size()) >= kHomeInventoryVisibleMax) {
+    if (static_cast<int>(indices.size()) >= visible_max) {
       break;
     }
   }
@@ -530,6 +543,21 @@ void schedule_reminder_reorder(
       format_home_hide_state(state).c_str());
 }
 
+void cancel_reminder_reorder(
+    AppState& state,
+    const char* source) {
+  if (!state.home.pending_reorder && state.home.reorder_due_ms == 0) {
+    return;
+  }
+  state.home.pending_reorder = false;
+  state.home.reorder_due_ms = 0;
+  ESP_LOGI(
+      kTag,
+      "[link] reorder.cancel source=%s %s",
+      source != nullptr ? source : "unknown",
+      format_home_hide_state(state).c_str());
+}
+
 void remap_index_list(
     std::vector<int>& values,
     const std::vector<int>& old_to_new,
@@ -716,6 +744,20 @@ void open_calendar_from_home(AppState& state) {
   calendar_runtime::sync_calendar_cursor_fields(state);
 }
 
+void open_timer_from_home(AppState& state, const std::uint64_t now_ms) {
+  state.home.widget_mode = WidgetMode::Timer;
+  if (state.timer.seconds_remaining <= 0 && !state.timer.alert_active) {
+    state.timer.seconds_remaining = kTimerDefaultSeconds;
+  }
+  if (state.timer.target_seconds <= 0) {
+    state.timer.target_seconds = state.timer.seconds_remaining;
+  }
+  state.timer.focused_index = 2;
+  state.timer.last_tick_ms = now_ms > 0 ? now_ms : state.last_tick_ms;
+  clear_timer_alert(state);
+  state.screen = Screen::Timer;
+}
+
 void open_menu_target(AppState& state, const std::uint64_t now_ms) {
   state.home.menu_overlay_active = false;
   switch (state.menu.focused_index % kMenuItemCount) {
@@ -729,17 +771,7 @@ void open_menu_target(AppState& state, const std::uint64_t now_ms) {
       clamp_list_focus(state);
       return;
     case 2:
-      state.home.widget_mode = WidgetMode::Timer;
-      if (state.timer.seconds_remaining <= 0 && !state.timer.alert_active) {
-        state.timer.seconds_remaining = kTimerDefaultSeconds;
-      }
-      if (state.timer.target_seconds <= 0) {
-        state.timer.target_seconds = state.timer.seconds_remaining;
-      }
-      state.timer.focused_index = 2;
-      state.timer.last_tick_ms = now_ms > 0 ? now_ms : state.last_tick_ms;
-      clear_timer_alert(state);
-      state.screen = Screen::Timer;
+      open_timer_from_home(state, now_ms);
       return;
     case 3:
       open_calendar_from_home(state);
@@ -1053,9 +1085,9 @@ void handle_click(AppState& state, const Event& event) {
         return;
       case HomeFocusTargetKind::Clock:
         if (state.home.widget_mode == WidgetMode::Timer) {
-          const std::uint64_t base_ms = event.now_ms > 0 ? event.now_ms : state.last_tick_ms;
-          state.timer.running = !state.timer.running;
-          state.timer.last_tick_ms = base_ms;
+          // Python parity (default kitchen_left_click_action="weather"):
+          // clock click enters timer page when Home widget is in timer mode.
+          open_timer_from_home(state, event.now_ms);
           return;
         }
         state.home.menu_overlay_active = false;
@@ -1086,6 +1118,8 @@ void handle_click(AppState& state, const Event& event) {
               next_completed ? 1 : 0,
               format_home_hide_state(state).c_str());
         }
+        // Python parity: Home toggle path clears delayed reminder reorder.
+        cancel_reminder_reorder(state, "home.inventory");
         return;
       case HomeFocusTargetKind::ReminderItem:
         ensure_completion_flags(
@@ -1101,7 +1135,8 @@ void handle_click(AppState& state, const Event& event) {
           } else {
             remove_reminder_visibility_tracking(state, target.item_index, true);
           }
-          schedule_reminder_reorder(state, event.now_ms, "home");
+          // Python parity: Home toggle path does not schedule delayed reorder.
+          cancel_reminder_reorder(state, "home.reminder");
           ESP_LOGI(
               kTag,
               "[link] toggle source=home.reminder index=%d completed=%d %s",
@@ -1336,6 +1371,18 @@ void handle_back(AppState& state, const Event& event) {
   if (state.screen == Screen::Home) {
     if (state.home.menu_overlay_active) {
       state.home.menu_overlay_active = false;
+      return;
+    }
+    // Python parity: Back on Home cancels timer when clock is focused.
+    if (state.home.widget_mode == WidgetMode::Timer &&
+        state.home.focused_index == 0) {
+      const std::uint64_t base_ms = event.now_ms > 0 ? event.now_ms : state.last_tick_ms;
+      state.timer.running = false;
+      state.home.widget_mode = WidgetMode::Clock;
+      state.timer.seconds_remaining = 0;
+      state.timer.target_seconds = 0;
+      state.timer.last_tick_ms = base_ms;
+      clear_timer_alert(state);
       return;
     }
     state.home.menu_overlay_active = true;

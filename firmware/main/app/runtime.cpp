@@ -452,7 +452,8 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
       effective_mode_limit = std::max(effective_mode_limit, kHomeReminderReorderAreaLimitOverride);
     }
     if (pending_screen_ == Screen::Home &&
-        has_reason(pending_render_.dirty_reasons, "home.reminder_compact")) {
+        (has_reason(pending_render_.dirty_reasons, "home.reminder_compact") ||
+         has_reason(pending_render_.dirty_reasons, "home.reminder_change_fallback"))) {
       effective_mode_limit = std::max(effective_mode_limit, kHomeReminderCompactAreaLimitOverride);
     }
     const double gate_area_ratio =
@@ -474,7 +475,8 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
           pending_screen_ == Screen::Home &&
           (has_reason(pending_render_.dirty_reasons, "home.reminder_row_update") ||
            has_reason(pending_render_.dirty_reasons, "home.reminder_reorder") ||
-           has_reason(pending_render_.dirty_reasons, "home.reminder_compact"));
+           has_reason(pending_render_.dirty_reasons, "home.reminder_compact") ||
+           has_reason(pending_render_.dirty_reasons, "home.reminder_change_fallback"));
 
       int partial_passes = 1;
       if (reinforce_home_reminder) {
