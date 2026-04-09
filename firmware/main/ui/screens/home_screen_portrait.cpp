@@ -32,6 +32,14 @@ using platform::kPanelWidthBytes;
 
 constexpr int kPW = 480;  // portrait canvas width
 constexpr int kPH = 800;  // portrait canvas height
+constexpr int kHomeMenuItemCount = 5;
+constexpr const char* kHomeMenuItems[kHomeMenuItemCount] = {
+    "MEMO",
+    "LIST",
+    "TIMER",
+    "CALENDAR",
+    "SETTINGS",
+};
 
 // ── Low-level portrait pixel ops ─────────────────────────────────────────────
 
@@ -59,6 +67,19 @@ void hp_clear_rect(std::vector<uint8_t>& img,
   for (int cy = cy0; cy < cy1; ++cy)
     for (int cx = cx0; cx < cx1; ++cx)
       hp_clr(img, cx, cy, r90);
+}
+
+inline void hp_set_color(
+    std::vector<uint8_t>& img,
+    const int cx,
+    const int cy,
+    const bool r90,
+    const bool black) {
+  if (black) {
+    hp_px(img, cx, cy, r90);
+  } else {
+    hp_clr(img, cx, cy, r90);
+  }
 }
 
 // ── BitmapFont helpers ───────────────────────────────────────────────────────
@@ -498,6 +519,32 @@ HomePortraitTypography home_portrait_typography_for(const app::AppState& state) 
   };
 }
 
+std::vector<const BitmapFont*> home_menu_item_font_candidates(
+    const HomeFontSizeMode mode) {
+  using namespace platform::panel_font_assets;
+  if (mode == HomeFontSizeMode::Small) {
+    return {
+        &kFontInterBold17,
+        &kFontInterSemiBold15,
+        &kFontInterBold13,
+    };
+  }
+  if (mode == HomeFontSizeMode::Large) {
+    return {
+        &kFontInterBold20,
+        &kFontInterBold18,
+        &kFontInterBold17,
+        &kFontInterSemiBold15,
+    };
+  }
+  return {
+      &kFontInterBold18,
+      &kFontInterBold17,
+      &kFontInterSemiBold15,
+      &kFontInterBold13,
+  };
+}
+
 int normalize_rotation_deg(const int raw) {
   const int rounded = ((raw % 360) + 360) % 360;
   if (rounded >= 315 || rounded < 45) return 0;
@@ -570,6 +617,33 @@ void hp_stroke_rect(
   }
 }
 
+bool hp_point_in_rounded_rect(
+    const int px,
+    const int py,
+    const int x0,
+    const int y0,
+    const int x1,
+    const int y1,
+    const int radius) {
+  if (px < x0 || px >= x1 || py < y0 || py >= y1) {
+    return false;
+  }
+  const int w = x1 - x0;
+  const int h = y1 - y0;
+  const int r = std::max(0, std::min(radius, std::min(w, h) / 2));
+  if (r <= 0) {
+    return true;
+  }
+  if ((px >= x0 + r && px < x1 - r) || (py >= y0 + r && py < y1 - r)) {
+    return true;
+  }
+  const int cx = (px < x0 + r) ? (x0 + r) : (x1 - r - 1);
+  const int cy = (py < y0 + r) ? (y0 + r) : (y1 - r - 1);
+  const int dx = px - cx;
+  const int dy = py - cy;
+  return (dx * dx + dy * dy) <= (r * r);
+}
+
 void hp_stroke_rounded_rect(
     std::vector<uint8_t>& img,
     const int x0,
@@ -582,39 +656,52 @@ void hp_stroke_rounded_rect(
   if (x1 <= x0 || y1 <= y0) {
     return;
   }
-  const int w = std::max(1, stroke_w);
-  const int max_radius = std::max(0, std::min((x1 - x0) / 2, (y1 - y0) / 2));
-  const int r = std::max(0, std::min(radius, max_radius));
-  if (r <= 1) {
-    hp_stroke_rect(img, x0, y0, x1, y1, r90, w);
-    return;
-  }
-
-  hp_stroke_rect(img, x0, y0, x1, y1, r90, w);
-
-  hp_clear_rect(img, x0, y0, x0 + r, y0 + r, r90);
-  hp_clear_rect(img, x1 - r, y0, x1, y0 + r, r90);
-  hp_clear_rect(img, x0, y1 - r, x0 + r, y1, r90);
-  hp_clear_rect(img, x1 - r, y1 - r, x1, y1, r90);
-
-  const int outer = r - 1;
-  const int inner = std::max(0, outer - w);
-  const int cx0 = x0 + outer;
-  const int cy0 = y0 + outer;
-  const int cx1 = x1 - 1 - outer;
-  const int cy1 = y1 - 1 - outer;
-  const int outer2 = outer * outer;
-  const int inner2 = inner * inner;
-  for (int dy = 0; dy <= outer; ++dy) {
-    for (int dx = 0; dx <= outer; ++dx) {
-      const int d2 = dx * dx + dy * dy;
-      if (d2 > outer2 || d2 < inner2) {
+  const int t = std::max(1, stroke_w);
+  const int inner_x0 = x0 + t;
+  const int inner_y0 = y0 + t;
+  const int inner_x1 = x1 - t;
+  const int inner_y1 = y1 - t;
+  const int inner_radius = std::max(0, radius - t);
+  for (int y = y0; y < y1; ++y) {
+    for (int x = x0; x < x1; ++x) {
+      if (!hp_point_in_rounded_rect(x, y, x0, y0, x1, y1, radius)) {
         continue;
       }
-      hp_px(img, cx0 - dx, cy0 - dy, r90);  // top-left
-      hp_px(img, cx1 + dx, cy0 - dy, r90);  // top-right
-      hp_px(img, cx0 - dx, cy1 + dy, r90);  // bottom-left
-      hp_px(img, cx1 + dx, cy1 + dy, r90);  // bottom-right
+      if (inner_x1 > inner_x0 &&
+          inner_y1 > inner_y0 &&
+          hp_point_in_rounded_rect(
+              x,
+              y,
+              inner_x0,
+              inner_y0,
+              inner_x1,
+              inner_y1,
+              inner_radius)) {
+        continue;
+      }
+      hp_px(img, x, y, r90);
+    }
+  }
+}
+
+void hp_fill_rounded_rect(
+    std::vector<uint8_t>& img,
+    const int x0,
+    const int y0,
+    const int x1,
+    const int y1,
+    const bool r90,
+    const bool black,
+    const int radius = 6) {
+  if (x1 <= x0 || y1 <= y0) {
+    return;
+  }
+  for (int y = y0; y < y1; ++y) {
+    for (int x = x0; x < x1; ++x) {
+      if (!hp_point_in_rounded_rect(x, y, x0, y0, x1, y1, radius)) {
+        continue;
+      }
+      hp_set_color(img, x, y, r90, black);
     }
   }
 }
@@ -705,14 +792,14 @@ HpMenuOverlayLayout hp_menu_overlay_layout(const int width, const int height) {
   layout.pill_h = layout.compact ? 40 : 56;
   const int pill_w_cap = layout.compact ? 88 : 116;
   const int pill_w_floor = layout.compact ? 56 : 96;
-  constexpr int kItemCount = 5;
   const int available_pills_w = std::max(
       1,
-      w - (outer_margin * 2) - (inner_pad_x * 2) - ((kItemCount - 1) * layout.gap));
+      w - (outer_margin * 2) - (inner_pad_x * 2) - ((kHomeMenuItemCount - 1) * layout.gap));
   layout.pill_w = std::max(
       pill_w_floor,
-      std::min(pill_w_cap, available_pills_w / kItemCount));
-  const int total_w = (kItemCount * layout.pill_w) + ((kItemCount - 1) * layout.gap);
+      std::min(pill_w_cap, available_pills_w / kHomeMenuItemCount));
+  const int total_w =
+      (kHomeMenuItemCount * layout.pill_w) + ((kHomeMenuItemCount - 1) * layout.gap);
   const int overlay_w = total_w + (inner_pad_x * 2);
   layout.x0 = std::max(outer_margin, (w - overlay_w) / 2);
   layout.x1 = std::min(w - outer_margin, layout.x0 + overlay_w);
@@ -728,46 +815,95 @@ HpMenuOverlayLayout hp_menu_overlay_layout(const int width, const int height) {
 void hp_draw_menu_overlay(
     std::vector<uint8_t>& image,
     const app::AppState& state,
-    const BitmapFont& item_font,
+    const BitmapFont& item_font_fallback,
     const BitmapFont& hint_font,
     const bool r90) {
   const HpMenuOverlayLayout layout = hp_menu_overlay_layout(kPW, kPH);
-  constexpr int border_w = 1;
-  hp_clear_rect(image, layout.x0, layout.y0, layout.x1, layout.y1, r90);
-  hp_stroke_rect(image, layout.x0, layout.y0, layout.x1, layout.y1, r90, border_w);
+  const int overlay_radius = layout.compact ? 10 : 12;
+  const int border_w = layout.compact ? 1 : 2;
+  hp_fill_rounded_rect(
+      image,
+      layout.x0,
+      layout.y0,
+      layout.x1,
+      layout.y1,
+      r90,
+      false,
+      overlay_radius);
+  hp_stroke_rounded_rect(
+      image,
+      layout.x0,
+      layout.y0,
+      layout.x1,
+      layout.y1,
+      r90,
+      border_w,
+      overlay_radius);
 
   const std::string hint = "NAVIGATION";
-  const int hint_x = layout.x0 + ((layout.x1 - layout.x0) - hp_tw(hint, hint_font)) / 2;
+  const int hint_x = layout.x0 + std::max(8, ((layout.x1 - layout.x0) - hp_tw(hint, hint_font)) / 2);
   const int hint_y = layout.y0 + (layout.compact ? 6 : 8);
   hp_text(image, hint_x, hp_ytop(hint_y, hint, hint_font), hint, hint_font, r90);
 
-  constexpr const char* items[] = {"MEMO", "LIST", "TIMER", "CALENDAR", "SETTINGS"};
-  constexpr int item_count = 5;
-  const int total_w = (item_count * layout.pill_w) + ((item_count - 1) * layout.gap);
-  const int start_x = layout.x0 + ((layout.x1 - layout.x0) - total_w) / 2;
-  const int focus = static_cast<int>(state.menu.focused_index % static_cast<std::size_t>(item_count));
-  const int text_budget = std::max(24, layout.pill_w - (layout.compact ? 14 : 24));
+  const int total_w =
+      (kHomeMenuItemCount * layout.pill_w) + ((kHomeMenuItemCount - 1) * layout.gap);
+  const int start_x =
+      layout.x0 + std::max(8, ((layout.x1 - layout.x0) - total_w) / 2);
+  const int focus =
+      static_cast<int>(state.menu.focused_index % static_cast<std::size_t>(kHomeMenuItemCount));
+  // Python uses pill_w-14 in compact mode; bitmap font metrics are slightly wider
+  // than PIL at the same nominal size, so we keep a small extra budget to avoid
+  // truncating "CALENDAR" on 480x800 portrait.
+  const int text_budget = std::max(24, layout.pill_w - (layout.compact ? 10 : 24));
+  const HomeFontSizeMode fs_mode = home_font_size_mode(state);
+  const std::vector<const BitmapFont*> candidates = home_menu_item_font_candidates(fs_mode);
+  const BitmapFont* item_font = &item_font_fallback;
+  if (!candidates.empty()) {
+    item_font = candidates.back();
+    for (const BitmapFont* candidate : candidates) {
+      int max_w = 0;
+      for (int i = 0; i < kHomeMenuItemCount; ++i) {
+        max_w = std::max(max_w, hp_tw(kHomeMenuItems[i], *candidate));
+      }
+      if (max_w <= text_budget) {
+        item_font = candidate;
+        break;
+      }
+    }
+  }
 
-  for (int i = 0; i < item_count; ++i) {
+  for (int i = 0; i < kHomeMenuItemCount; ++i) {
     const int px0 = start_x + i * (layout.pill_w + layout.gap);
     const int px1 = px0 + layout.pill_w;
     const bool focused = i == focus;
-    if (focused) {
-      hp_fill(image, px0, layout.pills_y, px1, layout.pills_y + layout.pill_h, r90);
-    } else {
-      hp_clear_rect(image, px0, layout.pills_y, px1, layout.pills_y + layout.pill_h, r90);
-    }
-    hp_stroke_rect(image, px0, layout.pills_y, px1, layout.pills_y + layout.pill_h, r90, border_w);
+    hp_fill_rounded_rect(
+        image,
+        px0,
+        layout.pills_y,
+        px1,
+        layout.pills_y + layout.pill_h,
+        r90,
+        focused,
+        overlay_radius);
+    hp_stroke_rounded_rect(
+        image,
+        px0,
+        layout.pills_y,
+        px1,
+        layout.pills_y + layout.pill_h,
+        r90,
+        border_w,
+        overlay_radius);
 
-    const std::string label = hp_trunc(items[i], item_font, text_budget);
-    const int tx = px0 + (layout.pill_w - hp_tw(label, item_font)) / 2;
-    const int ty = layout.pills_y + (layout.pill_h - hp_vis_h(label, item_font)) / 2;
+    const std::string label = hp_trunc(kHomeMenuItems[i], *item_font, text_budget);
+    const int tx = px0 + (layout.pill_w - hp_tw(label, *item_font)) / 2;
+    const int ty = layout.pills_y + (layout.pill_h - hp_vis_h(label, *item_font)) / 2;
     hp_text_color(
         image,
         tx,
-        hp_ytop(ty, label, item_font),
+        hp_ytop(ty, label, *item_font),
         label,
-        item_font,
+        *item_font,
         r90,
         !focused);
   }
