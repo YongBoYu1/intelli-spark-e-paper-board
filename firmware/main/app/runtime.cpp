@@ -25,6 +25,7 @@ constexpr int kPartialPad = 2;
 constexpr int kPartialMaxRects = 6;
 constexpr bool kRefreshDebugLogs = true;
 constexpr double kDiffFallbackMinRatio = 0.10;
+constexpr int kHomeNavigationMinRefreshGapMs = 70;
 constexpr double kHomeFamilyAreaLimitOverride = 0.30;
 constexpr double kHomeMenuOverlayAreaLimitOverride = 0.60;
 constexpr double kHomeReminderReorderAreaLimitOverride = 0.30;
@@ -166,6 +167,17 @@ bool has_reason_prefix(
   }
   for (const auto& item : reasons) {
     if (item.rfind(prefix, 0) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool has_any_reason(
+    const std::vector<std::string>& reasons,
+    std::initializer_list<const char*> needles) {
+  for (const char* needle : needles) {
+    if (has_reason(reasons, needle)) {
       return true;
     }
   }
@@ -379,6 +391,21 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
               ? state_.settings.refresh_mode
               : state_.settings.partial_refresh_mode);
   const refresh_policy::ModeParams params = refresh_policy::mode_params(mode);
+  const bool home_navigation_focus =
+      pending_screen_ == Screen::Home &&
+      has_any_reason(
+          pending_render_.dirty_reasons,
+          {
+              "home.menu_overlay_focus",
+              "home.focus_move_row",
+              "home.focus_move_left_target",
+              "home.focus_to_left_panel",
+              "home.focus_from_left_panel",
+          });
+  const int effective_min_gap_ms =
+      home_navigation_focus
+          ? std::min(params.min_refresh_gap_ms, kHomeNavigationMinRefreshGapMs)
+          : params.min_refresh_gap_ms;
   const int full_every = state_.settings.partial_refresh_budget_enabled
                              ? refresh_policy::effective_full_refresh_every(
                                    pending_screen_,
@@ -390,7 +417,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
       refresh_runtime_.full_clean_reason(now_s, full_every);
   const bool force_full_clean = !full_clean_reason.empty();
   const bool screen_changed = committed_frame_valid_ && pending_screen_ != committed_screen_;
-  const bool should_flush = !refresh_runtime_.should_throttle(now_s, params.min_refresh_gap_ms) ||
+  const bool should_flush = !refresh_runtime_.should_throttle(now_s, effective_min_gap_ms) ||
                             !committed_frame_valid_ ||
                             force_full_clean ||
                             screen_changed;
@@ -401,7 +428,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
           kTag,
           "[refresh] HOLD screen=%s reason=throttle gap_ms=%d mode=%s dirty=%s",
           screen_name(pending_screen_),
-          params.min_refresh_gap_ms,
+          effective_min_gap_ms,
           refresh_policy::mode_name(mode),
           format_reasons(pending_render_.dirty_reasons).c_str());
     }

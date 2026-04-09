@@ -133,9 +133,87 @@ int home_reminder_visible_max(const AppState& state) {
              : kHomeReminderVisibleMax;
 }
 
+std::vector<int> list_visible_inventory_indices(const AppState& state) {
+  std::vector<int> indices{};
+  const int total = static_cast<int>(state.dashboard.inventory_items.size());
+  indices.reserve(total);
+  if (total <= 0) {
+    return indices;
+  }
+  if (state.home.hidden_inventory_indices.empty()) {
+    for (int i = 0; i < total; ++i) {
+      indices.push_back(i);
+    }
+    return indices;
+  }
+  std::vector<std::uint8_t> hidden_flags(static_cast<std::size_t>(total), 0U);
+  for (const int index : state.home.hidden_inventory_indices) {
+    if (index >= 0 && index < total) {
+      hidden_flags[static_cast<std::size_t>(index)] = 1U;
+    }
+  }
+  for (int i = 0; i < total; ++i) {
+    if (hidden_flags[static_cast<std::size_t>(i)] != 0U) {
+      continue;
+    }
+    indices.push_back(i);
+  }
+  return indices;
+}
+
+std::vector<int> list_visible_reminder_indices(const AppState& state) {
+  std::vector<int> indices{};
+  const int total = static_cast<int>(state.dashboard.reminder_items.size());
+  indices.reserve(total);
+  if (total <= 0) {
+    return indices;
+  }
+  if (state.home.hidden_reminder_indices.empty()) {
+    for (int i = 0; i < total; ++i) {
+      indices.push_back(i);
+    }
+    return indices;
+  }
+  std::vector<std::uint8_t> hidden_flags(static_cast<std::size_t>(total), 0U);
+  for (const int index : state.home.hidden_reminder_indices) {
+    if (index >= 0 && index < total) {
+      hidden_flags[static_cast<std::size_t>(index)] = 1U;
+    }
+  }
+  for (int i = 0; i < total; ++i) {
+    if (hidden_flags[static_cast<std::size_t>(i)] != 0U) {
+      continue;
+    }
+    indices.push_back(i);
+  }
+  return indices;
+}
+
+int list_visible_count(
+    const int total,
+    const std::vector<int>& hidden_indices) {
+  if (total <= 0) {
+    return 0;
+  }
+  if (hidden_indices.empty()) {
+    return total;
+  }
+  // Hidden lists are maintained as unique index sets by reducer helpers.
+  int hidden_valid_count = 0;
+  for (const int index : hidden_indices) {
+    if (index >= 0 && index < total) {
+      ++hidden_valid_count;
+    }
+  }
+  hidden_valid_count = std::min(hidden_valid_count, total);
+  return std::max(0, total - hidden_valid_count);
+}
+
 int list_item_count(const AppState& state) {
-  return static_cast<int>(state.dashboard.inventory_items.size() +
-                          state.dashboard.reminder_items.size());
+  const int inventory_total = static_cast<int>(state.dashboard.inventory_items.size());
+  const int reminder_total = static_cast<int>(state.dashboard.reminder_items.size());
+  return list_visible_count(inventory_total, state.home.hidden_inventory_indices) +
+         list_visible_count(reminder_total, state.home.hidden_reminder_indices);
 }
 
 void clamp_memo_index(AppState& state) {
@@ -409,6 +487,15 @@ void ensure_completion_flags(
   completed.resize(item_count, false);
 }
 
+void ensure_reminder_meta_items(
+    std::vector<ReminderMetaItem>& reminder_meta,
+    const std::size_t item_count) {
+  if (reminder_meta.size() >= item_count) {
+    return;
+  }
+  reminder_meta.resize(item_count, ReminderMetaItem{});
+}
+
 bool remove_inventory_visibility_tracking(
     AppState& state,
     const int item_index,
@@ -597,7 +684,9 @@ void apply_reminder_reorder(
     const std::uint64_t now_ms) {
   auto& reminders = state.dashboard.reminder_items;
   auto& completed = state.dashboard.reminder_completed;
+  auto& reminder_meta = state.dashboard.reminder_meta;
   ensure_completion_flags(completed, reminders.size());
+  ensure_reminder_meta_items(reminder_meta, reminders.size());
   const int item_count = static_cast<int>(reminders.size());
   const std::uint64_t due_ms = state.home.reorder_due_ms;
   const std::string hide_state_before = format_home_hide_state(state);
@@ -617,6 +706,7 @@ void apply_reminder_reorder(
   struct ReminderRow {
     std::string title{};
     bool done{false};
+    ReminderMetaItem meta{};
     int old_index{0};
   };
 
@@ -626,6 +716,7 @@ void apply_reminder_reorder(
     rows.push_back(ReminderRow{
         reminders[static_cast<std::size_t>(i)],
         completed[static_cast<std::size_t>(i)],
+        reminder_meta[static_cast<std::size_t>(i)],
         i,
     });
   }
@@ -663,6 +754,7 @@ void apply_reminder_reorder(
     const auto& row = rows[static_cast<std::size_t>(i)];
     reminders[static_cast<std::size_t>(i)] = row.title;
     completed[static_cast<std::size_t>(i)] = row.done;
+    reminder_meta[static_cast<std::size_t>(i)] = row.meta;
   }
 
   remap_index_list(
@@ -894,8 +986,7 @@ void handle_tick(AppState& state, const Event& event) {
     refresh_onboarding_status(state);
   }
 
-  if (state.screen == Screen::Home &&
-      home_hide_ready(state, event.now_ms)) {
+  if (home_hide_ready(state, event.now_ms)) {
     const std::string hide_state_before = format_home_hide_state(state);
     if (promote_pending_reminder_hide(state)) {
       ESP_LOGI(
@@ -904,7 +995,11 @@ void handle_tick(AppState& state, const Event& event) {
           static_cast<unsigned long long>(event.now_ms),
           hide_state_before.c_str(),
           format_home_hide_state(state).c_str());
-      clamp_home_focus(state);
+      if (state.screen == Screen::Home) {
+        clamp_home_focus(state);
+      } else if (state.screen == Screen::Inventory) {
+        clamp_list_focus(state);
+      }
     }
   }
 
@@ -1292,8 +1387,10 @@ void handle_click(AppState& state, const Event& event) {
   }
 
   if (state.screen == Screen::Inventory) {
-    const int inventory_count = static_cast<int>(state.dashboard.inventory_items.size());
-    const int reminder_count = static_cast<int>(state.dashboard.reminder_items.size());
+    const std::vector<int> inventory_indices = list_visible_inventory_indices(state);
+    const std::vector<int> reminder_indices = list_visible_reminder_indices(state);
+    const int inventory_count = static_cast<int>(inventory_indices.size());
+    const int reminder_count = static_cast<int>(reminder_indices.size());
     const int total = inventory_count + reminder_count;
     if (total <= 0) {
       state.inventory.focused_index = 0;
@@ -1304,7 +1401,8 @@ void handle_click(AppState& state, const Event& event) {
       ensure_completion_flags(
           state.dashboard.inventory_completed,
           state.dashboard.inventory_items.size());
-      const int index = state.inventory.focused_index;
+      const int index =
+          inventory_indices[static_cast<std::size_t>(state.inventory.focused_index)];
       const bool next_completed =
           !state.dashboard.inventory_completed[static_cast<std::size_t>(index)];
       state.dashboard.inventory_completed[static_cast<std::size_t>(index)] = next_completed;
@@ -1322,7 +1420,12 @@ void handle_click(AppState& state, const Event& event) {
       return;
     }
 
-    const int reminder_index = state.inventory.focused_index - inventory_count;
+    const int reminder_slot = state.inventory.focused_index - inventory_count;
+    if (reminder_slot < 0 || reminder_slot >= reminder_count) {
+      return;
+    }
+    const int reminder_index =
+        reminder_indices[static_cast<std::size_t>(reminder_slot)];
     ensure_completion_flags(
         state.dashboard.reminder_completed,
         state.dashboard.reminder_items.size());
@@ -1338,7 +1441,6 @@ void handle_click(AppState& state, const Event& event) {
     } else {
       remove_reminder_visibility_tracking(state, reminder_index, true);
     }
-    schedule_reminder_reorder(state, event.now_ms, "list");
     ESP_LOGI(
         kTag,
         "[link] toggle source=list.reminder index=%d completed=%d %s",

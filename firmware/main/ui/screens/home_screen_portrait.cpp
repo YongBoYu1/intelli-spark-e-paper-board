@@ -394,10 +394,11 @@ HpClock resolve_clock(std::uint64_t mb, const std::string& tz) {
   return out;
 }
 
-// "open/total"  (open = not completed)
+// Show open count only (open = not completed), aligned with landscape product semantics.
 std::string hp_progress(int total, int completed) {
   const int open = std::max(0, total - completed);
-  return std::to_string(open) + "/" + std::to_string(std::max(0, total));
+  (void)total;
+  return std::to_string(open);
 }
 
 std::string hp_compact_badge(const std::string& raw) {
