@@ -39,6 +39,13 @@ std::string normalized_mode(const std::string& raw) {
   return out == "agenda" ? "agenda" : "date";
 }
 
+int window_start(const int total, const int slots, const int selected) {
+  if (total <= slots || selected < 0) {
+    return 0;
+  }
+  return std::max(0, std::min(selected - (slots / 2), total - slots));
+}
+
 int days_in_month(int year, int month) {
   return app::calendar_runtime::days_in_month(year, month);
 }
@@ -186,14 +193,18 @@ void draw_agenda_rows(
     bool agenda_mode) {
   const int available_h = std::max(1, y1 - y0);
   const int gap = 8;
-  const int max_rows = std::max(1, (available_h + gap) / 72);
-  const int visible = std::min(max_rows, static_cast<int>(rows.size()));
-  const int row_h = std::max(60, (available_h - gap * std::max(0, visible - 1)) / std::max(1, visible));
-
+  const int row_h = 56;
+  const int slots = std::max(1, (available_h + gap) / (row_h + gap));
+  const int start = window_start(static_cast<int>(rows.size()), slots, selected_index);
+  const int visible = std::min(slots, static_cast<int>(rows.size()) - start);
   int yy = y0;
   for (int i = 0; i < visible; ++i) {
-    const auto& row = rows[static_cast<std::size_t>(i)];
-    const bool selected = agenda_mode && i == selected_index;
+    const int global_index = start + i;
+    if (global_index < 0 || global_index >= static_cast<int>(rows.size())) {
+      break;
+    }
+    const auto& row = rows[static_cast<std::size_t>(global_index)];
+    const bool selected = agenda_mode && global_index == selected_index;
 
     draw_outline_rect(image, x0, yy, x1, yy + row_h, 1);
     if (selected) {
@@ -228,6 +239,13 @@ void draw_agenda_rows(
     }
 
     yy += row_h + gap;
+  }
+
+  const int hidden = std::max(0, static_cast<int>(rows.size()) - (start + visible));
+  if (hidden > 0) {
+    const std::string more = "+" + std::to_string(hidden) + " MORE";
+    const int more_w = text_width_px(more, 1);
+    draw_text_line(image, x1 - more_w - 4, std::max(y0 + 2, y1 - 14), more, 1, 16);
   }
 }
 
@@ -322,7 +340,9 @@ std::vector<uint8_t> render_calendar_landscape_bitmap(const app::AppState& state
 
   std::string footer = "Rotate=Date | Click=Agenda | Hold=Home";
   if (agenda_mode) {
-    footer = "Rotate=Item | Click=Toggle | Hold=Home";
+    footer = rows.empty()
+                 ? "Rotate=Date | Click=Date | Hold=Home"
+                 : "Rotate=Item | Click=Toggle | Hold=Home";
   }
   footer = truncate_text_px(footer, 1, std::max(80, content_x1 - content_x0));
   draw_text_centered(image, content_x0, content_x1, kPanelHeight - 18, footer, 1, 64);

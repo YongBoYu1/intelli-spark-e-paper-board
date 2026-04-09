@@ -42,8 +42,30 @@ struct CalendarLandscapeRegions {
   platform::DirtyRect right_agenda{};
 };
 
+struct CalendarPortraitRegions {
+  platform::DirtyRect top_panel{};
+  platform::DirtyRect top_grid{};
+  platform::DirtyRect bottom_panel{};
+  platform::DirtyRect bottom_header{};
+  platform::DirtyRect bottom_agenda{};
+};
+
+int normalize_rotation_deg(const int raw) {
+  const int rounded = ((raw % 360) + 360) % 360;
+  if (rounded >= 315 || rounded < 45) {
+    return 0;
+  }
+  if (rounded < 135) {
+    return 90;
+  }
+  if (rounded < 225) {
+    return 180;
+  }
+  return 270;
+}
+
 bool calendar_uses_landscape_layout(const AppState& state) {
-  const int deg = ((state.settings.rotation_deg % 360) + 360) % 360;
+  const int deg = normalize_rotation_deg(state.settings.rotation_deg);
   return !(deg == 90 || deg == 270);
 }
 
@@ -66,6 +88,49 @@ CalendarLandscapeRegions calendar_landscape_regions() {
       {right_x, 0, w, h},
       {right_x, 0, w, 90},
       {right_x, 90, w, h},
+  };
+}
+
+platform::DirtyRect calendar_map_portrait_semantic_rect(
+    const int x0,
+    const int y0,
+    const int x1,
+    const int y1,
+    const bool r90) {
+  const int cx0 = std::max(0, std::min(480, x0));
+  const int cy0 = std::max(0, std::min(800, y0));
+  const int cx1 = std::max(0, std::min(480, x1));
+  const int cy1 = std::max(0, std::min(800, y1));
+  if (cx1 <= cx0 || cy1 <= cy0) {
+    return platform::DirtyRect{0, 0, 0, 0};
+  }
+  if (r90) {
+    return platform::DirtyRect{
+        cy0,
+        480 - cx1,
+        cy1,
+        480 - cx0,
+    };
+  }
+  return platform::DirtyRect{
+      800 - cy1,
+      cx0,
+      800 - cy0,
+      cx1,
+  };
+}
+
+CalendarPortraitRegions calendar_portrait_regions(const AppState& state) {
+  const bool r90 = normalize_rotation_deg(state.settings.rotation_deg) == 90;
+  const int split_y = std::max(260, std::min(800 - 220, 800 / 2));
+  const int header_y = split_y + 12;
+  const int list_top = header_y + 64;
+  return CalendarPortraitRegions{
+      calendar_map_portrait_semantic_rect(0, 0, 480, split_y + 4, r90),
+      calendar_map_portrait_semantic_rect(20, 96, 460, std::max(97, split_y - 8), r90),
+      calendar_map_portrait_semantic_rect(0, split_y, 480, 800, r90),
+      calendar_map_portrait_semantic_rect(18, split_y + 6, 462, std::min(800, header_y + 58), r90),
+      calendar_map_portrait_semantic_rect(12, std::max(0, list_top - 2), 468, 800, r90),
   };
 }
 
@@ -206,6 +271,40 @@ void reorder_home_transition_rects_for_partial(
   }
 }
 
+void reorder_calendar_transition_rects_for_partial(
+    const std::vector<std::string>& reasons,
+    std::vector<platform::DirtyRect>& rects,
+    const bool landscape_layout,
+    const bool r90) {
+  if (rects.size() < 2U) {
+    return;
+  }
+  if (!has_reason(reasons, "calendar.cursor_move")) {
+    return;
+  }
+
+  if (landscape_layout) {
+    // Landscape: calendar grid on the left, agenda on the right.
+    std::stable_sort(rects.begin(), rects.end(), [](const auto& a, const auto& b) {
+      return a.x0 < b.x0;
+    });
+    return;
+  }
+
+  // Portrait semantic mapping:
+  // - r90: top panel maps to smaller physical x.
+  // - r270: top panel maps to larger physical x.
+  if (r90) {
+    std::stable_sort(rects.begin(), rects.end(), [](const auto& a, const auto& b) {
+      return a.x0 < b.x0;
+    });
+  } else {
+    std::stable_sort(rects.begin(), rects.end(), [](const auto& a, const auto& b) {
+      return a.x0 > b.x0;
+    });
+  }
+}
+
 }  // namespace
 
 Runtime::Runtime(platform::Display& display) : display_(display) {}
@@ -269,13 +368,21 @@ void Runtime::stage_render() {
     }
   }
 
-  if (state_.screen == Screen::Calendar &&
-      calendar_uses_landscape_layout(state_)) {
-    const CalendarLandscapeRegions regions = calendar_landscape_regions();
+  if (state_.screen == Screen::Calendar) {
+    const bool landscape_layout = calendar_uses_landscape_layout(state_);
+    const CalendarLandscapeRegions landscape_regions = calendar_landscape_regions();
+    const CalendarPortraitRegions portrait_regions = calendar_portrait_regions(state_);
     if (!committed_frame_valid_ || committed_screen_ != Screen::Calendar) {
-      add_rect_once(render_output.dirty_rects, regions.left_panel);
-      add_rect_once(render_output.dirty_rects, regions.right_panel);
-    } else if (committed_calendar_snapshot_valid_ && committed_calendar_landscape_) {
+      if (landscape_layout) {
+        add_rect_once(render_output.dirty_rects, landscape_regions.left_panel);
+        add_rect_once(render_output.dirty_rects, landscape_regions.right_panel);
+      } else {
+        add_rect_once(render_output.dirty_rects, portrait_regions.top_panel);
+        add_rect_once(render_output.dirty_rects, portrait_regions.bottom_panel);
+      }
+    } else if (
+        committed_calendar_snapshot_valid_ &&
+        committed_calendar_landscape_ == landscape_layout) {
       const auto base_date = calendar_runtime::today_local_date(state_);
       const auto cursor = calendar_runtime::cursor_date(state_, base_date);
       const int curr_offset = state_.calendar.offset_days;
@@ -291,27 +398,61 @@ void Runtime::stage_render() {
           committed_calendar_reminders_digest_ != curr_reminders_digest;
 
       if (offset_changed || mode_changed || data_changed) {
-        if (offset_changed) {
-          if (committed_calendar_cursor_year_ != cursor.year ||
-              committed_calendar_cursor_month_ != cursor.month) {
-            add_rect_once(render_output.dirty_rects, regions.left_panel);
+        if (landscape_layout) {
+          if (offset_changed) {
+            if (committed_calendar_cursor_year_ != cursor.year ||
+                committed_calendar_cursor_month_ != cursor.month) {
+              add_rect_once(render_output.dirty_rects, landscape_regions.left_panel);
+            } else {
+              add_rect_once(render_output.dirty_rects, landscape_regions.left_grid);
+            }
+            add_rect_once(render_output.dirty_rects, landscape_regions.right_header);
+            add_rect_once(render_output.dirty_rects, landscape_regions.right_agenda);
+          } else if (mode_changed) {
+            add_rect_once(render_output.dirty_rects, landscape_regions.right_header);
+            add_rect_once(render_output.dirty_rects, landscape_regions.right_agenda);
           } else {
-            add_rect_once(render_output.dirty_rects, regions.left_grid);
+            add_rect_once(render_output.dirty_rects, landscape_regions.left_grid);
+            add_rect_once(render_output.dirty_rects, landscape_regions.right_agenda);
           }
-          add_rect_once(render_output.dirty_rects, regions.right_header);
-          add_rect_once(render_output.dirty_rects, regions.right_agenda);
-        } else if (mode_changed) {
-          add_rect_once(render_output.dirty_rects, regions.right_header);
-          add_rect_once(render_output.dirty_rects, regions.right_agenda);
         } else {
-          add_rect_once(render_output.dirty_rects, regions.left_grid);
-          add_rect_once(render_output.dirty_rects, regions.right_agenda);
+          if (offset_changed) {
+            if (committed_calendar_cursor_year_ != cursor.year ||
+                committed_calendar_cursor_month_ != cursor.month) {
+              add_rect_once(render_output.dirty_rects, portrait_regions.top_panel);
+            } else {
+              add_rect_once(render_output.dirty_rects, portrait_regions.top_grid);
+            }
+            add_rect_once(render_output.dirty_rects, portrait_regions.bottom_header);
+            add_rect_once(render_output.dirty_rects, portrait_regions.bottom_agenda);
+          } else if (mode_changed) {
+            add_rect_once(render_output.dirty_rects, portrait_regions.bottom_agenda);
+          } else {
+            add_rect_once(render_output.dirty_rects, portrait_regions.top_grid);
+            add_rect_once(render_output.dirty_rects, portrait_regions.bottom_agenda);
+          }
+        }
+        if (offset_changed) {
+          add_reason_once(render_output.dirty_reasons, "calendar.cursor_move");
         }
         add_reason_once(render_output.dirty_reasons, "calendar.date_or_mode_or_data");
       } else if (committed_calendar_selected_index_ != curr_selected) {
-        add_rect_once(render_output.dirty_rects, regions.right_agenda);
+        if (landscape_layout) {
+          add_rect_once(render_output.dirty_rects, landscape_regions.right_agenda);
+        } else {
+          add_rect_once(render_output.dirty_rects, portrait_regions.bottom_agenda);
+        }
         add_reason_once(render_output.dirty_reasons, "calendar.agenda_focus_move");
       }
+    } else if (committed_calendar_snapshot_valid_) {
+      if (landscape_layout) {
+        add_rect_once(render_output.dirty_rects, landscape_regions.left_panel);
+        add_rect_once(render_output.dirty_rects, landscape_regions.right_panel);
+      } else {
+        add_rect_once(render_output.dirty_rects, portrait_regions.top_panel);
+        add_rect_once(render_output.dirty_rects, portrait_regions.bottom_panel);
+      }
+      add_reason_once(render_output.dirty_reasons, "calendar.layout_change");
     }
   }
 
@@ -464,6 +605,14 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
       reorder_home_transition_rects_for_partial(
           pending_render_.dirty_reasons,
           aligned_rects);
+    } else if (pending_screen_ == Screen::Calendar) {
+      const bool calendar_landscape = calendar_uses_landscape_layout(state_);
+      const bool r90 = normalize_rotation_deg(state_.settings.rotation_deg) == 90;
+      reorder_calendar_transition_rects_for_partial(
+          pending_render_.dirty_reasons,
+          aligned_rects,
+          calendar_landscape,
+          r90);
     }
     const double mode_limit =
         refresh_policy::screen_partial_area_limit(pending_screen_, mode);

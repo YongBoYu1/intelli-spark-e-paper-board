@@ -1074,11 +1074,17 @@ void handle_rotate(AppState& state, const Event& event) {
       const int agenda_count =
           static_cast<int>(selection.event_indices.size() + selection.reminder_indices.size());
       if (agenda_count <= 0) {
+        state.calendar.mode = "date";
         state.calendar.selected_index = 0;
       } else {
-        state.calendar.selected_index = std::max(
-            0,
-            std::min(state.calendar.selected_index + delta, agenda_count - 1));
+        const int next_index = state.calendar.selected_index + delta;
+        if (next_index < 0 || next_index >= agenda_count) {
+          // Product behavior: rotating past agenda bounds exits back to date mode.
+          state.calendar.mode = "date";
+          state.calendar.selected_index = 0;
+        } else {
+          state.calendar.selected_index = next_index;
+        }
       }
       return;
     }
@@ -1330,6 +1336,9 @@ void handle_click(AppState& state, const Event& event) {
     state.calendar.selected_index = clamp_int(state.calendar.selected_index, 0, agenda_count - 1);
     if (state.calendar.selected_index < event_count) {
       // Calendar events are read-only in agenda mode.
+      // Python parity: click on a non-toggle agenda row exits back to date mode.
+      state.calendar.mode = "date";
+      state.calendar.selected_index = 0;
       return;
     }
 
