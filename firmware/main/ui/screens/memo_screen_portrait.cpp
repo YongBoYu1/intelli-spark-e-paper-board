@@ -2,14 +2,187 @@
 
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
+#include "ui/panel_font_assets_generated.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <string>
 #include <vector>
 
 namespace fridge_ink::ui {
 namespace {
+
+using platform::panel_font_assets::BitmapFont;
+using platform::panel_font_assets::Glyph;
+
+constexpr int kPW = 480;
+constexpr int kPH = 800;
+
+int normalize_rotation_deg(const int raw) {
+  const int rounded = ((raw % 360) + 360) % 360;
+  if (rounded >= 315 || rounded < 45) {
+    return 0;
+  }
+  if (rounded < 135) {
+    return 90;
+  }
+  if (rounded < 225) {
+    return 180;
+  }
+  return 270;
+}
+
+bool use_r90_map(const app::AppState& state) {
+  return normalize_rotation_deg(state.settings.rotation_deg) == 90;
+}
+
+void mp_px(std::vector<uint8_t>& image, const int cx, const int cy, const bool r90) {
+  if (cx < 0 || cx >= kPW || cy < 0 || cy >= kPH) {
+    return;
+  }
+  if (r90) {
+    set_black_pixel(image, cy, 479 - cx);
+  } else {
+    set_black_pixel(image, 799 - cy, cx);
+  }
+}
+
+void mp_clr(std::vector<uint8_t>& image, const int cx, const int cy, const bool r90) {
+  if (cx < 0 || cx >= kPW || cy < 0 || cy >= kPH) {
+    return;
+  }
+  if (r90) {
+    clear_pixel(image, cy, 479 - cx);
+  } else {
+    clear_pixel(image, 799 - cy, cx);
+  }
+}
+
+void mp_fill(
+    std::vector<uint8_t>& image,
+    const int x0,
+    const int y0,
+    const int x1,
+    const int y1,
+    const bool r90) {
+  for (int y = y0; y < y1; ++y) {
+    for (int x = x0; x < x1; ++x) {
+      mp_px(image, x, y, r90);
+    }
+  }
+}
+
+std::size_t memo_glyph_index(const char ch) {
+  const unsigned char code = static_cast<unsigned char>(ch);
+  if (code < 32 || code > 126) {
+    return static_cast<std::size_t>('?' - 32);
+  }
+  return static_cast<std::size_t>(code - 32);
+}
+
+const BitmapFont& memo_font_for_scale_normal(const int scale) {
+  using namespace platform::panel_font_assets;
+  if (scale <= 1) {
+    return kFontJetBold13;
+  }
+  if (scale == 2) {
+    return kFontInterMedium18;
+  }
+  return kFontInterBlack29;
+}
+
+const BitmapFont& memo_font_for_scale_inverted(const int scale) {
+  using namespace platform::panel_font_assets;
+  if (scale <= 1) {
+    return kFontJetBold13;
+  }
+  if (scale == 2) {
+    return kFontInterBold17;
+  }
+  return kFontInterBlack29;
+}
+
+void memo_glyph(
+    std::vector<uint8_t>& image,
+    const int x,
+    const int y,
+    const char ch,
+    const BitmapFont& font,
+    const bool r90,
+    const bool black) {
+  const Glyph& glyph = font.glyphs[memo_glyph_index(ch)];
+  if (!glyph.width || !glyph.height) {
+    return;
+  }
+  const int row_bytes = (glyph.width + 7) / 8;
+  const std::uint8_t* bitmap = font.bitmap + glyph.bitmap_offset;
+  for (int row = 0; row < glyph.height; ++row) {
+    for (int col = 0; col < glyph.width; ++col) {
+      if ((bitmap[row * row_bytes + (col / 8)] & (0x80U >> (col % 8))) == 0) {
+        continue;
+      }
+      const int px = x + glyph.left + col;
+      const int py = y + static_cast<int>(glyph.top) + row;
+      if (black) {
+        mp_px(image, px, py, r90);
+      } else {
+        mp_clr(image, px, py, r90);
+      }
+    }
+  }
+}
+
+void memo_text_line(
+    std::vector<uint8_t>& image,
+    const int x,
+    const int y,
+    const std::string& text,
+    const int scale,
+    const int max_chars,
+    const bool r90) {
+  const BitmapFont& font = memo_font_for_scale_normal(scale);
+  int cx = x;
+  int drawn = 0;
+  for (const char ch : text) {
+    if (max_chars > 0 && drawn >= max_chars) {
+      break;
+    }
+    memo_glyph(image, cx, y, ch, font, r90, true);
+    cx += font.glyphs[memo_glyph_index(ch)].advance;
+    ++drawn;
+  }
+}
+
+void memo_text_line_inverted(
+    std::vector<uint8_t>& image,
+    const int x,
+    const int y,
+    const std::string& text,
+    const int scale,
+    const int max_chars,
+    const bool r90) {
+  const BitmapFont& font = memo_font_for_scale_inverted(scale);
+  int cx = x;
+  int drawn = 0;
+  for (const char ch : text) {
+    if (max_chars > 0 && drawn >= max_chars) {
+      break;
+    }
+    memo_glyph(image, cx, y, ch, font, r90, false);
+    cx += font.glyphs[memo_glyph_index(ch)].advance;
+    ++drawn;
+  }
+}
+
+int memo_text_width(const std::string& text, const int scale) {
+  const BitmapFont& font = memo_font_for_scale_normal(scale);
+  int width = 0;
+  for (const char ch : text) {
+    width += font.glyphs[memo_glyph_index(ch)].advance;
+  }
+  return width;
+}
 
 std::string upper_copy(const std::string& text) {
   std::string out = text;
@@ -36,51 +209,49 @@ int selected_memo_index(const app::AppState& state) {
   if (total <= 0) {
     return 0;
   }
-  if (state.memo.index < 0) {
-    return 0;
+  int selected = state.memo.index % total;
+  if (selected < 0) {
+    selected += total;
   }
-  if (state.memo.index >= total) {
-    return total - 1;
-  }
-  return state.memo.index;
+  return selected;
 }
 
 }  // namespace
 
 std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
   using platform::kPanelBufferSize;
-  using platform::kPanelHeight;
-  using platform::kPanelWidth;
 
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
+  const bool r90 = use_r90_map(state);
 
   const int left = 24;
-  const int right = kPanelWidth - 24;
+  const int right = kPW - 24;
   const int content_top = 86;
-  const int content_bottom = kPanelHeight - 56;
+  const int content_bottom = kPH - 56;
 
-  draw_text_line(image, left, 16, "FAMILY BOARD", 3, 20);
+  memo_text_line(image, left, 16, "FAMILY BOARD", 3, 20, r90);
   const std::string hint = truncate_text_px(
       "ROTATE=SELECT  |  CLICK=ENTER  |  HOLD=HOME",
       1,
       std::max(80, right - left));
-  const int hint_w = text_width_px(hint, 1);
-  draw_text_line(image, std::max(left, right - hint_w), 52, hint, 1, 0);
-  fill_black_rect(image, left, 68, right, 70);
+  const int hint_w = memo_text_width(hint, 1);
+  memo_text_line(image, std::max(left, right - hint_w), 52, hint, 1, 0, r90);
+  mp_fill(image, left, 68, right, 70, r90);
 
   const auto& memos = state.dashboard.memos;
   const int total = static_cast<int>(memos.size());
   const int selected = selected_memo_index(state);
 
   if (total <= 0) {
-    draw_text_line(image, left + 4, content_top + 8, "NO FAMILY NOTES YET", 2, 24);
-    draw_text_line(
+    memo_text_line(image, left + 4, content_top + 8, "NO FAMILY NOTES YET", 2, 24, r90);
+    memo_text_line(
         image,
         left + 4,
         content_top + 42,
         "TRY VOICE: LEAVE A NOTE DINNER IS READY",
         1,
-        52);
+        52,
+        r90);
   } else {
     int unread = 0;
     for (const auto& memo : memos) {
@@ -93,9 +264,16 @@ std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
         "TOTAL " + std::to_string(total) +
         "   NEW " + std::to_string(unread) +
         "   FOCUS " + std::to_string(selected + 1) + "/" + std::to_string(total);
-    draw_text_line(image, left + 4, content_top, truncate_text_px(summary, 1, right - left - 8), 1, 0);
+    memo_text_line(
+        image,
+        left + 4,
+        content_top,
+        truncate_text_px(summary, 1, right - left - 8),
+        1,
+        0,
+        r90);
 
-    const int row_h = 64;
+    const int row_h = 66;
     const int row_gap = 6;
     const int list_top = content_top + 22;
     const int available_h = std::max(1, content_bottom - list_top);
@@ -118,9 +296,9 @@ std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
       const int cx0 = left + 4;
       const int cx1 = right - 4;
       if (is_selected) {
-        fill_black_rect(image, cx0, y0 + 1, cx1, y1 - 1);
+        mp_fill(image, cx0, y0 + 1, cx1, y1 - 1, r90);
       } else {
-        fill_black_rect(image, cx0 + 8, y1 - 1, cx1, y1);
+        mp_fill(image, cx0 + 8, y1 - 1, cx1, y1, r90);
       }
 
       const auto& memo = memos[static_cast<std::size_t>(idx)];
@@ -130,17 +308,17 @@ std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
 
       const int content_x0 = cx0 + 10;
       const int content_x1 = cx1 - 10;
-      const int posted_w = text_width_px(posted, 1);
+      const int posted_w = memo_text_width(posted, 1);
       const int posted_x = std::max(content_x0, content_x1 - posted_w);
       const int author_max_w = std::max(56, posted_x - content_x0 - 8);
       const std::string author_fit = truncate_text_px(author, 2, author_max_w);
 
       if (is_selected) {
-        draw_text_line_inverted(image, content_x0, y0 + 6, author_fit, 2, 0);
-        draw_text_line_inverted(image, posted_x, y0 + 10, posted, 1, 0);
+        memo_text_line_inverted(image, content_x0, y0 + 6, author_fit, 2, 0, r90);
+        memo_text_line_inverted(image, posted_x, y0 + 10, posted, 1, 0, r90);
       } else {
-        draw_text_line(image, content_x0, y0 + 6, author_fit, 2, 0);
-        draw_text_line(image, posted_x, y0 + 10, posted, 1, 0);
+        memo_text_line(image, content_x0, y0 + 6, author_fit, 2, 0, r90);
+        memo_text_line(image, posted_x, y0 + 10, posted, 1, 0, r90);
       }
 
       const int body_width = std::max(48, content_x1 - content_x0);
@@ -152,40 +330,55 @@ std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
       for (int ln = 0; ln < lines; ++ln) {
         const std::string line = truncate_text_px(wrapped[static_cast<std::size_t>(ln)], 2, body_width);
         if (is_selected) {
-          draw_text_line_inverted(image, content_x0, body_y, line, 2, 0);
+          memo_text_line_inverted(image, content_x0, body_y, line, 2, 0, r90);
         } else {
-          draw_text_line(image, content_x0, body_y, line, 2, 0);
+          memo_text_line(image, content_x0, body_y, line, 2, 0, r90);
         }
         body_y += 24;
       }
       if (static_cast<int>(wrapped.size()) > lines && lines > 0) {
+        const int ellipsis_w = memo_text_width("...", 1);
+        const int ellipsis_x = std::max(content_x0, content_x1 - ellipsis_w);
         if (is_selected) {
-          draw_text_line_inverted(image, content_x1 - 24, body_y - 10, "...", 1, 3);
+          memo_text_line_inverted(image, ellipsis_x, body_y - 10, "...", 1, 3, r90);
         } else {
-          draw_text_line(image, content_x1 - 24, body_y - 10, "...", 1, 3);
+          memo_text_line(image, ellipsis_x, body_y - 10, "...", 1, 3, r90);
         }
       }
 
       if (memo.is_new) {
         const std::string badge = "NEW";
-        const int badge_w = text_width_px(badge, 1);
+        const int badge_w = memo_text_width(badge, 1);
         const int badge_x = std::max(content_x0, content_x1 - badge_w);
         if (is_selected) {
-          draw_text_line_inverted(image, badge_x, y1 - 18, badge, 1, 3);
+          memo_text_line_inverted(image, badge_x, y1 - 18, badge, 1, 3, r90);
         } else {
-          draw_text_line(image, badge_x, y1 - 18, badge, 1, 3);
+          memo_text_line(image, badge_x, y1 - 18, badge, 1, 3, r90);
         }
       }
     }
+
+    if (total > slots) {
+      const std::string tail =
+          "SHOWING " + std::to_string(start + 1) + "-" +
+          std::to_string(std::min(total, start + slots)) +
+          " OF " + std::to_string(total);
+      memo_text_line(
+          image,
+          left + 4,
+          content_bottom - 16,
+          truncate_text_px(tail, 1, right - left - 8),
+          1,
+          0,
+          r90);
+    }
   }
 
-  draw_text_line(
-      image,
-      left,
-      kPanelHeight - 40,
+  const std::string footer = truncate_text_px(
       "VOICE CMD: ADD | DELETE | CLEAR",
       1,
-      40);
+      std::max(80, right - left));
+  memo_text_line(image, left, kPH - 40, footer, 1, 40, r90);
 
   return image;
 }

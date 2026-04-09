@@ -26,6 +26,8 @@ constexpr int kPartialMaxRects = 6;
 constexpr bool kRefreshDebugLogs = true;
 constexpr double kDiffFallbackMinRatio = 0.10;
 constexpr int kHomeNavigationMinRefreshGapMs = 70;
+constexpr int kMemoNavigationMinRefreshGapMs = 35;
+constexpr double kMemoFocusMoveAreaLimitOverride = 0.75;
 constexpr double kHomeFamilyAreaLimitOverride = 0.30;
 constexpr double kHomeMenuOverlayAreaLimitOverride = 0.60;
 constexpr double kHomeReminderReorderAreaLimitOverride = 0.30;
@@ -134,6 +136,155 @@ CalendarPortraitRegions calendar_portrait_regions(const AppState& state) {
   };
 }
 
+bool memo_uses_portrait_layout(const AppState& state) {
+  const int deg = normalize_rotation_deg(state.settings.rotation_deg);
+  return deg == 90 || deg == 270;
+}
+
+int normalized_memo_index(const int index, const int total) {
+  if (total <= 0) {
+    return 0;
+  }
+  int normalized = index % total;
+  if (normalized < 0) {
+    normalized += total;
+  }
+  return normalized;
+}
+
+int normalized_memo_index(const AppState& state) {
+  return normalized_memo_index(
+      state.memo.index,
+      static_cast<int>(state.dashboard.memos.size()));
+}
+
+std::uint64_t memo_digest(const AppState& state) {
+  std::uint64_t hash = 1469598103934665603ULL;
+  auto mix = [&](const char byte) {
+    hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(byte));
+    hash *= 1099511628211ULL;
+  };
+  auto mix_text = [&](const std::string& text) {
+    for (const char ch : text) {
+      mix(ch);
+    }
+    mix('\0');
+  };
+  for (const auto& memo : state.dashboard.memos) {
+    mix_text(memo.text);
+    mix_text(memo.author);
+    mix_text(memo.posted);
+    mix(memo.is_new ? '\x01' : '\x00');
+  }
+  return hash;
+}
+
+platform::DirtyRect memo_transform_source_rect(
+    const AppState& state,
+    const int x0,
+    const int y0,
+    const int x1,
+    const int y1) {
+  const bool portrait = memo_uses_portrait_layout(state);
+  const int src_w = portrait ? 480 : platform::kPanelWidth;
+  const int src_h = portrait ? 800 : platform::kPanelHeight;
+  const int cx0 = std::max(0, std::min(src_w, x0));
+  const int cy0 = std::max(0, std::min(src_h, y0));
+  const int cx1 = std::max(0, std::min(src_w, x1));
+  const int cy1 = std::max(0, std::min(src_h, y1));
+  if (cx1 <= cx0 || cy1 <= cy0) {
+    return platform::DirtyRect{0, 0, 0, 0};
+  }
+  if (!portrait) {
+    return platform::DirtyRect{cx0, cy0, cx1, cy1};
+  }
+  const bool r90 = normalize_rotation_deg(state.settings.rotation_deg) == 90;
+  if (r90) {
+    return platform::DirtyRect{
+        cy0,
+        480 - cx1,
+        cy1,
+        480 - cx0,
+    };
+  }
+  return platform::DirtyRect{
+      800 - cy1,
+      cx0,
+      800 - cy0,
+      cx1,
+  };
+}
+
+platform::DirtyRect memo_card_rect(const AppState& state) {
+  const bool portrait = memo_uses_portrait_layout(state);
+  const int src_w = portrait ? 480 : platform::kPanelWidth;
+  const int src_h = portrait ? 800 : platform::kPanelHeight;
+  return memo_transform_source_rect(
+      state,
+      20,
+      80,
+      std::max(21, src_w - 20),
+      std::max(80, src_h - 60));
+}
+
+platform::DirtyRect memo_summary_rect(const AppState& state) {
+  const bool portrait = memo_uses_portrait_layout(state);
+  const int src_w = portrait ? 480 : platform::kPanelWidth;
+  const int src_h = portrait ? 800 : platform::kPanelHeight;
+  const int outer_x0 = 24;
+  const int outer_x1 = std::max(outer_x0 + 1, src_w - 24);
+  const int inner_x0 = outer_x0 + 4;
+  const int inner_x1 = std::max(inner_x0 + 1, outer_x1 - 4);
+  const int inner_y0 = 86;
+  return memo_transform_source_rect(
+      state,
+      inner_x0,
+      std::max(0, inner_y0 - 2),
+      inner_x1,
+      std::min(src_h, inner_y0 + 20));
+}
+
+platform::DirtyRect memo_focus_row_rect(
+    const AppState& state,
+    const int memo_index,
+    const int memo_total) {
+  if (memo_total <= 0) {
+    return platform::DirtyRect{0, 0, 0, 0};
+  }
+  const bool portrait = memo_uses_portrait_layout(state);
+  const int src_w = portrait ? 480 : platform::kPanelWidth;
+  const int src_h = portrait ? 800 : platform::kPanelHeight;
+  const int outer_x0 = 24;
+  const int outer_x1 = std::max(outer_x0 + 1, src_w - 24);
+  const int inner_x0 = outer_x0 + 4;
+  const int inner_x1 = std::max(inner_x0 + 1, outer_x1 - 4);
+  const int inner_y0 = 86;
+  const int inner_y1 = std::max(inner_y0 + 1, src_h - 56);
+  constexpr int kListGap = 6;
+  constexpr int kRowHeight = 66;
+  const int list_top = inner_y0 + 22;
+  const int list_h = std::max(1, inner_y1 - list_top);
+  const int slots = std::max(1, (list_h + kListGap) / (kRowHeight + kListGap));
+  const int selected = normalized_memo_index(memo_index, memo_total);
+  const int start = std::max(0, std::min(selected - (slots / 2), memo_total - slots));
+  const int visible_row = std::max(0, selected - start);
+  const int row_y0 = list_top + visible_row * (kRowHeight + kListGap);
+  const int row_y1 = std::min(inner_y1, row_y0 + kRowHeight);
+  return memo_transform_source_rect(
+      state,
+      inner_x0,
+      std::max(0, row_y0 - 4),
+      inner_x1,
+      std::min(src_h, row_y1 + 4));
+}
+
+bool rect_equal(const platform::DirtyRect& lhs, const platform::DirtyRect& rhs) {
+  return lhs.x0 == rhs.x0 &&
+         lhs.y0 == rhs.y0 &&
+         lhs.x1 == rhs.x1 &&
+         lhs.y1 == rhs.y1;
+}
+
 void add_reason_once(
     std::vector<std::string>& reasons,
     const char* reason) {
@@ -184,30 +335,51 @@ platform::DirtyRect timer_controls_rect() {
 bool should_collapse_to_latest(
     const Screen screen,
     const std::vector<std::string>& reasons) {
-  if (reasons.empty() || screen != Screen::Home) {
+  if (reasons.empty()) {
     return false;
   }
 
-  static const std::unordered_set<std::string> kAllowedReasons = {
-      "home.focus_move_row",
-      "home.focus_move_left_target",
-      "home.focus_to_left_panel",
-      "home.focus_from_left_panel",
-      "home.focus_left_panel_only",
-      "home.menu_overlay_focus",
-      "home.focus_priority_drop_family",
-      "diff_fallback",
-  };
-  bool has_focus_reason = false;
-  for (const auto& reason : reasons) {
-    if (reason.rfind("home.focus_", 0) == 0 || reason == "home.menu_overlay_focus") {
-      has_focus_reason = true;
+  if (screen == Screen::Home) {
+    static const std::unordered_set<std::string> kAllowedReasons = {
+        "home.focus_move_row",
+        "home.focus_move_left_target",
+        "home.focus_to_left_panel",
+        "home.focus_from_left_panel",
+        "home.focus_left_panel_only",
+        "home.menu_overlay_focus",
+        "home.focus_priority_drop_family",
+        "diff_fallback",
+    };
+    bool has_focus_reason = false;
+    for (const auto& reason : reasons) {
+      if (reason.rfind("home.focus_", 0) == 0 || reason == "home.menu_overlay_focus") {
+        has_focus_reason = true;
+      }
+      if (kAllowedReasons.find(reason) == kAllowedReasons.end()) {
+        return false;
+      }
     }
-    if (kAllowedReasons.find(reason) == kAllowedReasons.end()) {
-      return false;
-    }
+    return has_focus_reason;
   }
-  return has_focus_reason;
+
+  if (screen == Screen::Memo) {
+    static const std::unordered_set<std::string> kAllowedReasons = {
+        "memo.focus_move",
+        "diff_fallback",
+    };
+    bool has_focus_reason = false;
+    for (const auto& reason : reasons) {
+      if (reason == "memo.focus_move") {
+        has_focus_reason = true;
+      }
+      if (kAllowedReasons.find(reason) == kAllowedReasons.end()) {
+        return false;
+      }
+    }
+    return has_focus_reason;
+  }
+
+  return false;
 }
 
 bool has_reason(
@@ -302,6 +474,40 @@ void reorder_calendar_transition_rects_for_partial(
     std::stable_sort(rects.begin(), rects.end(), [](const auto& a, const auto& b) {
       return a.x0 > b.x0;
     });
+  }
+}
+
+int covering_rect_index(
+    const std::vector<platform::DirtyRect>& rects,
+    const platform::DirtyRect& target) {
+  if (target.x1 <= target.x0 || target.y1 <= target.y0) {
+    return -1;
+  }
+  for (std::size_t i = 0; i < rects.size(); ++i) {
+    if (refresh_policy::rect_contains(rects[i], target, 2)) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+void reorder_memo_transition_rects_for_partial(
+    const std::vector<std::string>& reasons,
+    std::vector<platform::DirtyRect>& rects,
+    const platform::DirtyRect& previous_row,
+    const platform::DirtyRect& current_row) {
+  if (rects.size() < 2U || !has_reason(reasons, "memo.focus_move")) {
+    return;
+  }
+
+  const int previous_index = covering_rect_index(rects, previous_row);
+  if (previous_index > 0) {
+    std::swap(rects[0], rects[static_cast<std::size_t>(previous_index)]);
+  }
+
+  const int current_index = covering_rect_index(rects, current_row);
+  if (current_index > 1) {
+    std::swap(rects[1], rects[static_cast<std::size_t>(current_index)]);
   }
 }
 
@@ -456,6 +662,51 @@ void Runtime::stage_render() {
     }
   }
 
+  if (state_.screen == Screen::Memo) {
+    const int memo_count = static_cast<int>(state_.dashboard.memos.size());
+    const int memo_index = normalized_memo_index(state_);
+    const bool memo_expanded = state_.memo.expanded;
+    const std::uint64_t current_memo_digest = memo_digest(state_);
+    const int rotation_deg = normalize_rotation_deg(state_.settings.rotation_deg);
+
+    if (!committed_frame_valid_ || committed_screen_ != Screen::Memo) {
+      add_rect_once(render_output.dirty_rects, memo_card_rect(state_));
+    } else if (
+        committed_memo_snapshot_valid_ &&
+        committed_memo_rotation_deg_ == rotation_deg) {
+      if (committed_memo_index_ != memo_index) {
+        add_rect_once(render_output.dirty_rects, memo_summary_rect(state_));
+        const platform::DirtyRect previous_row =
+            memo_focus_row_rect(state_, committed_memo_index_, committed_memo_count_);
+        const platform::DirtyRect current_row =
+            memo_focus_row_rect(state_, memo_index, memo_count);
+        add_rect_once(render_output.dirty_rects, previous_row);
+        if (!rect_equal(current_row, previous_row)) {
+          add_rect_once(render_output.dirty_rects, current_row);
+        }
+        if (render_output.dirty_rects.empty()) {
+          add_rect_once(render_output.dirty_rects, memo_card_rect(state_));
+        }
+        add_reason_once(render_output.dirty_reasons, "memo.focus_move");
+      } else if (committed_memo_expanded_ != memo_expanded) {
+        const platform::DirtyRect focus_row =
+            memo_focus_row_rect(state_, memo_index, memo_count);
+        add_rect_once(render_output.dirty_rects, focus_row);
+        if (render_output.dirty_rects.empty()) {
+          add_rect_once(render_output.dirty_rects, memo_card_rect(state_));
+        }
+        add_reason_once(render_output.dirty_reasons, "memo.expand_toggle");
+      } else if (committed_memo_digest_ != current_memo_digest) {
+        add_rect_once(render_output.dirty_rects, memo_summary_rect(state_));
+        add_rect_once(render_output.dirty_rects, memo_card_rect(state_));
+        add_reason_once(render_output.dirty_reasons, "memo.data_change");
+      }
+    } else if (committed_memo_snapshot_valid_) {
+      add_rect_once(render_output.dirty_rects, memo_card_rect(state_));
+      add_reason_once(render_output.dirty_reasons, "memo.layout_change");
+    }
+  }
+
   if (committed_frame_valid_) {
     const auto [bbox, diff_ratio] = diff_stats(render_output.image);
     if (!bbox.has_value()) {
@@ -543,10 +794,16 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
               "home.focus_to_left_panel",
               "home.focus_from_left_panel",
           });
-  const int effective_min_gap_ms =
-      home_navigation_focus
-          ? std::min(params.min_refresh_gap_ms, kHomeNavigationMinRefreshGapMs)
-          : params.min_refresh_gap_ms;
+  const bool memo_navigation_focus =
+      pending_screen_ == Screen::Memo &&
+      has_reason(pending_render_.dirty_reasons, "memo.focus_move");
+  int effective_min_gap_ms = params.min_refresh_gap_ms;
+  if (home_navigation_focus) {
+    effective_min_gap_ms = std::min(effective_min_gap_ms, kHomeNavigationMinRefreshGapMs);
+  }
+  if (memo_navigation_focus) {
+    effective_min_gap_ms = std::min(effective_min_gap_ms, kMemoNavigationMinRefreshGapMs);
+  }
   const int full_every = state_.settings.partial_refresh_budget_enabled
                              ? refresh_policy::effective_full_refresh_every(
                                    pending_screen_,
@@ -561,7 +818,8 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
   const bool should_flush = !refresh_runtime_.should_throttle(now_s, effective_min_gap_ms) ||
                             !committed_frame_valid_ ||
                             force_full_clean ||
-                            screen_changed;
+                            screen_changed ||
+                            memo_navigation_focus;
 
   if (!should_flush) {
     if (kRefreshDebugLogs) {
@@ -613,6 +871,18 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
           aligned_rects,
           calendar_landscape,
           r90);
+    } else if (pending_screen_ == Screen::Memo) {
+      const platform::DirtyRect previous_row =
+          memo_focus_row_rect(state_, committed_memo_index_, committed_memo_count_);
+      const platform::DirtyRect current_row = memo_focus_row_rect(
+          state_,
+          normalized_memo_index(state_),
+          static_cast<int>(state_.dashboard.memos.size()));
+      reorder_memo_transition_rects_for_partial(
+          pending_render_.dirty_reasons,
+          aligned_rects,
+          previous_row,
+          current_row);
     }
     const double mode_limit =
         refresh_policy::screen_partial_area_limit(pending_screen_, mode);
@@ -647,6 +917,12 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
       effective_mode_limit = std::max(
           effective_mode_limit,
           kHomeFocusCrossPanelAreaLimitOverride);
+    }
+    if (pending_screen_ == Screen::Memo &&
+        has_reason(pending_render_.dirty_reasons, "memo.focus_move")) {
+      effective_mode_limit = std::max(
+          effective_mode_limit,
+          kMemoFocusMoveAreaLimitOverride);
     }
     const double gate_area_ratio =
         refresh_policy::partial_gate_area_ratio(
@@ -838,6 +1114,17 @@ void Runtime::mark_committed_snapshot() {
     committed_calendar_reminders_digest_ = calendar_runtime::reminders_calendar_digest(state_);
   } else {
     committed_calendar_snapshot_valid_ = false;
+  }
+
+  if (state_.screen == Screen::Memo) {
+    committed_memo_snapshot_valid_ = true;
+    committed_memo_index_ = normalized_memo_index(state_);
+    committed_memo_count_ = static_cast<int>(state_.dashboard.memos.size());
+    committed_memo_expanded_ = state_.memo.expanded;
+    committed_memo_digest_ = memo_digest(state_);
+    committed_memo_rotation_deg_ = normalize_rotation_deg(state_.settings.rotation_deg);
+  } else {
+    committed_memo_snapshot_valid_ = false;
   }
 }
 

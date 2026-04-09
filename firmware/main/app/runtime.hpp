@@ -63,6 +63,12 @@ class Runtime {
   int committed_calendar_selected_index_{0};
   std::uint64_t committed_calendar_events_digest_{0};
   std::uint64_t committed_calendar_reminders_digest_{0};
+  bool committed_memo_snapshot_valid_{false};
+  int committed_memo_index_{0};
+  int committed_memo_count_{0};
+  bool committed_memo_expanded_{false};
+  std::uint64_t committed_memo_digest_{0};
+  int committed_memo_rotation_deg_{0};
 
   bool pending_render_valid_{false};
   ui::RenderOutput pending_render_{};
