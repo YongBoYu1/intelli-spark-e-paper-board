@@ -314,7 +314,56 @@ void add_rect_once(
   rects.push_back(rect);
 }
 
-platform::DirtyRect timer_time_status_rect() {
+bool timer_uses_portrait_layout(const AppState& state) {
+  const int deg = normalize_rotation_deg(state.settings.rotation_deg);
+  return deg == 90 || deg == 270;
+}
+
+// Maps a portrait semantic rect (cx in [0,480), cy in [0,800)) to the
+// physical 800×480 buffer rect used for partial-update dirty regions.
+// r90:  physical x = cy range, physical y = [480-x1, 480-x0)
+// r270: physical x = [800-y1, 800-y0), physical y = cx range
+platform::DirtyRect timer_map_portrait_rect(
+    const int x0, const int y0, const int x1, const int y1, const bool r90) {
+  if (r90) {
+    return platform::DirtyRect{
+        y0,
+        std::max(0, 480 - x1),
+        std::min(platform::kPanelWidth, y1),
+        std::min(platform::kPanelHeight, 480 - x0),
+    };
+  }
+  return platform::DirtyRect{
+      std::max(0, 800 - y1),
+      x0,
+      std::min(platform::kPanelWidth, 800 - y0),
+      std::min(platform::kPanelHeight, x1),
+  };
+}
+
+// Portrait dirty rect sizing rationale:
+// partial_gate_area_ratio() sums individual rect areas. Timer partial limit =
+// min(0.95, base+0.20) = 0.85. Landscape rects sum to ~76% — safe. Portrait
+// naive mapping (full semantic width x=[0,480)) produces y=[0,480) in physical
+// space (full panel height), making each rect span the full physical height and
+// pushing the sum to ~92% — over the 85% gate.
+//
+// Fix: restrict semantic x to [kMargin=24, kPW-kMargin=456] and tighten y.
+// This maps physical y to [24, 456] (not [0, 480]), reducing each rect by ~10%
+// and keeping the combined ratio comfortably under 0.85.
+//
+// Semantic layout reference (kPW=480, kPH=800):
+//   content area top : y=82  (below divider)
+//   controls_y       : y=710 (= kPH - kButtonBottomGap = 800 - 90)
+//   controls bottom  : y=772 (= controls_y + kButtonHeight + 2px margin = 710 + 60 + 2)
+//   margin x         : [24, 456]
+platform::DirtyRect timer_time_status_rect(const AppState& state) {
+  if (timer_uses_portrait_layout(state)) {
+    const bool r90 = normalize_rotation_deg(state.settings.rotation_deg) == 90;
+    // Tight semantic rect: x=[24,456], y=[82,710] — covers time + status,
+    // stops at controls_y. Physical area ratio: 632×432/384k ≈ 71%.
+    return timer_map_portrait_rect(24, 82, 456, 710, r90);
+  }
   return platform::DirtyRect{
       56,
       82,
@@ -323,7 +372,13 @@ platform::DirtyRect timer_time_status_rect() {
   };
 }
 
-platform::DirtyRect timer_controls_rect() {
+platform::DirtyRect timer_controls_rect(const AppState& state) {
+  if (timer_uses_portrait_layout(state)) {
+    const bool r90 = normalize_rotation_deg(state.settings.rotation_deg) == 90;
+    // Tight semantic rect: x=[24,456], y=[710,772] — covers button row only.
+    // Physical area ratio: 62×432/384k ≈ 0.7%.
+    return timer_map_portrait_rect(24, 710, 456, 772, r90);
+  }
   return platform::DirtyRect{
       24,
       std::max(0, platform::kPanelHeight - 100),
@@ -557,7 +612,7 @@ void Runtime::stage_render() {
       committed_screen_ == Screen::Timer &&
       committed_timer_snapshot_valid_) {
     if (committed_timer_focused_index_ != state_.timer.focused_index) {
-      add_rect_once(render_output.dirty_rects, timer_controls_rect());
+      add_rect_once(render_output.dirty_rects, timer_controls_rect(state_));
       add_reason_once(render_output.dirty_reasons, "timer.focus_move");
     }
     if (committed_timer_seconds_ != state_.timer.seconds_remaining ||
@@ -566,9 +621,9 @@ void Runtime::stage_render() {
         committed_timer_alert_blink_on_ != state_.timer.alert_blink_on ||
         committed_timer_last_completed_seconds_ != state_.timer.last_completed_seconds ||
         committed_timer_widget_mode_ != state_.home.widget_mode) {
-      add_rect_once(render_output.dirty_rects, timer_time_status_rect());
+      add_rect_once(render_output.dirty_rects, timer_time_status_rect(state_));
       if (committed_timer_running_ != state_.timer.running) {
-        add_rect_once(render_output.dirty_rects, timer_controls_rect());
+        add_rect_once(render_output.dirty_rects, timer_controls_rect(state_));
       }
       add_reason_once(render_output.dirty_reasons, "timer.time_or_state");
     }
