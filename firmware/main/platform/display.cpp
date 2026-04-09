@@ -255,9 +255,10 @@ class EpaperDisplay final : public Display {
       return;
     }
 
-    auto image = image_in;
+    const std::vector<uint8_t>* image = &image_in;
+    std::vector<uint8_t> dilated_image{};
 
-    const std::size_t black_bits = count_black_bits(image);
+    const std::size_t black_bits = count_black_bits(*image);
     ESP_LOGI(
         kTag,
         "Rendered bitmap stats: black_bits=%zu ratio=%.4f",
@@ -266,7 +267,8 @@ class EpaperDisplay final : public Display {
             static_cast<double>(kPanelWidth * kPanelHeight));
 
     if (kUiDilateRadius > 0) {
-      image = dilate_black_pixels(image, kUiDilateRadius);
+      dilated_image = dilate_black_pixels(*image, kUiDilateRadius);
+      image = &dilated_image;
       ESP_LOGI(kTag, "Applied UI stroke dilation radius=%d", kUiDilateRadius);
     }
 
@@ -276,7 +278,7 @@ class EpaperDisplay final : public Display {
     if (clean_cycle) {
       (void)clear_panel_once();
     }
-    display_bitmap(image);
+    display_bitmap(*image);
   }
 
   void display_partial(
@@ -292,9 +294,11 @@ class EpaperDisplay final : public Display {
       return;
     }
 
-    auto image = image_in;
+    const std::vector<uint8_t>* image = &image_in;
+    std::vector<uint8_t> dilated_image{};
     if (kUiDilateRadius > 0) {
-      image = dilate_black_pixels(image, kUiDilateRadius);
+      dilated_image = dilate_black_pixels(*image, kUiDilateRadius);
+      image = &dilated_image;
     }
 
     std::vector<DirtyRect> normalized_rects{};
@@ -308,14 +312,14 @@ class EpaperDisplay final : public Display {
 
     if (normalized_rects.empty()) {
       ESP_LOGW(kTag, "Partial refresh requested with empty rects, fallback to full");
-      display_full(image, false);
+      display_full(*image, false);
       return;
     }
 
     for (const DirtyRect& rect : normalized_rects) {
-      display_bitmap_partial(image, rect.x0, rect.y0, rect.x1, rect.y1);
+      display_bitmap_partial(*image, rect.x0, rect.y0, rect.x1, rect.y1);
     }
-    previous_frame_ = image;
+    previous_frame_ = *image;
     previous_frame_valid_ = true;
   }
 

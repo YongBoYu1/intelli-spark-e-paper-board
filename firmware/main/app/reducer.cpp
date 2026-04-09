@@ -19,6 +19,7 @@ constexpr int kMenuItemCount = 5;
 constexpr int kSettingsItemCount = 8;
 constexpr int kHomeInventoryVisibleLandscapeMax = 3;
 constexpr int kHomeInventoryVisiblePortraitMax = 4;
+constexpr int kHomeReminderVisiblePortraitMax = 4;
 constexpr int kHomeReminderVisibleMax = 5;
 constexpr std::uint64_t kHomeCompletedHideGraceMs = 15000;
 constexpr std::uint64_t kHomeCompletedHideSettleMs = 600;
@@ -124,6 +125,12 @@ int home_inventory_visible_max(const AppState& state) {
   return home_uses_portrait_layout(state)
              ? kHomeInventoryVisiblePortraitMax
              : kHomeInventoryVisibleLandscapeMax;
+}
+
+int home_reminder_visible_max(const AppState& state) {
+  return home_uses_portrait_layout(state)
+             ? kHomeReminderVisiblePortraitMax
+             : kHomeReminderVisibleMax;
 }
 
 int list_item_count(const AppState& state) {
@@ -289,11 +296,16 @@ void handle_settings_click(AppState& state, const Event& event) {
       ESP_LOGI(kTag, "[settings] auto_sync=%d", static_cast<int>(state.settings.auto_sync_enabled));
       return;
     case SettingsItem::SyncNow:
-      state.settings.last_sync_ms = event.now_ms > 0 ? event.now_ms : state.last_tick_ms;
+      state.settings.last_sync_ms =
+          static_cast<std::uint64_t>(std::max<std::time_t>(0, platform::wall_time_seconds())) *
+          1000ULL;
       state.settings.sync_state = "ok";
       set_settings_notice(state, "FAKE SYNC COMPLETE", event.now_ms);
-      ESP_LOGI(kTag, "[settings] sync_now=ok at=%llu",
-               static_cast<unsigned long long>(state.settings.last_sync_ms));
+      ESP_LOGI(
+          kTag,
+          "[settings] sync_now=ok at_epoch_ms=%llu wall_valid=%d",
+          static_cast<unsigned long long>(state.settings.last_sync_ms),
+          static_cast<int>(platform::wall_time_is_valid()));
       return;
     case SettingsItem::ResetAndWipe:
       set_settings_notice(state, "NOT IMPLEMENTED", event.now_ms);
@@ -322,13 +334,14 @@ std::vector<int> visible_inventory_indices(const AppState& state) {
 std::vector<int> visible_reminder_indices(const AppState& state) {
   std::vector<int> indices{};
   const int total = static_cast<int>(state.dashboard.reminder_items.size());
-  indices.reserve(std::min(total, kHomeReminderVisibleMax));
+  const int visible_max = home_reminder_visible_max(state);
+  indices.reserve(std::min(total, visible_max));
   for (int i = 0; i < total; ++i) {
     if (contains_index(state.home.hidden_reminder_indices, i)) {
       continue;
     }
     indices.push_back(i);
-    if (static_cast<int>(indices.size()) >= kHomeReminderVisibleMax) {
+    if (static_cast<int>(indices.size()) >= visible_max) {
       break;
     }
   }

@@ -398,6 +398,106 @@ std::string hp_compact_badge(const std::string& raw) {
   return s;
 }
 
+enum class HomeFontSizeMode {
+  Small,
+  Medium,
+  Large,
+};
+
+struct HomePortraitTypography {
+  const BitmapFont* time_font_lg{nullptr};
+  const BitmapFont* time_font_sm{nullptr};
+  const BitmapFont* weekday_font{nullptr};
+  const BitmapFont* date_font{nullptr};
+  const BitmapFont* temp_font{nullptr};
+  const BitmapFont* meta_font{nullptr};
+  const BitmapFont* section_font{nullptr};
+  const BitmapFont* family_title_font{nullptr};
+  const BitmapFont* family_name_font{nullptr};
+  const BitmapFont* family_quote_font{nullptr};
+  const BitmapFont* item_font{nullptr};
+  const BitmapFont* badge_font{nullptr};
+  const BitmapFont* menu_item_font{nullptr};
+  const BitmapFont* menu_hint_font{nullptr};
+};
+
+std::string hp_lower(std::string value) {
+  for (char& ch : value) {
+    if (ch >= 'A' && ch <= 'Z') {
+      ch = static_cast<char>(ch - ('A' - 'a'));
+    }
+  }
+  return value;
+}
+
+HomeFontSizeMode home_font_size_mode(const app::AppState& state) {
+  const std::string value = hp_lower(state.settings.font_size);
+  if (value == "small") {
+    return HomeFontSizeMode::Small;
+  }
+  if (value == "large") {
+    return HomeFontSizeMode::Large;
+  }
+  return HomeFontSizeMode::Medium;
+}
+
+HomePortraitTypography home_portrait_typography_for(const app::AppState& state) {
+  using namespace platform::panel_font_assets;
+  const HomeFontSizeMode mode = home_font_size_mode(state);
+  if (mode == HomeFontSizeMode::Small) {
+    return {
+        &kFontInterBlack87,
+        &kFontInterBlack84,
+        &kFontJetBold15,
+        &kFontInterBold17,
+        &kFontInterBlack66,
+        &kFontJetBold13,
+        &kFontJetBold13,
+        &kFontJetBold15,
+        &kFontJetBold13,
+        &kFontPlayfairBold28,
+        &kFontInterMedium13,
+        &kFontJetBold13,
+        &kFontInterBold17,
+        &kFontJetBold13,
+    };
+  }
+  if (mode == HomeFontSizeMode::Large) {
+    return {
+        &kFontInterBlack109,
+        &kFontInterBlack87,
+        &kFontJetExtraBold16,
+        &kFontInterBold22,
+        &kFontInterBlack66,
+        &kFontJetBold15,
+        &kFontJetBold15,
+        &kFontJetExtraBold16,
+        &kFontJetBold15,
+        &kFontPlayfairBold28,
+        &kFontInterBold20,
+        &kFontJetBold15,
+        &kFontInterBold20,
+        &kFontJetBold15,
+    };
+  }
+  return {
+      &kFontInterBlack109,
+      &kFontInterBlack87,
+      &kFontJetExtraBold16,
+      &kFontInterBold20,
+      &kFontInterBlack66,
+      &kFontJetBold13,
+      &kFontJetBold13,
+      &kFontJetExtraBold16,
+      &kFontJetBold15,
+      &kFontPlayfairBold28,
+      &kFontInterMedium18,
+      &kFontJetBold13,
+      &kFontInterBold20,
+      &kFontJetBold13,
+  };
+}
+
 int normalize_rotation_deg(const int raw) {
   const int rounded = ((raw % 360) + 360) % 360;
   if (rounded >= 315 || rounded < 45) return 0;
@@ -435,7 +535,7 @@ std::vector<int> visible_inventory_indices(const app::AppState& state) {
 std::vector<int> visible_reminder_indices(const app::AppState& state) {
   std::vector<int> indices{};
   const int total = static_cast<int>(state.dashboard.reminder_items.size());
-  constexpr int kReminderVisibleMax = 5;
+  constexpr int kReminderVisibleMax = 4;
   indices.reserve(std::min(total, kReminderVisibleMax));
   for (int i = 0; i < total; ++i) {
     if (contains_index(state.home.hidden_reminder_indices, i)) {
@@ -686,19 +786,19 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
   const int deg = normalize_rotation_deg(state.settings.rotation_deg);
   const bool r90 = (deg == 90);   // 90°CCW; false → 270°CW
 
-  // ── Fonts ────────────────────────────────────────────────────────────────
-  const BitmapFont& time_font_lg = kFontInterBlack109;
-  const BitmapFont& time_font_sm = kFontInterBlack87;
-  const BitmapFont& wday_font    = kFontJetExtraBold16;
-  const BitmapFont& date_font    = kFontInterBold20;
-  const BitmapFont& temp_font    = kFontInterBlack66;
-  const BitmapFont& meta_font    = kFontJetBold13;
-  const BitmapFont& section_font = kFontJetBold13;
-  const BitmapFont& family_title_font = kFontJetExtraBold16;
-  const BitmapFont& family_name_font = kFontJetBold15;
-  const BitmapFont& family_quote_font = kFontPlayfairBold28;
-  const BitmapFont& item_font    = kFontInterMedium18;
-  const BitmapFont& badge_font   = kFontJetBold13;
+  const HomePortraitTypography typography = home_portrait_typography_for(state);
+  const BitmapFont& time_font_lg = *typography.time_font_lg;
+  const BitmapFont& time_font_sm = *typography.time_font_sm;
+  const BitmapFont& wday_font    = *typography.weekday_font;
+  const BitmapFont& date_font    = *typography.date_font;
+  const BitmapFont& temp_font    = *typography.temp_font;
+  const BitmapFont& meta_font    = *typography.meta_font;
+  const BitmapFont& section_font = *typography.section_font;
+  const BitmapFont& family_title_font = *typography.family_title_font;
+  const BitmapFont& family_name_font = *typography.family_name_font;
+  const BitmapFont& family_quote_font = *typography.family_quote_font;
+  const BitmapFont& item_font    = *typography.item_font;
+  const BitmapFont& badge_font   = *typography.badge_font;
 
   const std::vector<int> inventory_indices = visible_inventory_indices(state);
   const std::vector<int> reminder_indices = visible_reminder_indices(state);
@@ -1086,8 +1186,8 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
     hp_draw_menu_overlay(
         image,
         state,
-        platform::panel_font_assets::kFontInterBold20,
-        platform::panel_font_assets::kFontJetBold13,
+        *typography.menu_item_font,
+        *typography.menu_hint_font,
         r90);
   }
 

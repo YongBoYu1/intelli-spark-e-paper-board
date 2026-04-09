@@ -29,6 +29,9 @@ constexpr double kHomeFamilyAreaLimitOverride = 0.30;
 constexpr double kHomeMenuOverlayAreaLimitOverride = 0.60;
 constexpr double kHomeReminderReorderAreaLimitOverride = 0.30;
 constexpr double kHomeReminderCompactAreaLimitOverride = 0.40;
+constexpr double kHomeFocusMoveLeftTargetAreaLimitOverride = 0.35;
+constexpr double kHomeFocusCrossPanelAreaLimitOverride = 0.35;
+constexpr bool kReinforceHomeFocusMoveLeftTargetPass = false;
 
 struct CalendarLandscapeRegions {
   platform::DirtyRect left_panel{};
@@ -456,6 +459,19 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
          has_reason(pending_render_.dirty_reasons, "home.reminder_change_fallback"))) {
       effective_mode_limit = std::max(effective_mode_limit, kHomeReminderCompactAreaLimitOverride);
     }
+    if (pending_screen_ == Screen::Home &&
+        has_reason(pending_render_.dirty_reasons, "home.focus_move_left_target")) {
+      effective_mode_limit = std::max(
+          effective_mode_limit,
+          kHomeFocusMoveLeftTargetAreaLimitOverride);
+    }
+    if (pending_screen_ == Screen::Home &&
+        (has_reason(pending_render_.dirty_reasons, "home.focus_to_left_panel") ||
+         has_reason(pending_render_.dirty_reasons, "home.focus_from_left_panel"))) {
+      effective_mode_limit = std::max(
+          effective_mode_limit,
+          kHomeFocusCrossPanelAreaLimitOverride);
+    }
     const double gate_area_ratio =
         refresh_policy::partial_gate_area_ratio(
             aligned_rects,
@@ -477,9 +493,20 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
            has_reason(pending_render_.dirty_reasons, "home.reminder_reorder") ||
            has_reason(pending_render_.dirty_reasons, "home.reminder_compact") ||
            has_reason(pending_render_.dirty_reasons, "home.reminder_change_fallback"));
+      const bool reinforce_home_focus_left_target =
+          pending_screen_ == Screen::Home &&
+          kReinforceHomeFocusMoveLeftTargetPass &&
+          has_reason(pending_render_.dirty_reasons, "home.focus_move_left_target");
+      const bool reinforce_home_focus_cross_panel =
+          pending_screen_ == Screen::Home &&
+          (has_reason(pending_render_.dirty_reasons, "home.focus_to_left_panel") ||
+           has_reason(pending_render_.dirty_reasons, "home.focus_from_left_panel"));
 
       int partial_passes = 1;
       if (reinforce_home_reminder) {
+        partial_passes = std::max(partial_passes, 2);
+      }
+      if (reinforce_home_focus_cross_panel) {
         partial_passes = std::max(partial_passes, 2);
       }
 
@@ -492,6 +519,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             kTag,
             "[refresh] R1_PARTIAL_RECTS screen=%s count=%u rects=%s gate_ratio=%.3f limit=%.3f "
             "partial_count=%d/%d budget=%s passes=%d reinforce_home_reminder=%s "
+            "reinforce_home_focus_left_target=%s reinforce_home_focus_cross_panel=%s "
             "force_calendar_partial=%s mode=%s dirty=%s",
             screen_name(pending_screen_),
             static_cast<unsigned>(aligned_rects.size()),
@@ -503,6 +531,8 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             state_.settings.partial_refresh_budget_enabled ? "on" : "off",
             partial_passes,
             reinforce_home_reminder ? "on" : "off",
+            reinforce_home_focus_left_target ? "on" : "off",
+            reinforce_home_focus_cross_panel ? "on" : "off",
             calendar_force_partial ? "on" : "off",
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());

@@ -51,6 +51,7 @@ struct ClockSnapshot {
 
 constexpr int kInventoryVisibleLandscapeMax = 3;
 constexpr int kInventoryVisiblePortraitMax = 4;
+constexpr int kReminderVisiblePortraitMax = 4;
 constexpr int kReminderVisibleMax = 5;
 constexpr int kHomeMenuItemCount = 5;
 constexpr const char* kHomeMenuItems[kHomeMenuItemCount] = {
@@ -65,6 +66,32 @@ enum class HomeFocusKind {
   Clock,
   Weather,
   Row,
+};
+
+enum class HomeFontSizeMode {
+  Small,
+  Medium,
+  Large,
+};
+
+struct HomeTypography {
+  const BitmapFont* section_title_font{nullptr};
+  const BitmapFont* badge_font{nullptr};
+  const BitmapFont* item_font{nullptr};
+  const BitmapFont* family_label_font{nullptr};
+  const BitmapFont* family_name_font{nullptr};
+  const BitmapFont* family_quote_font{nullptr};
+  const BitmapFont* family_meta_font{nullptr};
+  const BitmapFont* voice_font{nullptr};
+  const BitmapFont* menu_hint_font{nullptr};
+  const BitmapFont* time_flow_font{nullptr};
+  const BitmapFont* time_display_font_large{nullptr};
+  const BitmapFont* time_display_font_mid{nullptr};
+  const BitmapFont* weekday_font{nullptr};
+  const BitmapFont* date_font{nullptr};
+  const BitmapFont* city_font{nullptr};
+  const BitmapFont* temp_font{nullptr};
+  const BitmapFont* weather_meta_font{nullptr};
 };
 
 struct HomeLandscapeMetrics {
@@ -121,6 +148,118 @@ struct HomeMenuOverlayLayout {
   int pills_y{0};
   bool compact{false};
 };
+
+std::string lowercase_copy(std::string value) {
+  for (char& ch : value) {
+    if (ch >= 'A' && ch <= 'Z') {
+      ch = static_cast<char>(ch - ('A' - 'a'));
+    }
+  }
+  return value;
+}
+
+HomeFontSizeMode home_font_size_mode(const app::AppState& state) {
+  const std::string value = lowercase_copy(state.settings.font_size);
+  if (value == "small") {
+    return HomeFontSizeMode::Small;
+  }
+  if (value == "large") {
+    return HomeFontSizeMode::Large;
+  }
+  return HomeFontSizeMode::Medium;
+}
+
+HomeTypography home_typography_for(const app::AppState& state) {
+  using namespace platform::panel_font_assets;
+  const HomeFontSizeMode mode = home_font_size_mode(state);
+  if (mode == HomeFontSizeMode::Small) {
+    return {
+        &kFontInterBold13,
+        &kFontJetBold13,
+        &kFontInterMedium13,
+        &kFontJetBold15,
+        &kFontJetBold13,
+        &kFontPlayfairBold28,
+        &kFontJetBold13,
+        &kFontInterMedium13,
+        &kFontJetBold13,
+        &kFontInterBlack66,
+        &kFontInterBlack87,
+        &kFontInterBlack84,
+        &kFontInterSemiBold13,
+        &kFontInterBold17,
+        &kFontInterSemiBold13,
+        &kFontInterBlack66,
+        &kFontJetBold13,
+    };
+  }
+  if (mode == HomeFontSizeMode::Large) {
+    return {
+        &kFontInterBold17,
+        &kFontJetBold15,
+        &kFontInterBold20,
+        &kFontJetExtraBold16,
+        &kFontJetBold15,
+        &kFontPlayfairBold28,
+        &kFontJetBold15,
+        &kFontInterBold17,
+        &kFontJetBold15,
+        &kFontInterBlack87,
+        &kFontInterBlack109,
+        &kFontInterBlack87,
+        &kFontInterBold18,
+        &kFontInterBold20,
+        &kFontInterBold17,
+        &kFontInterBlack66,
+        &kFontJetBold15,
+    };
+  }
+  return {
+      &kFontInterBold13,
+      &kFontJetBold13,
+      &kFontInterMedium18,
+      &kFontJetExtraBold16,
+      &kFontJetBold15,
+      &kFontPlayfairBold28,
+      &kFontJetBold13,
+      &kFontInterMedium13,
+      &kFontJetBold13,
+      &kFontInterBlack84,
+      &kFontInterBlack109,
+      &kFontInterBlack87,
+      &kFontInterSemiBold15,
+      &kFontInterBold18,
+      &kFontInterSemiBold13,
+      &kFontInterBlack66,
+      &kFontJetBold15,
+  };
+}
+
+std::vector<const BitmapFont*> home_menu_item_font_candidates(
+    const HomeFontSizeMode mode) {
+  using namespace platform::panel_font_assets;
+  if (mode == HomeFontSizeMode::Small) {
+    return {
+        &kFontInterBold17,
+        &kFontInterSemiBold15,
+        &kFontInterBold13,
+    };
+  }
+  if (mode == HomeFontSizeMode::Large) {
+    return {
+        &kFontInterBold20,
+        &kFontInterBold18,
+        &kFontInterBold17,
+        &kFontInterSemiBold15,
+    };
+  }
+  return {
+      &kFontInterBold18,
+      &kFontInterBold17,
+      &kFontInterSemiBold15,
+      &kFontInterBold13,
+  };
+}
 
 int normalize_rotation_deg(const int raw) {
   const int rounded = ((raw % 360) + 360) % 360;
@@ -298,9 +437,13 @@ FocusBox home_header_focus_box(
   if (kind == HomeFocusKind::Weather) {
     return {
         metrics.weather_left - metrics.header_focus_pad_x,
-        std::max(metrics.oy0 + 2, metrics.weather_top - metrics.header_focus_pad_y),
+        std::max(
+            metrics.oy0 + 2,
+            metrics.weather_top - metrics.header_focus_pad_y - 20),
         metrics.weather_right + metrics.header_focus_pad_x,
-        std::min(metrics.oy1, metrics.weather_bottom + metrics.header_focus_pad_y),
+        std::min(
+            metrics.oy1,
+            metrics.weather_bottom + metrics.header_focus_pad_y + 8),
         true,
     };
   }
@@ -1410,13 +1553,16 @@ std::vector<int> visible_reminder_indices(const app::AppState& state) {
   const app::DashboardSummary& dashboard = state.dashboard;
   std::vector<int> indices{};
   const int total = static_cast<int>(dashboard.reminder_items.size());
-  indices.reserve(std::min(total, kReminderVisibleMax));
+  const int visible_max = home_uses_portrait_layout(state.settings.rotation_deg)
+                              ? kReminderVisiblePortraitMax
+                              : kReminderVisibleMax;
+  indices.reserve(std::min(total, visible_max));
   for (int i = 0; i < total; ++i) {
     if (contains_index(state.home.hidden_reminder_indices, i)) {
       continue;
     }
     indices.push_back(i);
-    if (static_cast<int>(indices.size()) >= kReminderVisibleMax) {
+    if (static_cast<int>(indices.size()) >= visible_max) {
       break;
     }
   }
@@ -1553,7 +1699,10 @@ void draw_inventory_section(
     const int title_y,
     const app::AppState& state) {
   const app::DashboardSummary& dashboard = state.dashboard;
-  const BitmapFont& title_font = platform::panel_font_assets::kFontInterBold13;
+  const HomeTypography typography = home_typography_for(state);
+  const BitmapFont& title_font = *typography.section_title_font;
+  const BitmapFont& badge_font = *typography.badge_font;
+  const BitmapFont& item_font = *typography.item_font;
   constexpr int title_spacing = 2;
   draw_text_with_font_spaced(image, x0, title_y, "INVENTORY", title_font, title_spacing);
   const std::vector<int> inventory_indices = visible_inventory_indices(state);
@@ -1595,7 +1744,6 @@ void draw_inventory_section(
       badge = uppercase_copy(dashboard.inventory_badges[static_cast<std::size_t>(item_index)]);
     }
     badge = truncate_text_px(badge, 1, 84);
-    const BitmapFont& badge_font = platform::panel_font_assets::kFontJetBold13;
     const int badge_width = text_width_with_font(badge, badge_font);
 
     const int title_max_w =
@@ -1612,7 +1760,6 @@ void draw_inventory_section(
     // Hardware behavior: repeated partial refresh on weight flip (medium<->bold)
     // causes visible right-list fade on current panel batches. Keep row text
     // weight stable and express focus with stroke box only.
-    const BitmapFont& item_font = platform::panel_font_assets::kFontInterMedium18;
     draw_text_with_font(
         image,
         item_text_x,
@@ -1644,6 +1791,7 @@ void draw_checkbox_row(
     const int row_right_x,
     const int text_x,
     const std::string& text,
+    const BitmapFont& text_font,
     const bool checked,
     const bool focused) {
   const int checkbox_size = 14;
@@ -1655,7 +1803,6 @@ void draw_checkbox_row(
   draw_checkbox(image, cb_x0, cb_y0, checked, false, checkbox_size);
   // Same rationale as inventory rows: keep text weight stable to avoid
   // partial-refresh fade accumulation during navigation.
-  const BitmapFont& text_font = platform::panel_font_assets::kFontInterMedium18;
   const std::string clipped =
       truncate_text_px(text, 2, std::max(0, row_right_x - text_x - 8));
   const int text_y = centered_sample_y_with_font(row_y, row_h, text_font);
@@ -1677,13 +1824,15 @@ void draw_reminders_section(
     const app::AppState& state,
     const HomeLandscapeMetrics& metrics) {
   const app::DashboardSummary& dashboard = state.dashboard;
+  const HomeTypography typography = home_typography_for(state);
   const int inventory_rows = visible_inventory_count(state);
   const int inv_bottom_y = metrics.inv_row_y + (inventory_rows * metrics.inv_row_h);
   const int shop_rule_y =
       std::max(metrics.family_rule_y, inv_bottom_y + metrics.shop_rule_y_min_gap);
   const int title_y = shop_rule_y - metrics.shop_title_h - metrics.shop_line_gap;
   const int row_start_y = std::max(title_y + metrics.shop_header_gap, shop_rule_y + 10);
-  const BitmapFont& title_font = platform::panel_font_assets::kFontInterBold13;
+  const BitmapFont& title_font = *typography.section_title_font;
+  const BitmapFont& item_font = *typography.item_font;
   constexpr int title_spacing = 1;
   draw_text_with_font_spaced(image, x0, title_y, "REMINDERS", title_font, title_spacing);
   const std::vector<int> reminder_indices = visible_reminder_indices(state);
@@ -1733,6 +1882,7 @@ void draw_reminders_section(
         x1,
         x0 + 30,
         dashboard.reminder_items[static_cast<std::size_t>(item_index)],
+        item_font,
         checked,
         focused_row == i);
   }
@@ -1746,10 +1896,11 @@ void draw_family_board(
     const int rule_y,
     const int bottom_y,
     const app::AppState& state) {
-  const BitmapFont& label_font = platform::panel_font_assets::kFontJetExtraBold16;
-  const BitmapFont& family_name_font = platform::panel_font_assets::kFontJetBold15;
-  const BitmapFont& quote_font = platform::panel_font_assets::kFontPlayfairBold28;
-  const BitmapFont& meta_font = platform::panel_font_assets::kFontJetBold13;
+  const HomeTypography typography = home_typography_for(state);
+  const BitmapFont& label_font = *typography.family_label_font;
+  const BitmapFont& family_name_font = *typography.family_name_font;
+  const BitmapFont& quote_font = *typography.family_quote_font;
+  const BitmapFont& meta_font = *typography.family_meta_font;
   const FamilyBoardView view = resolve_family_board_view(state);
 
   constexpr int title_spacing = 3;
@@ -1841,10 +1992,12 @@ void draw_voice_lane(
     std::vector<uint8_t>& image,
     const int x0,
     const int y0,
-    const int x1) {
+    const int x1,
+    const app::AppState& state) {
   const int lane_h = 29;
   const int icon_size = 16;
-  const BitmapFont& font = platform::panel_font_assets::kFontInterMedium13;
+  const HomeTypography typography = home_typography_for(state);
+  const BitmapFont& font = *typography.voice_font;
   const std::string label = "Hold to talk";
   fill_white_rect(image, x0, y0 - 1, x1, y0 + lane_h + 1);
   const int icon_x = x0 + 2;
@@ -1890,8 +2043,10 @@ void draw_home_menu_overlay(
       overlay_radius,
       border_w);
 
-  const BitmapFont& hint_font = platform::panel_font_assets::kFontJetBold13;
-  const BitmapFont* item_font = &platform::panel_font_assets::kFontInterBold18;
+  const HomeTypography typography = home_typography_for(state);
+  const HomeFontSizeMode fs_mode = home_font_size_mode(state);
+  const BitmapFont& hint_font = *typography.menu_hint_font;
+  const BitmapFont* item_font = typography.item_font;
   constexpr int hint_spacing = 0;
   const std::string hint = "NAVIGATION";
   const int hint_w = text_width_with_font_spaced(hint, hint_font, hint_spacing);
@@ -1908,12 +2063,7 @@ void draw_home_menu_overlay(
 
   // Python parity intent: progressively reduce label size when pills are tight.
   // We use the closest available bitmap-font ladder on firmware.
-  std::vector<const BitmapFont*> candidates = {
-      &platform::panel_font_assets::kFontInterBold18,
-      &platform::panel_font_assets::kFontInterBold17,
-      &platform::panel_font_assets::kFontInterSemiBold15,
-      &platform::panel_font_assets::kFontInterBold13,
-  };
+  std::vector<const BitmapFont*> candidates = home_menu_item_font_candidates(fs_mode);
   item_font = candidates.back();
   for (const BitmapFont* candidate : candidates) {
     int max_w = 0;
@@ -2000,35 +2150,22 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
           state.home.clock_minute_bucket,
           state.onboarding.timezone,
           state.home.clock_is_real);
-  const bool clock_synced = state.home.clock_sync_state == "real_synced";
   const ClockSnapshot display_clock = (state.home.clock_minute_bucket > 0) ? clock : ClockSnapshot{};
   const int weather_col_w = 142;
   const int weather_right = left_x1 - 2;
   const int weather_left = weather_right - weather_col_w;
   const HomeLandscapeMetrics metrics = home_landscape_metrics();
+  const HomeTypography typography = home_typography_for(state);
 
-  if (state.home.show_focus && state.home.focused_index == 0) {
-    const FocusBox box = home_header_focus_box(metrics, HomeFocusKind::Clock);
-    if (box.valid) {
-      draw_focus_stroke(image, box.x0, box.y0, box.x1, box.y1);
-    }
-  }
-  if (state.home.show_focus && state.home.focused_index == 1) {
-    const FocusBox box = home_header_focus_box(metrics, HomeFocusKind::Weather);
-    if (box.valid) {
-      draw_focus_stroke(image, box.x0, box.y0, box.x1, box.y1);
-    }
-  }
-
-  const BitmapFont& time_flow_font = platform::panel_font_assets::kFontInterBlack84;
-  const BitmapFont& time_display_font_large = platform::panel_font_assets::kFontInterBlack109;
-  const BitmapFont& time_display_font_mid = platform::panel_font_assets::kFontInterBlack87;
-  const BitmapFont& weekday_font = platform::panel_font_assets::kFontInterSemiBold15;
-  const BitmapFont& date_font = platform::panel_font_assets::kFontInterBold18;
-  const BitmapFont& city_font = platform::panel_font_assets::kFontInterSemiBold13;
-  const BitmapFont& temp_font = platform::panel_font_assets::kFontInterBlack66;
-  const BitmapFont& weather_meta_font = platform::panel_font_assets::kFontJetBold15;
-  const BitmapFont& family_label_font = platform::panel_font_assets::kFontJetExtraBold16;
+  const BitmapFont& time_flow_font = *typography.time_flow_font;
+  const BitmapFont& time_display_font_large = *typography.time_display_font_large;
+  const BitmapFont& time_display_font_mid = *typography.time_display_font_mid;
+  const BitmapFont& weekday_font = *typography.weekday_font;
+  const BitmapFont& date_font = *typography.date_font;
+  const BitmapFont& city_font = *typography.city_font;
+  const BitmapFont& temp_font = *typography.temp_font;
+  const BitmapFont& weather_meta_font = *typography.weather_meta_font;
+  const BitmapFont& family_label_font = *typography.family_label_font;
 
   const bool weather_synced = state.home.weather_sync_state == "ok";
   const std::string weekday = uppercase_copy(display_clock.weekday_label);
@@ -2073,22 +2210,26 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       top_y + (time_flow_bounds.valid ? time_flow_bounds.bottom : time_flow_font.line_height);
   const int weekday_y = time_flow_bottom + 13;
   int weather_bottom = weekday_y;
+  int clock_bottom_for_focus =
+      weekday_y + text_height_with_font("UNSYNCED", weather_meta_font) + 8;
   if (display_clock.valid) {
     draw_text_with_font_spaced(image, left_x0, weekday_y, weekday, weekday_font, 4);
     const int weekday_h = text_height_with_font("Ag", weekday_font);
     const int date_y = weekday_y + weekday_h + 11;
     draw_text_with_font(image, left_x0, date_y, date, date_font);
     weather_bottom = date_y + text_height_with_font(date, date_font);
+    clock_bottom_for_focus = weather_bottom + 8;
   } else {
     draw_text_with_font(
         image,
         left_x0,
         weekday_y,
         "UNSYNCED",
-        platform::panel_font_assets::kFontJetBold13);
+        weather_meta_font);
   }
 
   const int temp_y = top_y - 2;
+  int weather_focus_top = std::max(outer_y0 + 2, temp_y - 6);
   const int temp_w = text_width_with_font(temp, temp_font);
   constexpr int degree_gap = 0;
   constexpr int degree_size = 8;
@@ -2101,6 +2242,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   if (!location.empty()) {
     const int city_h = text_height_with_font(location, city_font);
     const int city_y = std::max(outer_y0 + 4, temp_y - city_h - 6);
+    weather_focus_top = std::min(weather_focus_top, std::max(outer_y0 + 2, city_y - 4));
     draw_right_aligned_text_with_font_spaced(
         image,
         weather_right,
@@ -2148,6 +2290,23 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       weather_bottom,
       std::max(desc_y + desc_h, humidity_y + text_height_with_font(humidity, weather_meta_font)));
 
+  if (state.home.show_focus && state.home.focused_index == 0) {
+    draw_focus_stroke(
+        image,
+        left_x0 - 6,
+        std::max(outer_y0 + 2, top_y - 28),
+        std::max(left_x0 + 10, weather_left - 7),
+        std::min(outer_y1, clock_bottom_for_focus));
+  }
+  if (state.home.show_focus && state.home.focused_index == 1) {
+    draw_focus_stroke(
+        image,
+        weather_left - 6,
+        weather_focus_top,
+        weather_right + 6,
+        std::min(outer_y1, weather_bottom + 8));
+  }
+
   const int header_rule_y = weather_bottom + 28;
   const int family_label_y = header_rule_y + 8;
   const int family_rule_y = family_label_y + text_height_with_font("Ag", family_label_font) + 8;
@@ -2169,7 +2328,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       family_rule_y,
       voice_lane_y - 4,
       state);
-  draw_voice_lane(image, 14, voice_lane_y, 14 + 340);
+  draw_voice_lane(image, 14, voice_lane_y, 14 + 340, state);
 
   draw_inventory_section(image, right_x0, right_x1, render_metrics.inv_y, state);
   draw_reminders_section(image, right_x0, right_x1, state, render_metrics);
@@ -2356,18 +2515,24 @@ HomeDirtyPlan home_dirty_plan(
     const platform::DirtyRect curr_rect =
         focus_rect_for(current, current.focused_index, current.show_focus);
 
-    if ((prev_kind == HomeFocusKind::Row && curr_kind == HomeFocusKind::Row) ||
-        (prev_kind != HomeFocusKind::Row && curr_kind != HomeFocusKind::Row)) {
+    if (prev_kind == HomeFocusKind::Row && curr_kind == HomeFocusKind::Row) {
       const platform::DirtyRect merged = merge_focus_transition_rects(prev_rect, curr_rect);
       if (is_valid_rect(merged)) {
         append_rect_if_valid(plan.rects, merged);
-      } else if (prev_kind == HomeFocusKind::Row) {
+      } else {
         append_rect_if_valid(plan.rects, list_rect_for(current));
       }
-      add_reason(
-          prev_kind == HomeFocusKind::Row
-              ? "home.focus_move_row"
-              : "home.focus_move_left_target");
+      add_reason("home.focus_move_row");
+    } else if (prev_kind != HomeFocusKind::Row &&
+               curr_kind != HomeFocusKind::Row) {
+      const platform::DirtyRect merged = merge_focus_transition_rects(prev_rect, curr_rect);
+      if (is_valid_rect(merged)) {
+        append_rect_if_valid(plan.rects, merged);
+      } else {
+        append_rect_if_valid(plan.rects, prev_rect);
+        append_rect_if_valid(plan.rects, curr_rect);
+      }
+      add_reason("home.focus_move_left_target");
     } else {
       append_rect_if_valid(plan.rects, prev_rect);
       append_rect_if_valid(plan.rects, curr_rect);
