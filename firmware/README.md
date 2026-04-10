@@ -1,98 +1,173 @@
-# Firmware — ESP32-S3 C++ Runtime
+# Firmware (C++ Runtime) Guide
 
-ESP32-S3 firmware for the Fridge Ink smart home e-paper board.
+This document is the source-of-truth README for the ESP32-S3 C++ firmware in `firmware/`.
+It explains project structure, runtime flow, startup behavior, and product-facing configuration switches.
 
-## Hardware
+## 1. Build And Flash
 
-| Component | Spec |
-|-----------|------|
-| MCU | ESP32-S3 (QFN56, N16R8 — 16MB flash, 8MB PSRAM) |
-| Display | Waveshare 7.5" e-Paper V2 (UC8176, 800×480, B/W) |
-| SPI | Hardware SPI, 4 MHz |
-| GPIOs | RST=4, PWR=8, MOSI=11, CLK=12, BUSY=14, DC=21, CS=47 |
-
-## Build & Flash
-
-Requires [ESP-IDF v5.3](https://docs.espressif.com/projects/esp-idf/en/v5.3/) installed with `IDF_PATH` set.
+Requires [ESP-IDF v5.3](https://docs.espressif.com/projects/esp-idf/en/v5.3/) with `IDF_PATH` configured.
 
 ```bash
 cd firmware
-source ~/esp/esp-idf/export.sh   # activate ESP-IDF toolchain
-idf.py set-target esp32s3        # first time only
+source ~/esp/esp-idf/export.sh
+idf.py set-target esp32s3   # first time only
 idf.py build
 idf.py -p /dev/cu.usbmodem* flash monitor
 ```
 
-Serial input during `monitor`: `a`/`d` = rotate left/right, `c` = click.
+Serial controls in monitor:
+- `a`/`d` (or `h`/`l`): rotate
+- `c` (or Enter/Space): click
+- `m`: long-press
+- `b`: back
+- `t<epoch><Enter>`: sync wall clock
+- `v<HH>`: VCOM sweep
 
-## Architecture
+Reference: `firmware/main/main.cpp`
 
-Unidirectional data flow: **Event → Reducer → State → Render**.
+## 2. Runtime Architecture
 
+Unidirectional runtime:
+
+`Event -> Reducer -> AppState -> Render -> Display`
+
+Main path:
+- `firmware/main/main.cpp`: loop, serial input, Tick dispatch
+- `firmware/main/app/reducer.cpp`: state transitions
+- `firmware/main/app/runtime.cpp`: dirty planning, refresh decision, render staging
+- `firmware/main/ui/render_app.cpp`: screen router
+- `firmware/main/platform/display.cpp`: full/partial display driver
+
+## 3. Source Tree (Firmware)
+
+```text
+firmware/
+  README.md
+  docs/
+    display_experiments.md
+  main/
+    main.cpp
+    CMakeLists.txt
+    app/
+      state.hpp/.cpp
+      events.hpp
+      defaults.hpp/.cpp
+      reducer.hpp/.cpp
+      runtime.hpp/.cpp
+      refresh_policy.hpp/.cpp
+      calendar_runtime.hpp/.cpp
+    platform/
+      board_config.hpp/.cpp
+      panel_config.hpp
+      display.hpp/.cpp
+      clock.hpp/.cpp
+      live_data_provider.hpp/.cpp
+    ui/
+      render_app.hpp/.cpp
+      draw.hpp/.cpp
+      primitives.hpp/.cpp
+      screens/
+        *_screen.cpp / *_screen_landscape.cpp / *_screen_portrait.cpp
 ```
-main.cpp (FreeRTOS loop, 50ms tick)
-  → Runtime::dispatch(Event)
-    → reduce(AppState&, Event)
-    → render_app(AppState, Display)
-```
 
-### Directory Structure
+## 4. Engineering Docs Structure
 
-```
-main/
-├── main.cpp                     Entry point, FreeRTOS loop, serial input
-├── app/
-│   ├── state.hpp                AppState, Screen enum, sub-state structs
-│   ├── events.hpp               Event types (Rotate, Click, Tick)
-│   ├── reducer.cpp              All state transitions
-│   └── runtime.cpp              Runtime class (owns state + display)
-├── platform/
-│   ├── display.cpp              SPI driver, panel init, refresh logic (~500 lines)
-│   ├── display.hpp              Display interface (display_image)
-│   ├── panel_config.hpp         Panel constants (800×480)
-│   └── board_config.cpp/.hpp    ESP32-S3 GPIO pin mapping
-└── ui/
-    ├── draw.cpp/.hpp            Drawing primitives, font engine, text layout
-    ├── render_app.cpp/.hpp      Screen router → display.display_image()
-    ├── panel_font_assets_generated.hpp   Generated bitmap fonts
-    └── screens/
-        ├── landing_screen.cpp   Landing page renderer
-        ├── onboarding_screen.cpp Onboarding 4-step renderer
-        └── home_screen.cpp      Home page renderer
-```
+Primary docs relevant to C++ runtime:
+- `firmware/README.md` (this file): runtime entry guide
+- `firmware/docs/display_experiments.md`: display bring-up and driver notes
+- `docs/EPD_REFRESH_STRATEGY_PLAYBOOK.md`: board-level refresh policy standard
+- `docs/SETTINGS_V1.md`: settings behavior contract
+- `docs/issues/*.md`: issue handoff docs and parity checkpoints
 
-### Screen State Machine
+Recommended usage:
+- Read `firmware/README.md` first for code map and startup behavior
+- Use `docs/issues/*.md` as migration/change history
+- Use refresh playbook before changing partial/full strategy
 
-`Landing` → `Onboarding` (4 steps: Start, PairQR, Prefs, VoiceGuide) → `Home`
+## 5. Startup Behavior (Home vs Landing)
 
-### Display Driver
+This is the most common product confusion.
 
-- Panel Setting 0x00=0x1F (OTP LUT mode)
-- Pixel convention: 0=black, 1=white (matches Python `getbuffer()`)
-- Full refresh: DTM1 (0x10) + DTM2 (0x13) + 0x12
-- Partial refresh: `init_part()` with 0xE0/0xE5, then 0x91/0x90 window
+Current implementation details:
+1. `Runtime::boot()` loads defaults via `make_factory_defaults()` and `make_state_from_defaults()`.
+2. `resolve_boot_screen()` returns:
+   - `Home` when `defaults.setup_completed == true`
+   - `Landing` when `defaults.setup_completed == false`
+3. In current branch, `make_factory_defaults()` sets `setup_completed = true`, so boot enters Home.
 
-### Asset Generation
+Code locations:
+- `firmware/main/app/defaults.cpp`
+  - `make_factory_defaults()`
+  - `resolve_boot_screen()`
+  - `make_state_from_defaults()`
+- `firmware/main/app/runtime.cpp` (`Runtime::boot()`)
 
-```bash
-python tools/generate_firmware_font_assets.py   # → panel_font_assets_generated.hpp
-python tools/generate_firmware_panel_assets.py   # → assets/*.raw (if needed)
-```
+### How Product Can Switch To Landing Start
 
-## Issue Status
+Option A (recommended for product behavior):
+1. Edit `firmware/main/app/defaults.cpp`
+2. In `make_factory_defaults()`, set:
+   - `defaults.setup_completed = false;`
+3. Rebuild and flash.
 
-- **Issue #51** (runtime V0 foundation):
-  - close by runtime-foundation acceptance (boot/defaults/reducer-driven runtime structure), not by full product parity.
-- **Issue #52** (behavior migration + product parity):
-  - active closeout track.
-  - execution order: finish landscape first, then portrait.
-- **Issue #53** (runtime host integration completeness):
-  - starts only after `#52` closes.
+Result:
+- Boot starts at `Screen::Landing`.
+- Flow becomes `Landing -> Onboarding -> Home`.
 
-Primary closeout plan:
+Option B (debug-only force):
+- Hard-force `resolve_boot_screen()` to return `Screen::Landing` regardless of defaults.
+- Use only for temporary debugging; do not keep as product default.
+
+## 6. Refresh / Waveform Current State
+
+Display and refresh knobs are in `firmware/main/platform/display.cpp`.
+
+Current key defaults:
+- `kEnablePartialRefresh = true`
+- `kUseHostLutWaveformProfile = true`
+- `kUseHostLutDualPlaneRefresh = true`
+
+Why host LUT path is enabled:
+- There is a contrast regression note in code; host-LUT path is kept as current stable behavior for this panel batch.
+
+Runtime refresh decisions are logged in `firmware/main/app/runtime.cpp`:
+- `R1_PARTIAL_RECTS`
+- `R2_FAST_FULL`
+- `R3_FULL_CLEAN`
+
+When tuning refresh behavior, update both:
+- runtime dirty-reason/rect logic
+- display driver waveform assumptions
+
+## 7. Product-Facing Config Knobs
+
+Common knobs and where to change them:
+- Boot start screen: `app/defaults.cpp` (`setup_completed` + `resolve_boot_screen`)
+- Default rotation: `app/defaults.cpp` (`state.settings.rotation_deg`)
+- Timer defaults: `app/reducer.cpp` (`kTimerDefaultSeconds`, `kTimerStepSeconds`, `kTimerMaxSeconds`)
+- Partial mode default: `app/defaults.cpp` (`state.settings.partial_refresh_mode`)
+- Full refresh cadence: `app/defaults.cpp` (`state.settings.full_refresh_every`)
+- Default timezone: `app/defaults.cpp` (`kDefaultTimezone`)
+
+## 8. Screen Routing Notes
+
+Screen routing is centralized in `firmware/main/ui/render_app.cpp`.
+Each screen renderer is responsible for orientation-specific layout when needed.
+
+Examples:
+- Timer: `timer_screen.cpp` dispatches landscape vs portrait renderer based on rotation
+- Weather: `weather_screen.cpp` dispatches landscape vs portrait renderer
+
+## 9. Change Checklist (Before Merging)
+
+For behavior changes, verify:
+1. Reducer semantics (`rotate/click/tick/back/long-press`) remain coherent.
+2. Dirty reasons and dirty rects are explainable in logs.
+3. No unexpected `R2_FAST_FULL` spikes.
+4. Product startup expectation (Landing vs Home) is explicitly documented in PR.
+
+## 10. Related Context Files
+
 - `docs/issues/2026-04-05-issue-51-52-53-closeout-plan.md`
-
-Historical context docs:
-- `docs/issues/2026-03-26-issue-52-assignee-context.md`
-- `docs/issues/2026-03-26-issue-53-assignee-context.md`
-- `docs/issues/2026-03-26-issue-51-freeze-and-issue-52-kickoff.md`
+- `docs/issues/2026-04-08-issue-63-home-portrait-parity-handoff.md`
+- `docs/issues/2026-04-09-issue-70-timer-portrait-parity-handoff.md`
