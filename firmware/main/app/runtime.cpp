@@ -378,7 +378,7 @@ platform::DirtyRect timer_controls_rect(const AppState& state) {
     // Tight semantic rect: x=[24,464], y=[710,772] — covers button row only.
     // x1=464 not 456: last button ends at x=460 (max(100,calc=99)×4 layout),
     // so the nominal kPW-kMargin=456 would miss the rightmost 4px of RESET.
-    // Physical area ratio: 62×440/384k ≈ 0.7%.
+    // Physical area ratio: 62×440/384k ≈ 7.1%.
     return timer_map_portrait_rect(24, 710, 464, 772, r90);
   }
   return platform::DirtyRect{
