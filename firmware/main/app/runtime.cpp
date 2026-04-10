@@ -375,9 +375,11 @@ platform::DirtyRect timer_time_status_rect(const AppState& state) {
 platform::DirtyRect timer_controls_rect(const AppState& state) {
   if (timer_uses_portrait_layout(state)) {
     const bool r90 = normalize_rotation_deg(state.settings.rotation_deg) == 90;
-    // Tight semantic rect: x=[24,456], y=[710,772] — covers button row only.
-    // Physical area ratio: 62×432/384k ≈ 0.7%.
-    return timer_map_portrait_rect(24, 710, 456, 772, r90);
+    // Tight semantic rect: x=[24,464], y=[710,772] — covers button row only.
+    // x1=464 not 456: last button ends at x=460 (max(100,calc=99)×4 layout),
+    // so the nominal kPW-kMargin=456 would miss the rightmost 4px of RESET.
+    // Physical area ratio: 62×440/384k ≈ 0.7%.
+    return timer_map_portrait_rect(24, 710, 464, 772, r90);
   }
   return platform::DirtyRect{
       24,
