@@ -90,11 +90,6 @@ DateValue from_time_t_local(const std::time_t raw) {
   };
 }
 
-std::time_t to_time_t_local(const DateValue& date) {
-  std::tm tm = make_tm(date);
-  return std::mktime(&tm);
-}
-
 std::string trim_copy_ascii(const std::string& in) {
   std::size_t start = 0;
   while (start < in.size() && std::isspace(static_cast<unsigned char>(in[start]))) {
@@ -357,8 +352,9 @@ DateValue today_local_date(const AppState& state) {
 }
 
 DateValue add_days(const DateValue& base, const int delta_days) {
-  const std::time_t base_ts = to_time_t_local(base);
-  const std::time_t shifted = base_ts + static_cast<std::time_t>(delta_days) * 24 * 60 * 60;
+  std::tm tm = make_tm(base);
+  tm.tm_mday += delta_days;
+  const std::time_t shifted = std::mktime(&tm);
   return from_time_t_local(shifted);
 }
 
