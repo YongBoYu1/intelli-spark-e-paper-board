@@ -26,8 +26,12 @@ std::vector<ListRow> build_inventory_rows(const app::AppState& state) {
   std::vector<ListRow> rows;
   const auto& items = state.dashboard.inventory_items;
   const auto& completed = state.dashboard.inventory_completed;
+  const auto& hidden = state.home.hidden_inventory_indices;
   rows.reserve(items.size());
   for (std::size_t i = 0; i < items.size(); ++i) {
+    if (std::find(hidden.begin(), hidden.end(), static_cast<int>(i)) != hidden.end()) {
+      continue;
+    }
     const bool done = i < completed.size() && completed[i];
     rows.push_back(ListRow{items[i], done});
   }
@@ -38,8 +42,12 @@ std::vector<ListRow> build_reminder_rows(const app::AppState& state) {
   std::vector<ListRow> rows;
   const auto& items = state.dashboard.reminder_items;
   const auto& completed = state.dashboard.reminder_completed;
+  const auto& hidden = state.home.hidden_reminder_indices;
   rows.reserve(items.size());
   for (std::size_t i = 0; i < items.size(); ++i) {
+    if (std::find(hidden.begin(), hidden.end(), static_cast<int>(i)) != hidden.end()) {
+      continue;
+    }
     const bool done = i < completed.size() && completed[i];
     rows.push_back(ListRow{items[i], done});
   }

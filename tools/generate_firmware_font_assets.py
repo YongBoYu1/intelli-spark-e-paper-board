@@ -42,7 +42,7 @@ FONT_SPECS = (
     FontSpec("kFontInterSemiBold15", "inter_semibold_15", "Inter-SemiBold.ttf", 15),
     FontSpec("kFontInterSemiBold13", "inter_semibold_13", "Inter-SemiBold.ttf", 13),
     FontSpec("kFontJetExtraBold109", "jet_extrabold_109", "JetBrainsMono-ExtraBold.ttf", 109),
-    FontSpec("kFontJetExtraBold87", "jet_extrabold_87", "JetBrainsMono-ExtraBold.ttf", 87),
+    FontSpec("kFontJetExtraBold124", "jet_extrabold_124", "JetBrainsMono-ExtraBold.ttf", 124),
     FontSpec("kFontJetExtraBold66", "jet_extrabold_66", "JetBrainsMono-ExtraBold.ttf", 66),
     FontSpec("kFontJetExtraBold16", "jet_extrabold_16", "JetBrainsMono-ExtraBold.ttf", 16),
     FontSpec("kFontJetBold15", "jet_bold_15", "JetBrainsMono-Bold.ttf", 15),

@@ -38,6 +38,19 @@ struct MemoItem {
   bool is_new{false};
 };
 
+struct ReminderMetaItem {
+  std::string rid{};
+  std::string right{};
+  std::string date_iso{};
+};
+
+struct CalendarEventItem {
+  std::string eid{};
+  std::string title{};
+  std::string when{};
+  std::string date_iso{};
+};
+
 struct DashboardSummary {
   std::string location{"Kitchen"};
   int battery_percent{84};
@@ -50,6 +63,8 @@ struct DashboardSummary {
   std::vector<bool> inventory_completed{};
   std::vector<std::string> reminder_items{};
   std::vector<bool> reminder_completed{};
+  std::vector<ReminderMetaItem> reminder_meta{};
+  std::vector<CalendarEventItem> calendar_events{};
   std::string family_memo_text{};
   std::string family_memo_author{};
   std::string family_memo_posted{};
@@ -67,9 +82,13 @@ struct HomeState {
   std::uint64_t clock_minute_bucket{0};
   std::uint64_t clock_seed_monotonic_ms{0};
   bool clock_is_real{false};
+  std::string clock_sync_state{"fallback_unsynced"};
+  std::string weather_sync_state{"unsynced"};
   bool show_focus{false};
   bool menu_overlay_active{false};
   WidgetMode widget_mode{WidgetMode::Clock};
+  std::vector<int> pending_hide_inventory_indices{};
+  std::vector<int> hidden_inventory_indices{};
   std::vector<int> pending_hide_reminder_indices{};
   std::vector<int> hidden_reminder_indices{};
   std::uint64_t hide_due_ms{0};
@@ -85,6 +104,12 @@ struct MenuState {
 struct TimerState {
   bool running{false};
   int seconds_remaining{0};
+  int target_seconds{0};
+  bool alert_active{false};
+  bool alert_blink_on{true};
+  std::uint64_t alert_started_ms{0};
+  std::uint64_t alert_until_ms{0};
+  int last_completed_seconds{0};
   int focused_index{2};
   std::uint64_t last_tick_ms{0};
 };
@@ -95,6 +120,9 @@ struct MemoState {
 };
 
 struct CalendarState {
+  int offset_days{0};
+  std::string mode{"date"};
+  int selected_index{0};
   int day_of_month{26};
   std::string month_label{"March 2026"};
 };
