@@ -329,8 +329,7 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
 
   // Hero.
   const WpFit city_fit = wp_fit(city, content_w - 20, {&kFontInterBold29, &kFontInterBold22, &kFontInterBold20, &kFontInterBold18}, true);
-  // Force small font for "Feels Like" — kFontInterMedium13 matches landscape.
-  const WpFit feels_fit = wp_fit(feels, content_w - 24, {&kFontInterMedium13, &kFontInterBold13}, true);
+  const WpFit feels_fit = wp_fit(feels, content_w - 24, {&kFontInterBold17, &kFontInterMedium13}, true);
   const WpFit temp_fit = wp_fit(temp, content_w - 24, {&kFontInterBlack87, &kFontInterBlack66, &kFontInterBlack36}, false);
   const WpFit range_fit = wp_fit(range, content_w - 24, {&kFontInterMedium18, &kFontInterBold17, &kFontInterMedium13}, true);
 
@@ -348,15 +347,15 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
   const int icon_y = city_y + 44;
   wp_icon(image, icon_x, icon_y, icon_box, icon_box, icon_id, r90);
 
-  // "Feels Like --" + small degree "o" superscript, drawn as a centred pair.
+  // "Feels Like --oC" drawn as a centred pair; "oC" acts as the degree symbol.
   const int feels_y = wp_y_for_top(icon_y + icon_box + 8, feels_fit.text, feels_font);
   {
     const int fl_w     = wp_text_width(feels_fit.text, feels_font);
-    const int fl_deg_w = weather_has_data ? (wp_text_width("o", feels_font) + 1) : 0;
+    const int fl_deg_w = weather_has_data ? wp_text_width("oC", feels_font) : 0;
     const int fl_x     = cx0 + ((cx1 - cx0 - fl_w - fl_deg_w) / 2);
     wp_text(image, fl_x, feels_y, feels_fit.text, feels_font, r90);
     if (weather_has_data) {
-      wp_text(image, fl_x + fl_w + 1, feels_y, "o", feels_font, r90);
+      wp_text(image, fl_x + fl_w, feels_y, "oC", feels_font, r90);
     }
   }
 
@@ -367,15 +366,17 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
   const int temp_zone_top = feels_y + 26;
   const int temp_zone_h = std::max(42, range_y_top - temp_zone_top - 4);
   const int temp_y = wp_y_center(temp_zone_top, temp_zone_h, temp_fit.text, temp_font);
-  // Temperature number + superscript "o" drawn as a centred pair.
+  // Temperature number + "oC" superscript drawn as a centred pair.
+  // "oC" is placed at temp_y (top of the large digit) so it appears as a
+  // superscript degree-C symbol at the upper-right of the number.
   {
     const int tmp_w  = wp_text_width(temp_fit.text, temp_font);
-    const int deg_w  = wp_text_width("o", deg_font);
+    const int deg_w  = weather_has_data ? wp_text_width("oC", deg_font) : 0;
     const int pair_w = tmp_w + 2 + deg_w;
     const int tmp_x  = cx0 + ((cx1 - cx0 - pair_w) / 2);
     wp_text(image, tmp_x, temp_y, temp_fit.text, temp_font, r90);
     if (weather_has_data) {
-      wp_text(image, tmp_x + tmp_w + 2, temp_y, "o", deg_font, r90);
+      wp_text(image, tmp_x + tmp_w + 2, temp_y, "oC", deg_font, r90);
     }
   }
 
