@@ -31,15 +31,24 @@ static esp_err_t on_data(esp_http_client_event_t* evt) {
 
 // Extract quoted string: "key":"<value>"  starting search at `from`.
 // Returns empty on failure.
+// Handles both compact JSON ("key":"val") and pretty-printed ("key": "val").
 static std::string jstr(const std::string& body, const char* key,
                          std::size_t from = 0) {
-  const std::string pat = std::string("\"") + key + "\":\"";
-  const auto pos = body.find(pat, from);
+  const std::string pat = std::string("\"") + key + "\":";
+  auto pos = body.find(pat, from);
   if (pos == std::string::npos) return {};
-  const auto start = pos + pat.size();
-  const auto end   = body.find('"', start);
+  pos += pat.size();
+  // skip optional whitespace between ':' and the opening '"'
+  while (pos < body.size() &&
+         (body[pos] == ' ' || body[pos] == '\t' ||
+          body[pos] == '\r' || body[pos] == '\n')) {
+    ++pos;
+  }
+  if (pos >= body.size() || body[pos] != '"') return {};
+  ++pos;  // skip opening '"'
+  const auto end = body.find('"', pos);
   if (end == std::string::npos) return {};
-  return body.substr(start, end - start);
+  return body.substr(pos, end - pos);
 }
 
 // Extract integer from quoted value: "key":"<digits>"  (wttr.in wraps ints in quotes).
@@ -56,13 +65,20 @@ static int jint(const std::string& body, const char* key,
   return neg ? -val : val;
 }
 
-// Find position right after "key":[ (array open).
+// Find position right after "key": [ (array open), whitespace-tolerant.
 static std::size_t jarray_start(const std::string& body, const char* key,
                                   std::size_t from = 0) {
-  const std::string pat = std::string("\"") + key + "\":[";
-  const auto pos = body.find(pat, from);
+  const std::string pat = std::string("\"") + key + "\":";
+  auto pos = body.find(pat, from);
   if (pos == std::string::npos) return std::string::npos;
-  return pos + pat.size();
+  pos += pat.size();
+  while (pos < body.size() &&
+         (body[pos] == ' ' || body[pos] == '\t' ||
+          body[pos] == '\r' || body[pos] == '\n')) {
+    ++pos;
+  }
+  if (pos >= body.size() || body[pos] != '[') return std::string::npos;
+  return pos + 1;  // position right after '['
 }
 
 // ── Weather code mapping ──────────────────────────────────────────────────────
@@ -208,7 +224,7 @@ WeatherResult weather_fetch(uint32_t timeout_ms) {
     return result;
   }
 
-  ESP_LOGD(kTag, "Response %zu bytes", g_body.size());
+  ESP_LOGI(kTag, "Response %zu bytes (status %d)", g_body.size(), status);
 
   // ── Current conditions ────────────────────────────────────────────────────
   const int code = jint(g_body, "weatherCode");
@@ -223,8 +239,15 @@ WeatherResult weather_fetch(uint32_t timeout_ms) {
   result.icon_key  = entry ? entry->icon_key : "cloudy";
 
   // ── Location ─────────────────────────────────────────────────────────────
-  result.location = jstr(g_body, "value");  // first "value" is areaName
-  if (result.location.empty()) result.location = "Unknown";
+  // The first "value" in the body is weatherDesc, not the city name.
+  // Find "areaName" first, then extract the "value" nested inside it.
+  {
+    const std::size_t area_pos = g_body.find("\"areaName\"");
+    if (area_pos != std::string::npos) {
+      result.location = jstr(g_body, "value", area_pos);
+    }
+    if (result.location.empty()) result.location = "Unknown";
+  }
 
   // ── Today hi/lo — first "maxtempC" / "mintempC" in weather[] ─────────────
   const std::size_t weather_arr = jarray_start(g_body, "weather");
