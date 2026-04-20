@@ -39,9 +39,29 @@ idf_component_register(
         "platform/display.cpp"
         "platform/clock.cpp"
         "platform/live_data_provider.cpp"
+        # Voice / microphone / WiFi
+        "platform/mic_driver.cpp"
+        "platform/voice_client.cpp"
+        "platform/wifi_driver.cpp"
     INCLUDE_DIRS "."
     EMBED_FILES
         "assets/landing_en.raw"
+    PRIV_REQUIRES
+        # esp_app_desc.h (used by app/defaults.cpp)
+        esp_app_format
+        # I2S microphone driver
+        driver
+        # HTTP client for voice backend
+        esp_http_client
+        # Base64 encoding (mbedtls)
+        mbedtls
+        # Real-time clock for request timestamps
+        esp_timer
+        # WiFi + networking stack
+        esp_wifi
+        esp_netif
+        esp_event
+        nvs_flash
 )
 
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_17)

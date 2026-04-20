@@ -2,3 +2,23 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_MAIN_TASK_STACK_SIZE=8192
+
+# Enable octal PSRAM (8 MB on this ESP32-S3 N16R8 chip)
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+# Route large heap allocations (>= 512 B) to PSRAM automatically
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# Custom partition table (3 MB app slot for 16 MB flash)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# WiFi credentials — change to your home network
+CONFIG_WIFI_SSID="You and Me"
+CONFIG_WIFI_PASSWORD="Xx9023149406xX"
+
+# Voice backend URL — change to your machine's LAN IP
+CONFIG_VOICE_API_URL="http://192.168.2.39:8000"
+# Voice backend auth token — must match VOICE_API_TOKEN on the server
+CONFIG_VOICE_API_TOKEN="8e3f1d7c5a9b4e2f91c6d0ab73f4e8c2a1b5d9f0e7c3a6b1"

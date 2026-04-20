@@ -1,7 +1,12 @@
 #include "app/runtime.hpp"
 #include "app/events.hpp"
+#include "app/reducer.hpp"
+#include "platform/board_config.hpp"
 #include "platform/clock.hpp"
 #include "platform/display.hpp"
+#include "platform/mic_driver.hpp"
+#include "platform/voice_client.hpp"
+#include "platform/wifi_driver.hpp"
 
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
@@ -10,6 +15,8 @@
 
 #include "esp_log.h"
 
+#include <atomic>
+#include <cinttypes>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
@@ -27,6 +34,133 @@ int vcom_hex_pos = 0;
 bool time_sync_mode = false;
 char time_epoch_digits[21] = {0};
 int time_epoch_pos = 0;
+
+// ── Voice recording ───────────────────────────────────────────────────────────
+// Duration of a single push-to-talk capture (milliseconds).
+// Keep ≤ 5000 ms to stay within ESP32-S3 internal SRAM limits (~512 KB).
+constexpr uint32_t kRecordDurationMs = 5000;
+// Minimum peak amplitude to consider audio valid (prevents sending noise to backend).
+// NR0562 full-scale ~32768; speech typically peaks above 2000 at ~20cm distance.
+constexpr int16_t kMinPeakAmplitude = 800;
+
+// Voice backend configuration.
+// Set VOICE_API_URL to the address of the running backend/voice_api server.
+// If WiFi / backend is not configured, the recording will still complete and
+// log audio stats; only the HTTP POST will fail gracefully.
+static const fridge_ink::platform::VoiceClientConfig kVoiceCfg = {
+    .base_url   = CONFIG_VOICE_API_URL,    // defined in sdkconfig / menuconfig
+    .auth_token = (sizeof(CONFIG_VOICE_API_TOKEN) > 1)
+                      ? CONFIG_VOICE_API_TOKEN
+                      : nullptr,           // nullptr disables Bearer header
+    .timezone   = "UTC",
+    .locale     = "en-US",
+    .timeout_ms = 20000,
+};
+
+// Prevent concurrent recordings.
+static std::atomic<bool> g_recording{false};
+static uint32_t          g_record_seq{0};
+// Cooldown: after recording completes, ignore 'r' for 2 seconds.
+static std::atomic<uint64_t> g_recording_done_ms{0};
+static constexpr uint64_t kRecordCooldownMs = 2000;
+
+// Runtime pointer set in app_main().
+static fridge_ink::app::Runtime* g_runtime{nullptr};
+
+// Pending voice actions queue — written by voice_record_task, consumed by main loop.
+// Protected by g_voice_mutex so cross-task access is safe.
+static SemaphoreHandle_t g_voice_mutex{nullptr};
+static std::vector<fridge_ink::platform::VoiceAction> g_pending_voice_actions{};
+
+// FreeRTOS task: capture PCM → POST to backend → log result.
+static void voice_record_task(void* /*arg*/) {
+  const uint32_t seq = g_record_seq++;
+
+  char req_id[32];
+  snprintf(req_id, sizeof(req_id), "esp32-%04lu", static_cast<unsigned long>(seq));
+
+  ESP_LOGI(kTag, "[voice] Recording %" PRIu32 " ms  req=%s", kRecordDurationMs, req_id);
+
+  auto pcm = fridge_ink::platform::mic_record_pcm(kRecordDurationMs);
+  if (pcm.empty()) {
+    ESP_LOGE(kTag, "[voice] No audio captured — aborting");
+    g_recording.store(false);
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  // Check peak amplitude — skip POST if audio is just noise (no speech detected).
+  int16_t peak = 0;
+  for (const int16_t s : pcm) {
+    const int16_t a = s < 0 ? -s : s;
+    if (a > peak) peak = a;
+  }
+  if (peak < kMinPeakAmplitude) {
+    ESP_LOGW(kTag, "[voice] Audio too quiet (peak=%d < %d) — skipping POST",
+             static_cast<int>(peak), static_cast<int>(kMinPeakAmplitude));
+    // Flush and set cooldown so spurious 'r' won't immediately retry.
+    {
+      uint8_t flush_buf[64];
+      while (usb_serial_jtag_read_bytes(flush_buf, sizeof(flush_buf), 0) > 0) {}
+    }
+    g_recording_done_ms.store(fridge_ink::platform::monotonic_ms());
+    g_recording.store(false);
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  ESP_LOGI(kTag, "[voice] Sending to backend… (peak=%d)", static_cast<int>(peak));
+  const auto resp = fridge_ink::platform::voice_interpret_pcm(kVoiceCfg, pcm, req_id);
+
+  if (!resp.ok) {
+    ESP_LOGW(kTag, "[voice] Backend error: %s", resp.error.c_str());
+  } else if (resp.actions.empty()) {
+    ESP_LOGI(kTag, "[voice] Backend returned no actions (no_action)");
+  } else {
+    for (const auto& a : resp.actions) {
+      ESP_LOGI(kTag, "[voice] Action → tool=%s  args=%s",
+               a.tool.c_str(), a.args_json.c_str());
+    }
+    // Enqueue for main loop to apply (display access must be on main task).
+    if (g_voice_mutex) {
+      xSemaphoreTake(g_voice_mutex, portMAX_DELAY);
+      for (auto& a : resp.actions) {
+        g_pending_voice_actions.push_back(std::move(a));
+      }
+      xSemaphoreGive(g_voice_mutex);
+    }
+  }
+
+  // Flush any 'r' bytes that piled up in the USB-JTAG buffer during recording.
+  {
+    uint8_t flush_buf[64];
+    while (usb_serial_jtag_read_bytes(flush_buf, sizeof(flush_buf), 0) > 0) {}
+  }
+  g_recording_done_ms.store(fridge_ink::platform::monotonic_ms());
+  g_recording.store(false);
+  vTaskDelete(nullptr);
+}
+
+static void trigger_voice_recording() {
+  if (!fridge_ink::platform::mic_driver_ready()) {
+    ESP_LOGW(kTag, "[voice] Mic driver not ready — skipping");
+    return;
+  }
+  // Reject spurious triggers during cooldown period after last recording.
+  const uint64_t done_ms = g_recording_done_ms.load();
+  if (done_ms > 0) {
+    const uint64_t now_ms = fridge_ink::platform::monotonic_ms();
+    if ((now_ms - done_ms) < kRecordCooldownMs) {
+      return;  // silent drop — no log spam
+    }
+  }
+  if (g_recording.exchange(true)) {
+    ESP_LOGW(kTag, "[voice] Already recording — ignoring");
+    return;
+  }
+  // 12 KB stack: recording + HTTP response parsing + vector operations.
+  xTaskCreate(voice_record_task, "voice_rec", 12288, nullptr, 5, nullptr);
+}
 
 bool setup_serial_input() {
   usb_serial_jtag_driver_config_t cfg{};
@@ -54,16 +188,17 @@ void log_monitor_controls() {
   ESP_LOGI(kTag, "C or Enter/Space: click");
   ESP_LOGI(kTag, "M: long-press (toggle Home nav overlay)");
   ESP_LOGI(kTag, "B: back (toggle/close menu, or return Home)");
+  ESP_LOGI(kTag, "R: record voice (5 s) → POST to voice backend");
   ESP_LOGI(kTag, "T<epoch> + Enter: sync wall clock");
   ESP_LOGI(kTag, "V<HH>: VCOM sweep (2 hex digits)");
-  ESP_LOGI(kTag, "中文: A/D旋转, C点击, M长按, B返回");
+  ESP_LOGI(kTag, "中文: A/D旋转, C点击, M长按, B返回, R录音");
 }
 
 void log_monitor_controls_summary() {
   ESP_LOGI(
       kTag,
       "Controls: a/d rotate, c click, m long-press, b back, "
-      "t<epoch> sync time, v<HH> vcom, ?|/|p help");
+      "o record voice, t<epoch> sync time, v<HH> vcom, ?|/|p help");
 }
 
 void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
@@ -166,6 +301,11 @@ void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
     case 'B':
       runtime.dispatch(fridge_ink::app::Event::Back(fridge_ink::platform::monotonic_ms()));
       break;
+    case 'o':
+    case 'O':
+      ESP_LOGI(kTag, ">>> Voice recording triggered (o key)");
+      trigger_voice_recording();
+      break;
     default:
       break;
   }
@@ -188,12 +328,44 @@ void poll_serial_input(fridge_ink::app::Runtime& runtime,
 extern "C" void app_main(void) {
   ESP_LOGI(kTag, "Booting Fridge Ink firmware runtime V0");
 
+  g_voice_mutex = xSemaphoreCreateMutex();
+
   auto display = fridge_ink::platform::make_default_display();
   fridge_ink::app::Runtime runtime(*display);
+  g_runtime = &runtime;
   runtime.boot();
+
+  // Connect to WiFi (credentials set via sdkconfig / menuconfig).
+  // Non-fatal: voice HTTP POST will simply fail if not connected.
+  {
+    constexpr const char* kSsid     = CONFIG_WIFI_SSID;
+    constexpr const char* kPassword = CONFIG_WIFI_PASSWORD;
+    if (kSsid[0] != '\0') {
+      fridge_ink::platform::wifi_connect(kSsid, kPassword, 15000);
+    } else {
+      ESP_LOGW(kTag, "CONFIG_WIFI_SSID not set — WiFi skipped");
+    }
+  }
+
+  // Initialise I2S microphone driver (non-fatal if it fails).
+  const auto& board = fridge_ink::platform::default_board_config();
+  if (fridge_ink::platform::has_ready_mic_pin_map(board)) {
+    const bool mic_ok = fridge_ink::platform::mic_driver_init(board.mic_pins);
+    if (!mic_ok) {
+      ESP_LOGW(kTag, "Mic driver init failed — voice recording disabled");
+    }
+  } else {
+    ESP_LOGW(kTag, "Mic pins not configured — voice recording disabled");
+  }
 
   const bool serial_input_ok = setup_serial_input();
   if (serial_input_ok) {
+    // Flush any garbage bytes buffered during USB-JTAG/bootloader init
+    // (prevents spurious 'r' keypresses triggering voice recording at boot).
+    {
+      std::uint8_t flush_buf[64];
+      while (usb_serial_jtag_read_bytes(flush_buf, sizeof(flush_buf), 0) > 0) {}
+    }
     // Keep startup print compact and robust after heavy panel-init logs.
     log_monitor_controls_summary();
   }
@@ -203,6 +375,18 @@ extern "C" void app_main(void) {
   while (true) {
     if (serial_input_ok) {
       poll_serial_input(runtime, *display);
+    }
+
+    // Drain pending voice actions (enqueued from voice_record_task).
+    if (g_voice_mutex && xSemaphoreTake(g_voice_mutex, 0) == pdTRUE) {
+      if (!g_pending_voice_actions.empty()) {
+        std::vector<fridge_ink::platform::VoiceAction> actions;
+        actions.swap(g_pending_voice_actions);
+        xSemaphoreGive(g_voice_mutex);
+        runtime.dispatch_voice_actions(actions);
+      } else {
+        xSemaphoreGive(g_voice_mutex);
+      }
     }
 
     const std::uint64_t now_ms = fridge_ink::platform::monotonic_ms();
