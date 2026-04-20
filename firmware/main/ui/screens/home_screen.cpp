@@ -2167,19 +2167,21 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   const BitmapFont& weather_meta_font = *typography.weather_meta_font;
   const BitmapFont& family_label_font = *typography.family_label_font;
 
-  const bool weather_synced = state.home.weather_sync_state == "ok";
+  const bool weather_has_data = !state.dashboard.weather_condition.empty();
+  const bool weather_syncing = state.home.weather_sync_state == "syncing";
   const std::string weekday = uppercase_copy(display_clock.weekday_label);
   const std::string date = display_clock.date_label;
   const std::string temp =
-      weather_synced ? std::to_string(state.dashboard.weather_temperature_c) : "--";
+      weather_has_data ? std::to_string(state.dashboard.weather_temperature_c) : "--";
   const std::string weather =
       right_fit_with_font(
-          weather_synced ? state.dashboard.weather_condition : "UNSYNCED",
+          weather_syncing ? "SYNCING" :
+          (weather_has_data ? state.dashboard.weather_condition : "UNSYNCED"),
           weather_meta_font,
           weather_col_w,
           1);
   const std::string humidity = right_fit_with_font(
-      weather_synced
+      weather_has_data
           ? ("HUM " + std::to_string(state.dashboard.weather_humidity_percent) + "%")
           : "HUM --",
       weather_meta_font,
@@ -2236,7 +2238,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   const int temp_group_w = temp_w + degree_gap + degree_size;
   const int temp_x = weather_right - temp_group_w;
   draw_text_with_font(image, temp_x, temp_y, temp, temp_font);
-  if (weather_synced) {
+  if (weather_has_data) {
     draw_degree_mark(image, temp_x + temp_w + degree_gap, temp_y + 7, degree_size);
   }
   if (!location.empty()) {
@@ -2275,7 +2277,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       image,
       weather_icon_x,
       weather_icon_y,
-      state.dashboard.weather_condition,
+      state.dashboard.weather_icon,
       weather_icon_size);
 
   const int humidity_y = weather_icon_y + weather_icon_size + 8;
@@ -2364,6 +2366,7 @@ HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
   snapshot.hidden_reminder_count =
       static_cast<int>(state.home.hidden_reminder_indices.size());
   snapshot.weather_condition = state.dashboard.weather_condition;
+  snapshot.weather_icon = state.dashboard.weather_icon;
   snapshot.weather_temperature_c = state.dashboard.weather_temperature_c;
   snapshot.weather_humidity_percent = state.dashboard.weather_humidity_percent;
   snapshot.location = state.dashboard.location;
@@ -2552,6 +2555,7 @@ HomeDirtyPlan home_dirty_plan(
   }
 
   if (previous.weather_condition != current.weather_condition ||
+      previous.weather_icon != current.weather_icon ||
       previous.weather_temperature_c != current.weather_temperature_c ||
       previous.weather_humidity_percent != current.weather_humidity_percent ||
       previous.weather_sync_state != current.weather_sync_state ||

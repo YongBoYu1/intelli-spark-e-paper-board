@@ -1,6 +1,7 @@
 #include "app/reducer.hpp"
 #include "app/calendar_runtime.hpp"
 #include "platform/clock.hpp"
+#include "platform/live_data_provider.hpp"
 #include "platform/voice_client.hpp"
 #include "esp_log.h"
 
@@ -376,16 +377,16 @@ void handle_settings_click(AppState& state, const Event& event) {
       ESP_LOGI(kTag, "[settings] auto_sync=%d", static_cast<int>(state.settings.auto_sync_enabled));
       return;
     case SettingsItem::SyncNow:
-      state.settings.last_sync_ms =
-          static_cast<std::uint64_t>(std::max<std::time_t>(0, platform::wall_time_seconds())) *
-          1000ULL;
-      state.settings.sync_state = "ok";
-      set_settings_notice(state, "FAKE SYNC COMPLETE", event.now_ms);
-      ESP_LOGI(
-          kTag,
-          "[settings] sync_now=ok at_epoch_ms=%llu wall_valid=%d",
-          static_cast<unsigned long long>(state.settings.last_sync_ms),
-          static_cast<int>(platform::wall_time_is_valid()));
+      if (platform::live_data_request_sync_now()) {
+        state.settings.sync_state = "syncing";
+        state.home.weather_sync_state = "syncing";
+        set_settings_notice(state, "SYNC REQUESTED", event.now_ms);
+        ESP_LOGI(kTag, "[settings] sync_now=requested");
+      } else {
+        state.settings.sync_state = "error";
+        set_settings_notice(state, "SYNC UNAVAILABLE", event.now_ms);
+        ESP_LOGW(kTag, "[settings] sync_now=unavailable");
+      }
       return;
     case SettingsItem::ResetAndWipe:
       set_settings_notice(state, "NOT IMPLEMENTED", event.now_ms);
@@ -925,6 +926,66 @@ void refresh_onboarding_status(AppState& state) {
 }
 
 void handle_tick(AppState& state, const Event& event) {
+  if (platform::live_data_weather_sync_in_progress()) {
+    state.home.weather_sync_state = "syncing";
+    state.settings.sync_state = "syncing";
+  }
+
+  platform::WeatherSyncSample weather_sample{};
+  if (platform::live_data_poll_weather(&weather_sample) && weather_sample.valid) {
+    if (weather_sample.synced) {
+      if (!weather_sample.location.empty()) {
+        state.dashboard.location = weather_sample.location;
+      }
+      if (!weather_sample.condition.empty()) {
+        state.dashboard.weather_condition = weather_sample.condition;
+      }
+      if (!weather_sample.icon.empty()) {
+        state.dashboard.weather_icon = weather_sample.icon;
+      }
+      state.dashboard.weather_temperature_c = weather_sample.temperature_c;
+      state.dashboard.weather_humidity_percent = weather_sample.humidity_percent;
+      state.dashboard.weather_feels_like_c = weather_sample.feels_like_c;
+      state.dashboard.weather_hi_c = weather_sample.hi_c;
+      state.dashboard.weather_lo_c = weather_sample.lo_c;
+      state.dashboard.weather_wind_kmh = weather_sample.wind_kmh;
+      state.dashboard.weather_uv_index = weather_sample.uv_index;
+      for (std::size_t i = 0; i < state.dashboard.weather_forecast_days.size(); ++i) {
+        state.dashboard.weather_forecast_days[i].dow = weather_sample.forecast_days[i].dow;
+        state.dashboard.weather_forecast_days[i].condition = weather_sample.forecast_days[i].condition;
+        state.dashboard.weather_forecast_days[i].icon = weather_sample.forecast_days[i].icon;
+        state.dashboard.weather_forecast_days[i].hi_c = weather_sample.forecast_days[i].hi_c;
+        state.dashboard.weather_forecast_days[i].lo_c = weather_sample.forecast_days[i].lo_c;
+      }
+      state.home.weather_sync_state = "ok";
+      state.settings.sync_state = "ok";
+      state.settings.last_sync_ms =
+          static_cast<std::uint64_t>(
+              std::max<std::time_t>(0, weather_sample.observed_unix_seconds)) *
+          1000ULL;
+      ESP_LOGI(
+          kTag,
+          "[weather] sync_ok source=%s location=%s temp=%dC humidity=%d%% condition=%s",
+          weather_sample.source.empty() ? "unknown" : weather_sample.source.c_str(),
+          weather_sample.location.empty() ? "Unknown" : weather_sample.location.c_str(),
+          weather_sample.temperature_c,
+          weather_sample.humidity_percent,
+          weather_sample.condition.c_str());
+    } else {
+      if (!state.dashboard.weather_condition.empty()) {
+        state.home.weather_sync_state = "ok";
+      } else {
+        state.home.weather_sync_state = "unsynced";
+      }
+      state.settings.sync_state =
+          state.home.weather_sync_state == "ok" ? "ok" : "error";
+      ESP_LOGW(
+          kTag,
+          "[weather] sync_failed error=%s",
+          weather_sample.error.empty() ? "unknown" : weather_sample.error.c_str());
+    }
+  }
+
   const std::time_t wall = platform::wall_time_seconds();
   if (platform::wall_time_is_valid()) {
     state.home.clock_minute_bucket = static_cast<std::uint64_t>(wall / 60);

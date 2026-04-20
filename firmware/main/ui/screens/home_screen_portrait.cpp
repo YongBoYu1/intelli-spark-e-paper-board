@@ -1018,7 +1018,8 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
   }
 
   // ── Weather (right column) ────────────────────────────────────────────────
-  const bool wx_ok    = (state.home.weather_sync_state == "ok");
+  const bool wx_ok = !state.dashboard.weather_condition.empty();
+  const bool wx_syncing = (state.home.weather_sync_state == "syncing");
   const int  wx_top   = std::max(4, time_vy - 4);
   int weather_bottom_for_focus = wx_top + hp_vis_h("--", temp_font);
 
@@ -1034,12 +1035,15 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
     const int icon_vy  = wx_top + temp_h + 13;    // bp_weather_temp_icon_gap=13
     constexpr int kIconSz = 34;
     hp_icon(image, wx_right - kIconSz, icon_vy,
-            state.dashboard.weather_condition, kIconSz, r90);
+            state.dashboard.weather_icon, kIconSz, r90);
 
     const int desc_vy = icon_vy + kIconSz + 11;
     const std::string cond_str =
-        hp_upper(state.dashboard.weather_condition.empty()
-                 ? "SUNNY" : state.dashboard.weather_condition);
+        hp_upper(wx_syncing
+                 ? "SYNCING"
+                 : (state.dashboard.weather_condition.empty()
+                        ? "SUNNY"
+                        : state.dashboard.weather_condition));
     const std::string desc = hp_trunc(cond_str, meta_font, kWxColW);
     hp_text(image, wx_right - hp_tw(desc, meta_font),
             hp_ytop(desc_vy, desc, meta_font),
@@ -1065,7 +1069,7 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
     hp_text(image, wx_right - hp_tw(no_t, temp_font),
             hp_ytop(wx_top, no_t, temp_font),
             no_t, temp_font, r90);
-    const std::string no_d = "NO DATA";
+    const std::string no_d = wx_syncing ? "SYNCING" : "NO DATA";
     hp_text(image, wx_right - hp_tw(no_d, meta_font),
             hp_ytop(wx_top + 60, no_d, meta_font),
             no_d, meta_font, r90);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -51,13 +52,28 @@ struct CalendarEventItem {
   std::string date_iso{};
 };
 
+struct WeatherForecastDay {
+  std::string dow{"--"};
+  std::string condition{};
+  std::string icon{};
+  int hi_c{0};
+  int lo_c{0};
+};
+
 struct DashboardSummary {
   std::string location{"Kitchen"};
   int battery_percent{84};
   int reminder_count{3};
   std::string weather_condition{"Cloudy"};
+  std::string weather_icon{"cloud"};
   int weather_temperature_c{4};
   int weather_humidity_percent{62};
+  int weather_feels_like_c{4};
+  int weather_hi_c{4};
+  int weather_lo_c{2};
+  int weather_wind_kmh{0};
+  int weather_uv_index{0};
+  std::array<WeatherForecastDay, 3> weather_forecast_days{};
   std::vector<std::string> inventory_items{};
   std::vector<std::string> inventory_badges{};
   std::vector<bool> inventory_completed{};

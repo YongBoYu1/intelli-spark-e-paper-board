@@ -154,13 +154,34 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
 
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
-  const std::string city      = wl_upper(state.dashboard.location.empty() ? "UNKNOWN" : state.dashboard.location);
-  const std::string condition = state.dashboard.weather_condition;
-  const int temp_c            = state.dashboard.weather_temperature_c;
-  const int humidity          = state.dashboard.weather_humidity_percent;
+  const bool weather_has_data = !state.dashboard.weather_condition.empty();
+  const bool weather_syncing = state.home.weather_sync_state == "syncing";
+  const std::string city = wl_upper(state.dashboard.location.empty() ? "UNKNOWN" : state.dashboard.location);
+  const std::string condition = weather_has_data
+                                    ? state.dashboard.weather_condition
+                                    : std::string("Cloudy");
+  const std::string icon_id = weather_has_data
+                                  ? state.dashboard.weather_icon
+                                  : std::string("cloud");
+  const int temp_c = state.dashboard.weather_temperature_c;
+  const int humidity = state.dashboard.weather_humidity_percent;
+  const int feels_like_c = state.dashboard.weather_feels_like_c;
+  const int hi_c = state.dashboard.weather_hi_c;
+  const int lo_c = state.dashboard.weather_lo_c;
+  const int wind_kmh = state.dashboard.weather_wind_kmh;
+  const int uv_index = state.dashboard.weather_uv_index;
 
-  const std::string temp_str     = std::to_string(temp_c) + "C";
-  const std::string humidity_str = std::to_string(humidity) + "%";
+  const std::string temp_num   = weather_has_data ? std::to_string(temp_c) : "--";
+  const std::string humidity_str =
+      (weather_has_data && humidity > 0) ? (std::to_string(humidity) + "%") : "--";
+  // No "C" suffix — degree "o" is drawn as a superscript separately.
+  const std::string feels_like_str =
+      weather_has_data ? ("FEELS LIKE " + std::to_string(feels_like_c))
+                       : (weather_syncing ? "SYNCING..." : "FEELS LIKE --");
+  const std::string range_str =
+      weather_has_data
+          ? ("H: " + std::to_string(hi_c) + "  L: " + std::to_string(lo_c))
+          : "H: --  L: --";
 
   const int col0_x = kL_Cx0;
   const int col1_x = kL_Cx0 + kL_ColW;
@@ -184,41 +205,63 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
     constexpr int icon_size = 88;
     const int icon_x = col2_x + (kL_ColW - icon_size) / 2;
     const int icon_y = kL_HeroY0 + (kL_HeroH - icon_size) / 2;
-    draw_icon(image, icon_x, icon_y, condition, icon_size);
+    draw_icon(image, icon_x, icon_y, icon_id, icon_size);
   }
 
   // ── Hero: Temperature + labels (center col) ───────────────────────────────
   {
     const BitmapFont& temp_font  = kFontInterBlack66;
-    const BitmapFont& label_font = kFontInterMedium18;
+    const BitmapFont& label_font = kFontInterMedium13;  // was Medium18 — smaller
+    const BitmapFont& deg_font   = kFontInterBold17;    // superscript "o" size
 
     const int inner_top    = kL_HeroY0 + 6;
     const int inner_bottom = kL_HeroY1 - 24;
 
-    // "FEELS LIKE --" pinned to top of inner zone
+    // ── "FEELS LIKE --" with degree superscript, pinned to top of inner zone ─
     const int feels_zone_h = label_font.line_height;
-    const int feels_y = wl_center_y(inner_top, feels_zone_h, "FEELS LIKE --", label_font);
-    wl_draw_centered(image, col1_x, kL_ColW, feels_y, "FEELS LIKE --", label_font);
+    // Compute width of base text + small degree "o" to centre them together.
+    const int fl_text_w = wl_text_width(feels_like_str, label_font);
+    const int fl_deg_w  = weather_has_data ? (wl_text_width("o", label_font) + 1) : 0;
+    const int fl_pair_w = fl_text_w + fl_deg_w;
+    const int fl_x      = col1_x + (kL_ColW - fl_pair_w) / 2;
+    const int feels_y   = wl_center_y(inner_top, feels_zone_h, feels_like_str, label_font);
+    wl_draw_text(image, fl_x, feels_y, feels_like_str, label_font, true);
+    if (weather_has_data) {
+      // "o" right after the number, same Y (looks like a degree circle)
+      wl_draw_text(image, fl_x + fl_text_w + 1, feels_y, "o", label_font, true);
+    }
     const int feels_bottom = inner_top + feels_zone_h + 6;
 
-    // "H: --  L: --" pinned to bottom of inner zone
+    // ── "H: --  L: --" pinned to bottom of inner zone ─────────────────────────
     const int range_zone_top = inner_bottom - label_font.line_height - 2;
-    const int range_y = wl_center_y(range_zone_top, label_font.line_height, "H: --  L: --", label_font);
-    wl_draw_centered(image, col1_x, kL_ColW, range_y, "H: --  L: --", label_font);
+    const int range_y = wl_center_y(range_zone_top, label_font.line_height, range_str, label_font);
+    wl_draw_centered(image, col1_x, kL_ColW, range_y, range_str, label_font);
 
-    // Temperature centered in remaining space
+    // ── Temperature centred in remaining space, with superscript "o" ──────────
     const int temp_zone_h = range_zone_top - feels_bottom;
-    const int temp_y = wl_center_y(feels_bottom, std::max(1, temp_zone_h), temp_str, temp_font);
-    wl_draw_centered(image, col1_x, kL_ColW, temp_y, temp_str, temp_font);
+    const int temp_y = wl_center_y(feels_bottom, std::max(1, temp_zone_h), temp_num, temp_font);
+
+    const int temp_w  = wl_text_width(temp_num, temp_font);
+    const int deg_w   = wl_text_width("o", deg_font);
+    const int pair_w  = temp_w + 2 + deg_w;
+    const int temp_x  = col1_x + (kL_ColW - pair_w) / 2;
+    wl_draw_text(image, temp_x, temp_y, temp_num, temp_font, true);
+    if (weather_has_data) {
+      // "o" at upper-right of the number — same baseline-top as temp_y
+      wl_draw_text(image, temp_x + temp_w + 2, temp_y, "o", deg_font, true);
+    }
   }
 
   // ── Metrics block ─────────────────────────────────────────────────────────
   {
     struct Item { std::string value; const char* label; };
+    // WIND value stores the number only; "KM/H" unit is drawn separately in a
+    // smaller font so it doesn't dominate the metric tile visually.
+    const std::string wind_num_str = weather_has_data ? std::to_string(wind_kmh) : "--";
     const std::array<Item, 3> items = {{
-      {humidity_str, "HUMIDITY"},
-      {"--",         "WIND"},
-      {"--",         "UV INDEX"},
+      {humidity_str,  "HUMIDITY"},
+      {wind_num_str,  "WIND"},
+      {weather_has_data ? std::to_string(uv_index) : "--", "UV INDEX"},
     }};
 
     for (int i = 0; i < 3; ++i) {
@@ -228,13 +271,33 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
       const std::string& val = items[static_cast<std::size_t>(i)].value;
       const std::string  lbl = items[static_cast<std::size_t>(i)].label;
 
+      // For WIND (i==1): number in vf + "KM/H" in lf on same line, pair centred.
+      const bool is_wind = (i == 1);
+      const std::string unit_str = " KM/H";  // only used for wind
+
+      const int val_w  = wl_text_width(val, vf);
+      const int unit_w = (is_wind && weather_has_data) ? wl_text_width(unit_str, lf) : 0;
+      const int pair_w = val_w + unit_w;
+
       const int val_h   = wl_text_height(val, vf);
       const int lbl_h   = wl_text_height(lbl, lf);
       const int block_h = val_h + 6 + lbl_h;
       const int block_top = kL_MetricY0 + (kL_MetricH - block_h) / 2;
 
       const int vy = wl_center_y(block_top, val_h, val, vf);
-      wl_draw_centered(image, col_x, kL_ColW, vy, val, vf);
+
+      if (is_wind && weather_has_data) {
+        // Draw number + "KM/H" as a centred pair on the same baseline.
+        const int pair_x = col_x + (kL_ColW - pair_w) / 2;
+        wl_draw_text(image, pair_x,          vy, val,       vf, true);
+        // Vertically centre the small unit label within the value's height zone.
+        const int unit_h = wl_text_height(unit_str, lf);
+        const int unit_y = wl_center_y(block_top, val_h, unit_str, lf);
+        (void)unit_h;  // used implicitly via wl_center_y
+        wl_draw_text(image, pair_x + val_w,  unit_y, unit_str, lf, true);
+      } else {
+        wl_draw_centered(image, col_x, kL_ColW, vy, val, vf);
+      }
 
       const int lbl_top = block_top + val_h + 6;
       const int ly = wl_center_y(lbl_top, lbl_h, lbl, lf);
@@ -244,14 +307,17 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
 
   // ── Forecast block ────────────────────────────────────────────────────────
   {
-    constexpr std::array<const char*, 3> kDays = {"MON", "TUE", "WED"};
-
     for (int i = 0; i < 3; ++i) {
       const int col_x = kL_Cx0 + i * kL_ColW;
       const BitmapFont& dow_font  = kFontInterBold29;
       const BitmapFont& rng_font  = kFontInterBold22;
-      const std::string dow_str   = kDays[static_cast<std::size_t>(i)];
-      const std::string rng_str   = "H: --  L: --";
+      const auto& forecast = state.dashboard.weather_forecast_days[static_cast<std::size_t>(i)];
+      const std::string dow_str =
+          weather_has_data && !forecast.dow.empty() ? forecast.dow : "--";
+      const std::string rng_str =
+          weather_has_data
+              ? ("H: " + std::to_string(forecast.hi_c) + "  L: " + std::to_string(forecast.lo_c))
+              : "H: --  L: --";
 
       // DOW at top
       const int dow_h = wl_text_height(dow_str, dow_font);
@@ -270,7 +336,12 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
       const int icon_size = std::max(24, std::min(52, icon_room - 8));
       const int icon_x    = col_x + (kL_ColW - icon_size) / 2;
       const int icon_y    = dow_bottom + (icon_room - icon_size) / 2;
-      draw_icon(image, icon_x, icon_y, condition, icon_size);
+      draw_icon(
+          image,
+          icon_x,
+          icon_y,
+          weather_has_data && !forecast.icon.empty() ? forecast.icon : icon_id,
+          icon_size);
     }
   }
 

@@ -89,9 +89,20 @@ ProductDefaults make_factory_defaults() {
   defaults.dashboard.location = "Toronto";
   defaults.dashboard.battery_percent = 84;
   defaults.dashboard.reminder_count = 7;
-  defaults.dashboard.weather_condition = "Rainy";
-  defaults.dashboard.weather_temperature_c = 17;
-  defaults.dashboard.weather_humidity_percent = 100;
+  defaults.dashboard.weather_condition.clear();
+  defaults.dashboard.weather_icon = "cloud";
+  defaults.dashboard.weather_temperature_c = 0;
+  defaults.dashboard.weather_humidity_percent = 0;
+  defaults.dashboard.weather_feels_like_c = 0;
+  defaults.dashboard.weather_hi_c = 0;
+  defaults.dashboard.weather_lo_c = 0;
+  defaults.dashboard.weather_wind_kmh = 0;
+  defaults.dashboard.weather_uv_index = 0;
+  defaults.dashboard.weather_forecast_days = {{
+      {"--", "", "cloud", 0, 0},
+      {"--", "", "cloud", 0, 0},
+      {"--", "", "cloud", 0, 0},
+  }};
   defaults.dashboard.inventory_items = {
       "Fresh Milk",
       "Leftover Pizza",
@@ -197,7 +208,7 @@ AppState make_state_from_defaults(
   state.home.clock_minute_bucket = current_minute_bucket(&state.home.clock_is_real);
   state.home.clock_seed_monotonic_ms = now_ms;
   state.home.clock_sync_state = state.home.clock_is_real ? "real_synced" : "fallback_unsynced";
-  state.home.weather_sync_state = "ok";
+  state.home.weather_sync_state = "syncing";
   state.home.show_focus = true;
   state.home.menu_overlay_active = false;
   state.home.pending_reorder = false;
@@ -222,8 +233,8 @@ AppState make_state_from_defaults(
   state.calendar.selected_index = 0;
   state.calendar.day_of_month = 26;
   state.calendar.month_label = "March 2026";
-  state.weather.temperature_c = 4;
-  state.weather.condition = "Cloudy";
+  state.weather.temperature_c = 0;
+  state.weather.condition.clear();
   state.inventory.total_items = 5;
   state.inventory.reminder_count = defaults.dashboard.reminder_count;
   state.inventory.focused_index = 0;
