@@ -597,6 +597,13 @@ void Runtime::flush_deferred(const std::uint64_t now_ms) {
   flush_pending(now_ms);
 }
 
+void Runtime::dispatch_voice_actions(
+    const std::vector<fridge_ink::platform::VoiceAction>& actions) {
+  apply_voice_actions(state_, actions);
+  stage_render();
+  flush_pending(platform::monotonic_ms());
+}
+
 void Runtime::stage_render() {
   const ui::HomeDirtySnapshot* previous_home_snapshot = nullptr;
   if (state_.screen == Screen::Home &&

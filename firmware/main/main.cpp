@@ -1,5 +1,6 @@
 #include "app/runtime.hpp"
 #include "app/events.hpp"
+#include "app/reducer.hpp"
 #include "platform/board_config.hpp"
 #include "platform/clock.hpp"
 #include "platform/display.hpp"
@@ -38,6 +39,9 @@ int time_epoch_pos = 0;
 // Duration of a single push-to-talk capture (milliseconds).
 // Keep ≤ 5000 ms to stay within ESP32-S3 internal SRAM limits (~512 KB).
 constexpr uint32_t kRecordDurationMs = 5000;
+// Minimum peak amplitude to consider audio valid (prevents sending noise to backend).
+// NR0562 full-scale ~32768; speech typically peaks above 2000 at ~20cm distance.
+constexpr int16_t kMinPeakAmplitude = 800;
 
 // Voice backend configuration.
 // Set VOICE_API_URL to the address of the running backend/voice_api server.
@@ -56,6 +60,17 @@ static const fridge_ink::platform::VoiceClientConfig kVoiceCfg = {
 // Prevent concurrent recordings.
 static std::atomic<bool> g_recording{false};
 static uint32_t          g_record_seq{0};
+// Cooldown: after recording completes, ignore 'r' for 2 seconds.
+static std::atomic<uint64_t> g_recording_done_ms{0};
+static constexpr uint64_t kRecordCooldownMs = 2000;
+
+// Runtime pointer set in app_main().
+static fridge_ink::app::Runtime* g_runtime{nullptr};
+
+// Pending voice actions queue — written by voice_record_task, consumed by main loop.
+// Protected by g_voice_mutex so cross-task access is safe.
+static SemaphoreHandle_t g_voice_mutex{nullptr};
+static std::vector<fridge_ink::platform::VoiceAction> g_pending_voice_actions{};
 
 // FreeRTOS task: capture PCM → POST to backend → log result.
 static void voice_record_task(void* /*arg*/) {
@@ -74,7 +89,27 @@ static void voice_record_task(void* /*arg*/) {
     return;
   }
 
-  ESP_LOGI(kTag, "[voice] Sending to backend…");
+  // Check peak amplitude — skip POST if audio is just noise (no speech detected).
+  int16_t peak = 0;
+  for (const int16_t s : pcm) {
+    const int16_t a = s < 0 ? -s : s;
+    if (a > peak) peak = a;
+  }
+  if (peak < kMinPeakAmplitude) {
+    ESP_LOGW(kTag, "[voice] Audio too quiet (peak=%d < %d) — skipping POST",
+             static_cast<int>(peak), static_cast<int>(kMinPeakAmplitude));
+    // Flush and set cooldown so spurious 'r' won't immediately retry.
+    {
+      uint8_t flush_buf[64];
+      while (usb_serial_jtag_read_bytes(flush_buf, sizeof(flush_buf), 0) > 0) {}
+    }
+    g_recording_done_ms.store(fridge_ink::platform::monotonic_ms());
+    g_recording.store(false);
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  ESP_LOGI(kTag, "[voice] Sending to backend… (peak=%d)", static_cast<int>(peak));
   const auto resp = fridge_ink::platform::voice_interpret_pcm(kVoiceCfg, pcm, req_id);
 
   if (!resp.ok) {
@@ -86,8 +121,22 @@ static void voice_record_task(void* /*arg*/) {
       ESP_LOGI(kTag, "[voice] Action → tool=%s  args=%s",
                a.tool.c_str(), a.args_json.c_str());
     }
+    // Enqueue for main loop to apply (display access must be on main task).
+    if (g_voice_mutex) {
+      xSemaphoreTake(g_voice_mutex, portMAX_DELAY);
+      for (auto& a : resp.actions) {
+        g_pending_voice_actions.push_back(std::move(a));
+      }
+      xSemaphoreGive(g_voice_mutex);
+    }
   }
 
+  // Flush any 'r' bytes that piled up in the USB-JTAG buffer during recording.
+  {
+    uint8_t flush_buf[64];
+    while (usb_serial_jtag_read_bytes(flush_buf, sizeof(flush_buf), 0) > 0) {}
+  }
+  g_recording_done_ms.store(fridge_ink::platform::monotonic_ms());
   g_recording.store(false);
   vTaskDelete(nullptr);
 }
@@ -97,12 +146,20 @@ static void trigger_voice_recording() {
     ESP_LOGW(kTag, "[voice] Mic driver not ready — skipping");
     return;
   }
+  // Reject spurious triggers during cooldown period after last recording.
+  const uint64_t done_ms = g_recording_done_ms.load();
+  if (done_ms > 0) {
+    const uint64_t now_ms = fridge_ink::platform::monotonic_ms();
+    if ((now_ms - done_ms) < kRecordCooldownMs) {
+      return;  // silent drop — no log spam
+    }
+  }
   if (g_recording.exchange(true)) {
     ESP_LOGW(kTag, "[voice] Already recording — ignoring");
     return;
   }
-  // 8 KB stack is sufficient for recording + HTTP; increase if stack overflow.
-  xTaskCreate(voice_record_task, "voice_rec", 8192, nullptr, 5, nullptr);
+  // 12 KB stack: recording + HTTP response parsing + vector operations.
+  xTaskCreate(voice_record_task, "voice_rec", 12288, nullptr, 5, nullptr);
 }
 
 bool setup_serial_input() {
@@ -141,7 +198,7 @@ void log_monitor_controls_summary() {
   ESP_LOGI(
       kTag,
       "Controls: a/d rotate, c click, m long-press, b back, "
-      "r record voice, t<epoch> sync time, v<HH> vcom, ?|/|p help");
+      "o record voice, t<epoch> sync time, v<HH> vcom, ?|/|p help");
 }
 
 void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
@@ -244,9 +301,9 @@ void dispatch_input_byte(fridge_ink::app::Runtime& runtime,
     case 'B':
       runtime.dispatch(fridge_ink::app::Event::Back(fridge_ink::platform::monotonic_ms()));
       break;
-    case 'r':
-    case 'R':
-      ESP_LOGI(kTag, ">>> Voice recording triggered (r key)");
+    case 'o':
+    case 'O':
+      ESP_LOGI(kTag, ">>> Voice recording triggered (o key)");
       trigger_voice_recording();
       break;
     default:
@@ -271,8 +328,11 @@ void poll_serial_input(fridge_ink::app::Runtime& runtime,
 extern "C" void app_main(void) {
   ESP_LOGI(kTag, "Booting Fridge Ink firmware runtime V0");
 
+  g_voice_mutex = xSemaphoreCreateMutex();
+
   auto display = fridge_ink::platform::make_default_display();
   fridge_ink::app::Runtime runtime(*display);
+  g_runtime = &runtime;
   runtime.boot();
 
   // Connect to WiFi (credentials set via sdkconfig / menuconfig).
@@ -315,6 +375,18 @@ extern "C" void app_main(void) {
   while (true) {
     if (serial_input_ok) {
       poll_serial_input(runtime, *display);
+    }
+
+    // Drain pending voice actions (enqueued from voice_record_task).
+    if (g_voice_mutex && xSemaphoreTake(g_voice_mutex, 0) == pdTRUE) {
+      if (!g_pending_voice_actions.empty()) {
+        std::vector<fridge_ink::platform::VoiceAction> actions;
+        actions.swap(g_pending_voice_actions);
+        xSemaphoreGive(g_voice_mutex);
+        runtime.dispatch_voice_actions(actions);
+      } else {
+        xSemaphoreGive(g_voice_mutex);
+      }
     }
 
     const std::uint64_t now_ms = fridge_ink::platform::monotonic_ms();

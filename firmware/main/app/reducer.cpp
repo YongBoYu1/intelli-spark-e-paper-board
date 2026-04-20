@@ -1,11 +1,13 @@
 #include "app/reducer.hpp"
 #include "app/calendar_runtime.hpp"
 #include "platform/clock.hpp"
+#include "platform/voice_client.hpp"
 #include "esp_log.h"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cinttypes>
 #include <ctime>
 #include <sstream>
 #include <string>
@@ -1538,6 +1540,573 @@ void reduce(AppState& state, const Event& event) {
     case EventType::Back:
       handle_back(state, event);
       break;
+  }
+}
+
+// ── Voice action dispatch ─────────────────────────────────────────────────────
+
+namespace {
+
+// Minimal JSON string extractor (same approach as voice_client.cpp).
+static std::string va_extract_string(const std::string& json, const char* key) {
+  const std::string search = std::string("\"") + key + "\":\"";
+  const size_t pos = json.find(search);
+  if (pos == std::string::npos) return {};
+  const size_t start = pos + search.size();
+  const size_t end   = json.find('"', start);
+  if (end == std::string::npos) return {};
+  return json.substr(start, end - start);
+}
+
+static int va_extract_int(const std::string& json, const char* key) {
+  const std::string search = std::string("\"") + key + "\":";
+  const size_t pos = json.find(search);
+  if (pos == std::string::npos) return 0;
+  size_t start = pos + search.size();
+  while (start < json.size() && (json[start] == ' ' || json[start] == '\t')) start++;
+  if (start >= json.size()) return 0;
+  // Parse digits manually — avoids std::stoi exceptions on ESP32.
+  int result = 0;
+  bool found = false;
+  for (size_t i = start; i < json.size(); i++) {
+    if (json[i] >= '0' && json[i] <= '9') {
+      result = result * 10 + (json[i] - '0');
+      found = true;
+    } else {
+      break;
+    }
+  }
+  return found ? result : 0;
+}
+
+// Find the first visible index whose label contains `item_name` (case-insensitive).
+static int find_item_index(const std::vector<std::string>& items,
+                           const std::vector<int>& hidden,
+                           const std::string& item_name) {
+  const std::string needle = [&] {
+    std::string s = item_name;
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    return s;
+  }();
+  for (int i = 0; i < static_cast<int>(items.size()); i++) {
+    if (contains_index(hidden, i)) continue;
+    std::string label = items[i];
+    std::transform(label.begin(), label.end(), label.begin(), ::tolower);
+    if (label.find(needle) != std::string::npos) return i;
+  }
+  return -1;
+}
+
+static void va_open_app(AppState& state, const std::string& args) {
+  const std::string app = va_extract_string(args, "app");
+  if      (app == "home")      { state.screen = Screen::Home;      }
+  else if (app == "weather")   { state.screen = Screen::Weather;   }
+  else if (app == "calendar")  { state.screen = Screen::Calendar;  }
+  else if (app == "timer")     { state.screen = Screen::Timer;     }
+  else if (app == "memo")      { state.screen = Screen::Memo;      }
+  else if (app == "reminders") { state.screen = Screen::Inventory; }
+  else if (app == "inventory") { state.screen = Screen::Inventory; }
+  else if (app == "settings")  { state.screen = Screen::Settings;  }
+  else {
+    ESP_LOGW(kTag, "[voice] open_app: unknown app \"%s\"", app.c_str());
+    return;
+  }
+  // Close menu overlay if open.
+  state.home.menu_overlay_active = false;
+  ESP_LOGI(kTag, "[voice] open_app: navigated to \"%s\"", app.c_str());
+}
+
+static void va_shopping_add_item(AppState& state, const std::string& args) {
+  std::string item = va_extract_string(args, "item_name");
+  if (item.empty()) item = va_extract_string(args, "item");
+  if (item.empty()) {
+    ESP_LOGW(kTag, "[voice] shopping_add_item: missing item_name");
+    return;
+  }
+  // Check if item already exists but is hidden — unhide it instead of duplicating.
+  for (int i = 0; i < static_cast<int>(state.dashboard.reminder_items.size()); i++) {
+    std::string label = state.dashboard.reminder_items[i];
+    std::string needle = item;
+    std::transform(label.begin(),  label.end(),  label.begin(),  ::tolower);
+    std::transform(needle.begin(), needle.end(), needle.begin(), ::tolower);
+    if (label.find(needle) != std::string::npos &&
+        contains_index(state.home.hidden_reminder_indices, i)) {
+      remove_index(state.home.hidden_reminder_indices, i);
+      remove_index(state.home.pending_hide_reminder_indices, i);
+      ESP_LOGI(kTag, "[voice] shopping_add_item: unhid existing \"%s\" at [%d]", item.c_str(), i);
+      return;
+    }
+  }
+  // New item — append to reminder list.
+  state.dashboard.reminder_items.push_back(item);
+  state.dashboard.reminder_completed.push_back(false);
+  state.dashboard.reminder_meta.push_back({});
+  ESP_LOGI(kTag, "[voice] shopping_add_item: added \"%s\"", item.c_str());
+}
+
+static void va_shopping_remove_item(AppState& state, const std::string& args) {
+  std::string item = va_extract_string(args, "item_name");
+  if (item.empty()) item = va_extract_string(args, "item");
+  const std::string source = va_extract_string(args, "source");
+
+  // Helper to hide by index in reminder list.
+  auto hide_reminder = [&](int idx) {
+    if (!contains_index(state.home.hidden_reminder_indices, idx)) {
+      state.home.hidden_reminder_indices.push_back(idx);
+      ESP_LOGI(kTag, "[voice] shopping_remove_item: hid reminder[%d]", idx);
+    }
+  };
+  // Helper to hide by index in inventory list.
+  auto hide_inventory = [&](int idx) {
+    if (!contains_index(state.home.hidden_inventory_indices, idx)) {
+      state.home.hidden_inventory_indices.push_back(idx);
+      ESP_LOGI(kTag, "[voice] shopping_remove_item: hid inventory[%d]", idx);
+    }
+  };
+
+  // Search preferred source first, then fall back to the other list.
+  if (source == "inventory") {
+    int idx = find_item_index(state.dashboard.inventory_items,
+                              state.home.hidden_inventory_indices, item);
+    if (idx >= 0) { hide_inventory(idx); return; }
+    // Fallback: check reminders too.
+    idx = find_item_index(state.dashboard.reminder_items,
+                          state.home.hidden_reminder_indices, item);
+    if (idx >= 0) { hide_reminder(idx); return; }
+  } else {
+    // Default: reminders first, then inventory.
+    int idx = find_item_index(state.dashboard.reminder_items,
+                              state.home.hidden_reminder_indices, item);
+    if (idx >= 0) { hide_reminder(idx); return; }
+    idx = find_item_index(state.dashboard.inventory_items,
+                          state.home.hidden_inventory_indices, item);
+    if (idx >= 0) { hide_inventory(idx); return; }
+  }
+  ESP_LOGW(kTag, "[voice] shopping_remove_item: \"%s\" not found in any list", item.c_str());
+}
+
+static void va_timer_set(AppState& state, const std::string& args) {
+  int secs = va_extract_int(args, "duration_seconds");
+  if (secs <= 0) {
+    ESP_LOGW(kTag, "[voice] timer_set: invalid duration_seconds");
+    return;
+  }
+  constexpr int kTimerMaxSecs = 5999;  // 99:59
+  if (secs > kTimerMaxSecs) secs = kTimerMaxSecs;
+  state.timer.seconds_remaining = secs;
+  state.timer.target_seconds    = secs;
+  state.timer.running           = true;
+  state.timer.alert_active      = false;
+  state.screen                  = Screen::Timer;
+  ESP_LOGI(kTag, "[voice] timer_set: %d s — navigating to Timer screen", secs);
+}
+
+static void va_memo_add(AppState& state, const std::string& args) {
+  std::string text = va_extract_string(args, "text");
+  if (text.empty()) text = va_extract_string(args, "memo_text");
+  if (text.empty()) text = va_extract_string(args, "content");
+  if (text.empty()) {
+    ESP_LOGW(kTag, "[voice] memo_add: missing text");
+    return;
+  }
+  std::string author = va_extract_string(args, "author");
+  if (author.empty()) author = "Voice";
+
+  MemoItem item;
+  item.text    = std::move(text);
+  item.author  = std::move(author);
+  item.posted  = "Just now";
+  item.is_new  = true;
+
+  // Prepend so the new memo shows first.
+  state.dashboard.memos.insert(state.dashboard.memos.begin(), item);
+  // Keep family_memo fields in sync with the first memo.
+  state.dashboard.family_memo_text   = state.dashboard.memos.front().text;
+  state.dashboard.family_memo_author = state.dashboard.memos.front().author;
+  state.dashboard.family_memo_posted = state.dashboard.memos.front().posted;
+  // Navigate to memo screen so user sees the new note.
+  state.screen = Screen::Memo;
+  state.memo.index = 0;
+  ESP_LOGI(kTag, "[voice] memo_add: added \"%s\" by %s",
+           item.text.c_str(), item.author.c_str());
+}
+
+static void va_memo_delete(AppState& state, const std::string& args) {
+  // Backend sends position: "first", "last", or index.
+  const std::string position = va_extract_string(args, "position");
+  if (state.dashboard.memos.empty()) {
+    ESP_LOGW(kTag, "[voice] memo_delete: no memos to delete");
+    return;
+  }
+  int idx = 0;
+  if (position == "last") {
+    idx = static_cast<int>(state.dashboard.memos.size()) - 1;
+  } else {
+    // Try numeric index.
+    const int n = va_extract_int(args, "index");
+    if (n > 0 && n < static_cast<int>(state.dashboard.memos.size())) idx = n;
+  }
+  ESP_LOGI(kTag, "[voice] memo_delete: removed memo[%d] \"%s\"",
+           idx, state.dashboard.memos[idx].text.c_str());
+  state.dashboard.memos.erase(state.dashboard.memos.begin() + idx);
+  if (!state.dashboard.memos.empty()) {
+    state.dashboard.family_memo_text   = state.dashboard.memos.front().text;
+    state.dashboard.family_memo_author = state.dashboard.memos.front().author;
+    state.dashboard.family_memo_posted = state.dashboard.memos.front().posted;
+  } else {
+    state.dashboard.family_memo_text.clear();
+    state.dashboard.family_memo_author.clear();
+    state.dashboard.family_memo_posted.clear();
+  }
+}
+
+static void va_memo_clear_all(AppState& state, const std::string& /*args*/) {
+  state.dashboard.memos.clear();
+  state.dashboard.family_memo_text.clear();
+  state.dashboard.family_memo_author.clear();
+  state.dashboard.family_memo_posted.clear();
+  ESP_LOGI(kTag, "[voice] memo_clear_all: cleared all memos");
+}
+
+static void va_timer_add(AppState& state, const std::string& args) {
+  int delta = va_extract_int(args, "delta_seconds");
+  if (delta <= 0) delta = va_extract_int(args, "seconds");
+  if (delta <= 0) {
+    ESP_LOGW(kTag, "[voice] timer_add: missing delta_seconds");
+    return;
+  }
+  constexpr int kTimerMaxSecs = 5999;
+  state.timer.seconds_remaining =
+      std::min(state.timer.seconds_remaining + delta, kTimerMaxSecs);
+  state.timer.target_seconds = state.timer.seconds_remaining;
+  state.screen = Screen::Timer;
+  ESP_LOGI(kTag, "[voice] timer_add: +%d s → %d s remaining", delta,
+           state.timer.seconds_remaining);
+}
+
+static void va_timer_pause(AppState& state, const std::string& /*args*/) {
+  if (!state.timer.running) {
+    ESP_LOGW(kTag, "[voice] timer_pause: timer not running");
+    return;
+  }
+  state.timer.running = false;
+  state.screen = Screen::Timer;
+  ESP_LOGI(kTag, "[voice] timer_pause: paused at %d s", state.timer.seconds_remaining);
+}
+
+static void va_timer_resume(AppState& state, const std::string& /*args*/) {
+  if (state.timer.running) {
+    ESP_LOGW(kTag, "[voice] timer_resume: already running");
+    return;
+  }
+  if (state.timer.seconds_remaining <= 0) {
+    ESP_LOGW(kTag, "[voice] timer_resume: nothing to resume");
+    return;
+  }
+  state.timer.running = true;
+  state.timer.alert_active = false;
+  state.screen = Screen::Timer;
+  ESP_LOGI(kTag, "[voice] timer_resume: resumed at %d s", state.timer.seconds_remaining);
+}
+
+static void va_timer_stop(AppState& state, const std::string& /*args*/) {
+  state.timer.running = false;
+  state.timer.alert_active = false;
+  state.timer.seconds_remaining = 0;
+  state.screen = Screen::Timer;
+  ESP_LOGI(kTag, "[voice] timer_stop: stopped");
+}
+
+static void va_shopping_clear_all(AppState& state, const std::string& /*args*/) {
+  // Hide all visible reminder items.
+  state.home.hidden_reminder_indices.clear();
+  for (int i = 0; i < static_cast<int>(state.dashboard.reminder_items.size()); i++) {
+    state.home.hidden_reminder_indices.push_back(i);
+  }
+  state.home.pending_hide_reminder_indices.clear();
+  ESP_LOGI(kTag, "[voice] shopping_clear_all: hid %zu items",
+           state.dashboard.reminder_items.size());
+}
+
+static void va_inventory_clear_all(AppState& state, const std::string& /*args*/) {
+  state.home.hidden_inventory_indices.clear();
+  for (int i = 0; i < static_cast<int>(state.dashboard.inventory_items.size()); i++) {
+    state.home.hidden_inventory_indices.push_back(i);
+  }
+  state.home.pending_hide_inventory_indices.clear();
+  ESP_LOGI(kTag, "[voice] inventory_clear_all: hid %zu items",
+           state.dashboard.inventory_items.size());
+}
+
+static void va_inventory_set_expiry(AppState& state, const std::string& args) {
+  std::string item = va_extract_string(args, "item_name");
+  if (item.empty()) item = va_extract_string(args, "item");
+  const std::string expiry = va_extract_string(args, "expiry_date");
+  if (item.empty() || expiry.empty()) {
+    ESP_LOGW(kTag, "[voice] inventory_set_expiry: missing item or expiry_date");
+    return;
+  }
+  // Find item in inventory badges vector and update it.
+  const int idx = find_item_index(state.dashboard.inventory_items,
+                                  state.home.hidden_inventory_indices, item);
+  if (idx < 0) {
+    ESP_LOGW(kTag, "[voice] inventory_set_expiry: \"%s\" not found", item.c_str());
+    return;
+  }
+  while (static_cast<int>(state.dashboard.inventory_badges.size()) <= idx) {
+    state.dashboard.inventory_badges.push_back("");
+  }
+  state.dashboard.inventory_badges[idx] = expiry;
+  ESP_LOGI(kTag, "[voice] inventory_set_expiry: \"%s\" → \"%s\"",
+           item.c_str(), expiry.c_str());
+}
+
+static void va_memo_update(AppState& state, const std::string& args) {
+  std::string text = va_extract_string(args, "text");
+  if (text.empty()) text = va_extract_string(args, "new_text");
+  if (text.empty()) text = va_extract_string(args, "content");
+  if (text.empty()) {
+    ESP_LOGW(kTag, "[voice] memo_update: missing text");
+    return;
+  }
+  if (state.dashboard.memos.empty()) {
+    ESP_LOGW(kTag, "[voice] memo_update: no memos");
+    return;
+  }
+  // Default: update the first (most recent) memo.
+  int idx = 0;
+  const std::string position = va_extract_string(args, "position");
+  if (position == "last") idx = static_cast<int>(state.dashboard.memos.size()) - 1;
+  const int n = va_extract_int(args, "index");
+  if (n > 0 && n < static_cast<int>(state.dashboard.memos.size())) idx = n;
+
+  state.dashboard.memos[idx].text   = text;
+  state.dashboard.memos[idx].is_new = true;
+  if (idx == 0) state.dashboard.family_memo_text = text;
+  state.screen = Screen::Memo;
+  state.memo.index = idx;
+  ESP_LOGI(kTag, "[voice] memo_update: updated memo[%d] → \"%s\"", idx, text.c_str());
+}
+
+static void va_inventory_log_event(AppState& state, const std::string& args) {
+  // Backend sends "item_name" or "item"; event sent as "event_type" or "event".
+  std::string item = va_extract_string(args, "item_name");
+  if (item.empty()) item = va_extract_string(args, "item");
+  std::string event = va_extract_string(args, "event_type");
+  if (event.empty()) event = va_extract_string(args, "event");
+  if (item.empty()) {
+    ESP_LOGW(kTag, "[voice] inventory_log_event: missing item");
+    return;
+  }
+  if (event == "removed" || event == "used" || event == "consumed") {
+    // Try inventory first, then reminder list (AI sometimes conflates them).
+    int idx = find_item_index(state.dashboard.inventory_items,
+                              state.home.hidden_inventory_indices, item);
+    if (idx >= 0) {
+      state.home.hidden_inventory_indices.push_back(idx);
+      ESP_LOGI(kTag, "[voice] inventory_log_event: removed \"%s\" from inventory", item.c_str());
+    } else {
+      idx = find_item_index(state.dashboard.reminder_items,
+                            state.home.hidden_reminder_indices, item);
+      if (idx >= 0) {
+        state.home.hidden_reminder_indices.push_back(idx);
+        ESP_LOGI(kTag, "[voice] inventory_log_event: removed \"%s\" from reminders", item.c_str());
+      } else {
+        ESP_LOGW(kTag, "[voice] inventory_log_event: \"%s\" not found anywhere", item.c_str());
+      }
+    }
+  } else {
+    // "added" or unknown — add to inventory list.
+    state.dashboard.inventory_items.push_back(item);
+    state.dashboard.inventory_completed.push_back(false);
+    ESP_LOGI(kTag, "[voice] inventory_log_event: added \"%s\" to inventory (event=%s)",
+             item.c_str(), event.c_str());
+  }
+}
+
+// ── Undo / redo snapshot ─────────────────────────────────────────────────────
+
+struct VoiceSnapshot {
+  // Dashboard lists
+  std::vector<std::string> reminder_items;
+  std::vector<bool>        reminder_completed;
+  std::vector<ReminderMetaItem> reminder_meta;
+  std::vector<std::string> inventory_items;
+  std::vector<std::string> inventory_badges;
+  std::vector<bool>        inventory_completed;
+  std::vector<MemoItem>    memos;
+  std::string              family_memo_text;
+  std::string              family_memo_author;
+  std::string              family_memo_posted;
+  // Home hidden indices
+  std::vector<int> hidden_reminder_indices;
+  std::vector<int> hidden_inventory_indices;
+  std::vector<int> pending_hide_reminder_indices;
+  std::vector<int> pending_hide_inventory_indices;
+  // Timer
+  bool running{false};
+  int  seconds_remaining{0};
+  int  target_seconds{0};
+  bool alert_active{false};
+  // Navigation
+  Screen screen{Screen::Home};
+  int    memo_index{0};
+};
+
+static VoiceSnapshot capture_snapshot(const AppState& s) {
+  VoiceSnapshot snap;
+  snap.reminder_items    = s.dashboard.reminder_items;
+  snap.reminder_completed= s.dashboard.reminder_completed;
+  snap.reminder_meta     = s.dashboard.reminder_meta;
+  snap.inventory_items   = s.dashboard.inventory_items;
+  snap.inventory_badges  = s.dashboard.inventory_badges;
+  snap.inventory_completed = s.dashboard.inventory_completed;
+  snap.memos             = s.dashboard.memos;
+  snap.family_memo_text  = s.dashboard.family_memo_text;
+  snap.family_memo_author= s.dashboard.family_memo_author;
+  snap.family_memo_posted= s.dashboard.family_memo_posted;
+  snap.hidden_reminder_indices        = s.home.hidden_reminder_indices;
+  snap.hidden_inventory_indices       = s.home.hidden_inventory_indices;
+  snap.pending_hide_reminder_indices  = s.home.pending_hide_reminder_indices;
+  snap.pending_hide_inventory_indices = s.home.pending_hide_inventory_indices;
+  snap.running           = s.timer.running;
+  snap.seconds_remaining = s.timer.seconds_remaining;
+  snap.target_seconds    = s.timer.target_seconds;
+  snap.alert_active      = s.timer.alert_active;
+  snap.screen            = s.screen;
+  snap.memo_index        = s.memo.index;
+  return snap;
+}
+
+static void restore_snapshot(AppState& s, const VoiceSnapshot& snap) {
+  s.dashboard.reminder_items    = snap.reminder_items;
+  s.dashboard.reminder_completed= snap.reminder_completed;
+  s.dashboard.reminder_meta     = snap.reminder_meta;
+  s.dashboard.inventory_items   = snap.inventory_items;
+  s.dashboard.inventory_badges  = snap.inventory_badges;
+  s.dashboard.inventory_completed = snap.inventory_completed;
+  s.dashboard.memos             = snap.memos;
+  s.dashboard.family_memo_text  = snap.family_memo_text;
+  s.dashboard.family_memo_author= snap.family_memo_author;
+  s.dashboard.family_memo_posted= snap.family_memo_posted;
+  s.home.hidden_reminder_indices        = snap.hidden_reminder_indices;
+  s.home.hidden_inventory_indices       = snap.hidden_inventory_indices;
+  s.home.pending_hide_reminder_indices  = snap.pending_hide_reminder_indices;
+  s.home.pending_hide_inventory_indices = snap.pending_hide_inventory_indices;
+  s.timer.running           = snap.running;
+  s.timer.seconds_remaining = snap.seconds_remaining;
+  s.timer.target_seconds    = snap.target_seconds;
+  s.timer.alert_active      = snap.alert_active;
+  s.screen                  = snap.screen;
+  s.memo.index              = snap.memo_index;
+}
+
+// Tools that should NOT be pushed onto the undo stack (navigation-only, no data change).
+static bool is_undo_excluded_tool(const std::string& tool) {
+  return tool == "no_action" ||
+         tool == "open_app"  ||
+         tool == "undo_last_action_group" ||
+         tool == "redo_last_action_group";
+}
+
+constexpr std::size_t kUndoStackMax = 10;
+static std::vector<VoiceSnapshot> g_done_stack;  // undo history
+static std::vector<VoiceSnapshot> g_redo_stack;  // redo history
+
+}  // anonymous namespace
+
+void apply_voice_actions(AppState& state,
+                         const std::vector<fridge_ink::platform::VoiceAction>& actions) {
+  // Determine if any action in this group is undoable (data-changing).
+  const bool has_undoable = std::any_of(actions.begin(), actions.end(),
+      [](const fridge_ink::platform::VoiceAction& a) {
+        return !is_undo_excluded_tool(a.tool);
+      });
+
+  // Also check if this is purely a history-control group (undo/redo).
+  const bool is_history_control = std::all_of(actions.begin(), actions.end(),
+      [](const fridge_ink::platform::VoiceAction& a) {
+        return a.tool == "undo_last_action_group" || a.tool == "redo_last_action_group";
+      });
+
+  // Capture pre-action snapshot for undo (non-history-control groups only).
+  VoiceSnapshot before_snap;
+  if (has_undoable && !is_history_control) {
+    before_snap = capture_snapshot(state);
+  }
+
+  for (const auto& a : actions) {
+    ESP_LOGI(kTag, "[voice] applying tool=%s args=%s",
+             a.tool.c_str(), a.args_json.c_str());
+    if (a.tool == "open_app") {
+      va_open_app(state, a.args_json);
+    } else if (a.tool == "memo_add") {
+      va_memo_add(state, a.args_json);
+    } else if (a.tool == "memo_delete") {
+      va_memo_delete(state, a.args_json);
+    } else if (a.tool == "memo_clear_all") {
+      va_memo_clear_all(state, a.args_json);
+    } else if (a.tool == "shopping_add_item") {
+      va_shopping_add_item(state, a.args_json);
+    } else if (a.tool == "shopping_remove_item") {
+      va_shopping_remove_item(state, a.args_json);
+    } else if (a.tool == "timer_set") {
+      va_timer_set(state, a.args_json);
+    } else if (a.tool == "timer_add") {
+      va_timer_add(state, a.args_json);
+    } else if (a.tool == "timer_pause") {
+      va_timer_pause(state, a.args_json);
+    } else if (a.tool == "timer_resume") {
+      va_timer_resume(state, a.args_json);
+    } else if (a.tool == "timer_stop") {
+      va_timer_stop(state, a.args_json);
+    } else if (a.tool == "shopping_clear_all") {
+      va_shopping_clear_all(state, a.args_json);
+    } else if (a.tool == "inventory_clear_all") {
+      va_inventory_clear_all(state, a.args_json);
+    } else if (a.tool == "inventory_set_expiry") {
+      va_inventory_set_expiry(state, a.args_json);
+    } else if (a.tool == "memo_update") {
+      va_memo_update(state, a.args_json);
+    } else if (a.tool == "inventory_log_event") {
+      va_inventory_log_event(state, a.args_json);
+    } else if (a.tool == "undo_last_action_group") {
+      if (g_done_stack.empty()) {
+        ESP_LOGW(kTag, "[voice] undo: nothing to undo");
+      } else {
+        VoiceSnapshot current = capture_snapshot(state);
+        if (g_redo_stack.size() >= kUndoStackMax) g_redo_stack.erase(g_redo_stack.begin());
+        g_redo_stack.push_back(std::move(current));
+        restore_snapshot(state, g_done_stack.back());
+        g_done_stack.pop_back();
+        ESP_LOGI(kTag, "[voice] undo: restored (done=%zu redo=%zu)",
+                 g_done_stack.size(), g_redo_stack.size());
+      }
+    } else if (a.tool == "redo_last_action_group") {
+      if (g_redo_stack.empty()) {
+        ESP_LOGW(kTag, "[voice] redo: nothing to redo");
+      } else {
+        VoiceSnapshot current = capture_snapshot(state);
+        if (g_done_stack.size() >= kUndoStackMax) g_done_stack.erase(g_done_stack.begin());
+        g_done_stack.push_back(std::move(current));
+        restore_snapshot(state, g_redo_stack.back());
+        g_redo_stack.pop_back();
+        ESP_LOGI(kTag, "[voice] redo: restored (done=%zu redo=%zu)",
+                 g_done_stack.size(), g_redo_stack.size());
+      }
+    } else if (a.tool == "no_action") {
+      ESP_LOGI(kTag, "[voice] no_action (intentional no-op)");
+    } else {
+      ESP_LOGW(kTag, "[voice] unknown tool: %s", a.tool.c_str());
+    }
+  }
+
+  // Push pre-action snapshot onto done_stack (clears redo_stack for new branch).
+  if (has_undoable && !is_history_control) {
+    if (g_done_stack.size() >= kUndoStackMax) g_done_stack.erase(g_done_stack.begin());
+    g_done_stack.push_back(std::move(before_snap));
+    g_redo_stack.clear();  // New action invalidates redo history.
+    ESP_LOGI(kTag, "[voice] snapshot saved (done=%zu)", g_done_stack.size());
   }
 }
 

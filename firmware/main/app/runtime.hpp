@@ -3,8 +3,11 @@
 #include "app/events.hpp"
 #include "app/refresh_policy.hpp"
 #include "app/state.hpp"
+#include "platform/voice_client.hpp"
 #include "ui/render_app.hpp"
 #include "ui/screens/home_screen.hpp"
+
+#include <vector>
 
 #include <optional>
 #include <utility>
@@ -24,6 +27,8 @@ class Runtime {
   void boot();
   void dispatch(const Event& event);
   void flush_deferred(std::uint64_t now_ms);
+  void dispatch_voice_actions(
+      const std::vector<fridge_ink::platform::VoiceAction>& actions);
 
   const AppState& state() const { return state_; }
 
