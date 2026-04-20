@@ -43,6 +43,7 @@ idf_component_register(
         "platform/mic_driver.cpp"
         "platform/voice_client.cpp"
         "platform/wifi_driver.cpp"
+        "platform/ntp_sync.cpp"
     INCLUDE_DIRS "."
     EMBED_FILES
         "assets/landing_en.raw"
@@ -62,6 +63,8 @@ idf_component_register(
         esp_netif
         esp_event
         nvs_flash
+        # SNTP for NTP time sync
+        lwip
 )
 
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_17)

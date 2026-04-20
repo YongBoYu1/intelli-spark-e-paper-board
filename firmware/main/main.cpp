@@ -6,6 +6,7 @@
 #include "platform/display.hpp"
 #include "platform/mic_driver.hpp"
 #include "platform/voice_client.hpp"
+#include "platform/ntp_sync.hpp"
 #include "platform/wifi_driver.hpp"
 
 #include "driver/usb_serial_jtag.h"
@@ -339,15 +340,20 @@ extern "C" void app_main(void) {
   g_runtime = &runtime;
   runtime.boot();
 
-  // Connect to WiFi (credentials set via sdkconfig / menuconfig).
-  // Non-fatal: voice HTTP POST will simply fail if not connected.
+  // Connect to WiFi then sync time + detect timezone via IP geolocation.
+  // Both steps are non-fatal: the device runs offline if they fail.
   {
     constexpr const char* kSsid     = CONFIG_WIFI_SSID;
     constexpr const char* kPassword = CONFIG_WIFI_PASSWORD;
     if (kSsid[0] != '\0') {
-      fridge_ink::platform::wifi_connect(kSsid, kPassword, 15000);
+      const bool wifi_ok =
+          fridge_ink::platform::wifi_connect(kSsid, kPassword, 15000);
+      if (wifi_ok) {
+        // NTP time sync + IP-based timezone detection (20 s combined budget).
+        fridge_ink::platform::ntp_sync(20000);
+      }
     } else {
-      ESP_LOGW(kTag, "CONFIG_WIFI_SSID not set — WiFi skipped");
+      ESP_LOGW(kTag, "CONFIG_WIFI_SSID not set — WiFi / NTP skipped");
     }
   }
 
