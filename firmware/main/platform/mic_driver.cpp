@@ -103,7 +103,8 @@ std::vector<int16_t> mic_record_pcm(uint32_t max_ms) {
   pcm.reserve(target_samples);
 
   // Single DMA read buffer (int32_t, reused each iteration).
-  static int32_t raw[kDmaBufSamples];
+  // Stack-allocated (not static) so the function is reentrant.
+  int32_t raw[kDmaBufSamples];
 
   const TickType_t deadline =
       xTaskGetTickCount() + pdMS_TO_TICKS(max_ms + 500 /*margin*/);

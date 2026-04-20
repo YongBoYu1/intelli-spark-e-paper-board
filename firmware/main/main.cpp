@@ -329,6 +329,10 @@ extern "C" void app_main(void) {
   ESP_LOGI(kTag, "Booting Fridge Ink firmware runtime V0");
 
   g_voice_mutex = xSemaphoreCreateMutex();
+  if (g_voice_mutex == nullptr) {
+    ESP_LOGE(kTag, "Failed to create voice mutex — halting");
+    return;
+  }
 
   auto display = fridge_ink::platform::make_default_display();
   fridge_ink::app::Runtime runtime(*display);

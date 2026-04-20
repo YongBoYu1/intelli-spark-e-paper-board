@@ -20,6 +20,7 @@ Serial controls in monitor:
 - `c` (or Enter/Space): click
 - `m`: long-press
 - `b`: back
+- `o`: trigger voice recording (tap once, speak within 5 s)
 - `t<epoch><Enter>`: sync wall clock
 - `v<HH>`: VCOM sweep
 
@@ -62,6 +63,9 @@ firmware/
       display.hpp/.cpp
       clock.hpp/.cpp
       live_data_provider.hpp/.cpp
+      wifi_driver.hpp/.cpp
+      mic_driver.hpp/.cpp
+      voice_client.hpp/.cpp
     ui/
       render_app.hpp/.cpp
       draw.hpp/.cpp
@@ -166,7 +170,44 @@ For behavior changes, verify:
 3. No unexpected `R2_FAST_FULL` spikes.
 4. Product startup expectation (Landing vs Home) is explicitly documented in PR.
 
-## 10. Related Context Files
+## 10. WiFi + Voice Configuration
+
+WiFi and voice backend are configured via `firmware/sdkconfig.defaults`:
+
+```
+CONFIG_WIFI_SSID="YourNetwork"
+CONFIG_WIFI_PASSWORD="YourPassword"
+CONFIG_VOICE_API_URL="http://192.168.x.x:8000"
+CONFIG_VOICE_API_TOKEN="your-token-here"
+```
+
+After editing `sdkconfig.defaults`, always delete `sdkconfig` before rebuilding:
+
+```bash
+rm -f sdkconfig && idf.py build
+```
+
+### Microphone Wiring (NR0562 I2S MEMS)
+
+| Signal | GPIO |
+|--------|------|
+| SCK (BCLK) | 5 |
+| WS (LRCLK) | 6 |
+| SD (Data)  | 7 |
+
+### Voice Action Dispatch
+
+Voice actions returned by the backend are applied to `AppState` via
+`apply_voice_actions()` in `firmware/main/app/reducer.cpp`.
+
+Supported tools (19/19): `open_app`, `shopping_add/remove/clear_all`,
+`inventory_log_event/set_expiry/clear_all`, `timer_set/add/pause/resume/stop`,
+`memo_add/delete/update/clear_all`, `undo/redo_last_action_group`.
+
+Undo/redo history is snapshot-based (up to 10 steps). `open_app` and `no_action`
+are excluded from undo history.
+
+## 11. Related Context Files
 
 - `docs/issues/2026-04-05-issue-51-52-53-closeout-plan.md`
 - `docs/issues/2026-04-08-issue-63-home-portrait-parity-handoff.md`

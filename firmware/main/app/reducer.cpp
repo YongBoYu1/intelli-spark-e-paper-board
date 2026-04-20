@@ -1647,6 +1647,10 @@ static void va_shopping_add_item(AppState& state, const std::string& args) {
 static void va_shopping_remove_item(AppState& state, const std::string& args) {
   std::string item = va_extract_string(args, "item_name");
   if (item.empty()) item = va_extract_string(args, "item");
+  if (item.empty()) {
+    ESP_LOGW(kTag, "[voice] shopping_remove_item: missing item_name — ignoring");
+    return;
+  }
   const std::string source = va_extract_string(args, "source");
 
   // Helper to hide by index in reminder list.
@@ -1742,9 +1746,9 @@ static void va_memo_delete(AppState& state, const std::string& args) {
   if (position == "last") {
     idx = static_cast<int>(state.dashboard.memos.size()) - 1;
   } else {
-    // Try numeric index.
+    // Backend emits 1-based index; convert to 0-based.
     const int n = va_extract_int(args, "index");
-    if (n > 0 && n < static_cast<int>(state.dashboard.memos.size())) idx = n;
+    if (n >= 1 && n <= static_cast<int>(state.dashboard.memos.size())) idx = n - 1;
   }
   ESP_LOGI(kTag, "[voice] memo_delete: removed memo[%d] \"%s\"",
            idx, state.dashboard.memos[idx].text.c_str());
@@ -1877,8 +1881,9 @@ static void va_memo_update(AppState& state, const std::string& args) {
   int idx = 0;
   const std::string position = va_extract_string(args, "position");
   if (position == "last") idx = static_cast<int>(state.dashboard.memos.size()) - 1;
+  // Backend emits 1-based index; convert to 0-based.
   const int n = va_extract_int(args, "index");
-  if (n > 0 && n < static_cast<int>(state.dashboard.memos.size())) idx = n;
+  if (n >= 1 && n <= static_cast<int>(state.dashboard.memos.size())) idx = n - 1;
 
   state.dashboard.memos[idx].text   = text;
   state.dashboard.memos[idx].is_new = true;
@@ -1898,7 +1903,7 @@ static void va_inventory_log_event(AppState& state, const std::string& args) {
     ESP_LOGW(kTag, "[voice] inventory_log_event: missing item");
     return;
   }
-  if (event == "removed" || event == "used" || event == "consumed") {
+  if (event == "removed" || event == "used" || event == "consumed" || event == "finished") {
     // Try inventory first, then reminder list (AI sometimes conflates them).
     int idx = find_item_index(state.dashboard.inventory_items,
                               state.home.hidden_inventory_indices, item);
@@ -2009,7 +2014,10 @@ static bool is_undo_excluded_tool(const std::string& tool) {
          tool == "redo_last_action_group";
 }
 
-constexpr std::size_t kUndoStackMax = 10;
+// Keep history small: each VoiceSnapshot deep-copies several string vectors.
+// On ESP32-S3 with 8 MB PSRAM allocations route there (>512 B), but we still
+// cap at 5 to avoid runaway heap growth on large lists.
+constexpr std::size_t kUndoStackMax = 5;
 static std::vector<VoiceSnapshot> g_done_stack;  // undo history
 static std::vector<VoiceSnapshot> g_redo_stack;  // redo history
 
