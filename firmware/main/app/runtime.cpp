@@ -604,6 +604,37 @@ void Runtime::dispatch_voice_actions(
   flush_pending(platform::monotonic_ms());
 }
 
+void Runtime::apply_weather_result(const platform::WeatherResult& w) {
+  if (!w.ok) return;
+
+  auto& d = state_.dashboard;
+  d.location                = w.location;
+  d.weather_condition       = w.condition;
+  d.weather_icon            = w.icon_key;
+  d.weather_temperature_c   = w.temperature_c;
+  d.weather_feels_like_c    = w.feels_like_c;
+  d.weather_hi_c            = w.hi_c;
+  d.weather_lo_c            = w.lo_c;
+  d.weather_humidity_percent= w.humidity_percent;
+  d.weather_wind_kmh        = w.wind_kmh;
+  d.weather_uv_index        = w.uv_index;
+
+  for (std::size_t i = 0; i < w.forecast.size(); ++i) {
+    d.weather_forecast_days[i].dow       = w.forecast[i].dow;
+    d.weather_forecast_days[i].condition = w.forecast[i].condition;
+    d.weather_forecast_days[i].icon      = w.forecast[i].icon_key;
+    d.weather_forecast_days[i].hi_c      = w.forecast[i].hi_c;
+    d.weather_forecast_days[i].lo_c      = w.forecast[i].lo_c;
+  }
+
+  state_.home.weather_sync_state = "ok";
+  state_.weather.temperature_c   = w.temperature_c;
+  state_.weather.condition       = w.condition;
+
+  stage_render();
+  flush_pending(platform::monotonic_ms());
+}
+
 void Runtime::stage_render() {
   const ui::HomeDirtySnapshot* previous_home_snapshot = nullptr;
   if (state_.screen == Screen::Home &&

@@ -44,6 +44,7 @@ idf_component_register(
         "platform/voice_client.cpp"
         "platform/wifi_driver.cpp"
         "platform/ntp_sync.cpp"
+        "platform/weather_client.cpp"
     INCLUDE_DIRS "."
     EMBED_FILES
         "assets/landing_en.raw"

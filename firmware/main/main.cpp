@@ -4,9 +4,11 @@
 #include "platform/board_config.hpp"
 #include "platform/clock.hpp"
 #include "platform/display.hpp"
+#include "platform/live_data_provider.hpp"
 #include "platform/mic_driver.hpp"
 #include "platform/voice_client.hpp"
 #include "platform/ntp_sync.hpp"
+#include "platform/weather_client.hpp"
 #include "platform/wifi_driver.hpp"
 
 #include "driver/usb_serial_jtag.h"
@@ -21,6 +23,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include <memory>
 
 namespace {
 
@@ -67,11 +70,44 @@ static constexpr uint64_t kRecordCooldownMs = 2000;
 
 // Runtime pointer set in app_main().
 static fridge_ink::app::Runtime* g_runtime{nullptr};
+static std::unique_ptr<fridge_ink::platform::Display> g_display{};
+static std::unique_ptr<fridge_ink::app::Runtime> g_runtime_owner{};
 
 // Pending voice actions queue — written by voice_record_task, consumed by main loop.
 // Protected by g_voice_mutex so cross-task access is safe.
 static SemaphoreHandle_t g_voice_mutex{nullptr};
 static std::vector<fridge_ink::platform::VoiceAction> g_pending_voice_actions{};
+
+// ── Weather ───────────────────────────────────────────────────────────────────
+// Weather result is fetched in a background task and consumed by the main loop.
+static SemaphoreHandle_t              g_weather_mutex{nullptr};
+static fridge_ink::platform::WeatherResult g_weather_result{};
+static bool                           g_weather_result_pending{false};
+static std::atomic<bool>              g_weather_fetching{false};
+static std::atomic<uint64_t>          g_last_weather_fetch_ms{0};
+// Refresh every 30 minutes while WiFi is connected.
+static constexpr uint64_t kWeatherRefreshMs = 30ULL * 60 * 1000;
+
+static void weather_fetch_task(void* /*arg*/) {
+  ESP_LOGI(kTag, "[weather] Fetching from wttr.in…");
+  auto result = fridge_ink::platform::weather_fetch(12000);
+  if (g_weather_mutex) {
+    xSemaphoreTake(g_weather_mutex, portMAX_DELAY);
+    g_weather_result         = std::move(result);
+    g_weather_result_pending = true;
+    xSemaphoreGive(g_weather_mutex);
+  }
+  g_last_weather_fetch_ms.store(fridge_ink::platform::monotonic_ms());
+  g_weather_fetching.store(false);
+  vTaskDelete(nullptr);
+}
+
+static void trigger_weather_fetch() {
+  if (!fridge_ink::platform::wifi_is_connected()) return;
+  if (g_weather_fetching.exchange(true)) return;  // already in flight
+  // 10 KB stack for HTTP + JSON parsing
+  xTaskCreate(weather_fetch_task, "weather", 10240, nullptr, 4, nullptr);
+}
 
 // FreeRTOS task: capture PCM → POST to backend → log result.
 static void voice_record_task(void* /*arg*/) {
@@ -334,11 +370,16 @@ extern "C" void app_main(void) {
     ESP_LOGE(kTag, "Failed to create voice mutex — halting");
     return;
   }
+  g_weather_mutex = xSemaphoreCreateMutex();
+  if (g_weather_mutex == nullptr) {
+    ESP_LOGE(kTag, "Failed to create weather mutex — halting");
+    return;
+  }
 
-  auto display = fridge_ink::platform::make_default_display();
-  fridge_ink::app::Runtime runtime(*display);
-  g_runtime = &runtime;
-  runtime.boot();
+  g_display = fridge_ink::platform::make_default_display();
+  g_runtime_owner = std::make_unique<fridge_ink::app::Runtime>(*g_display);
+  g_runtime = g_runtime_owner.get();
+  g_runtime->boot();
 
   // Connect to WiFi then sync time + detect timezone via IP geolocation.
   // Both steps are non-fatal: the device runs offline if they fail.
@@ -351,11 +392,17 @@ extern "C" void app_main(void) {
       if (wifi_ok) {
         // NTP time sync + IP-based timezone detection (20 s combined budget).
         fridge_ink::platform::ntp_sync(20000);
+        // Kick off the first weather fetch in the background.
+        trigger_weather_fetch();
       }
     } else {
       ESP_LOGW(kTag, "CONFIG_WIFI_SSID not set — WiFi / NTP skipped");
     }
   }
+
+  fridge_ink::platform::live_data_bootstrap(
+      fridge_ink::platform::active_timezone_name().c_str(),
+      g_runtime->state().dashboard.location.c_str());
 
   // Initialise I2S microphone driver (non-fatal if it fails).
   const auto& board = fridge_ink::platform::default_board_config();
@@ -384,7 +431,7 @@ extern "C" void app_main(void) {
 
   while (true) {
     if (serial_input_ok) {
-      poll_serial_input(runtime, *display);
+      poll_serial_input(*g_runtime, *g_display);
     }
 
     // Drain pending voice actions (enqueued from voice_record_task).
@@ -393,16 +440,38 @@ extern "C" void app_main(void) {
         std::vector<fridge_ink::platform::VoiceAction> actions;
         actions.swap(g_pending_voice_actions);
         xSemaphoreGive(g_voice_mutex);
-        runtime.dispatch_voice_actions(actions);
+        g_runtime->dispatch_voice_actions(actions);
       } else {
         xSemaphoreGive(g_voice_mutex);
       }
     }
 
+    // Drain pending weather result (fetched off main task, applied here).
+    if (g_weather_mutex && xSemaphoreTake(g_weather_mutex, 0) == pdTRUE) {
+      if (g_weather_result_pending) {
+        fridge_ink::platform::WeatherResult wx;
+        wx = std::move(g_weather_result);
+        g_weather_result_pending = false;
+        xSemaphoreGive(g_weather_mutex);
+        g_runtime->apply_weather_result(wx);
+      } else {
+        xSemaphoreGive(g_weather_mutex);
+      }
+    }
+
     const std::uint64_t now_ms = fridge_ink::platform::monotonic_ms();
-    runtime.flush_deferred(now_ms);
+
+    // Periodic weather refresh (every 30 min, non-blocking).
+    {
+      const uint64_t last = g_last_weather_fetch_ms.load();
+      if (last > 0 && (now_ms - last) >= kWeatherRefreshMs) {
+        trigger_weather_fetch();
+      }
+    }
+
+    g_runtime->flush_deferred(now_ms);
     if ((now_ms - last_tick_ms) >= kRuntimeTickMs) {
-      runtime.dispatch(fridge_ink::app::Event::Tick(now_ms));
+      g_runtime->dispatch(fridge_ink::app::Event::Tick(now_ms));
       last_tick_ms = now_ms;
     }
     vTaskDelay(kLoopDelay);
