@@ -79,14 +79,17 @@ static SemaphoreHandle_t g_voice_mutex{nullptr};
 static std::vector<fridge_ink::platform::VoiceAction> g_pending_voice_actions{};
 
 // ── Weather ───────────────────────────────────────────────────────────────────
-// Weather result is fetched in a background task and consumed by the main loop.
-static SemaphoreHandle_t              g_weather_mutex{nullptr};
+// Fetched once at first boot (after WiFi connects), then at 00:xx and 12:xx
+// local time each day.  All other times: no fetch.
+static SemaphoreHandle_t                   g_weather_mutex{nullptr};
 static fridge_ink::platform::WeatherResult g_weather_result{};
-static bool                           g_weather_result_pending{false};
-static std::atomic<bool>              g_weather_fetching{false};
-static std::atomic<uint64_t>          g_last_weather_fetch_ms{0};
-// Refresh every 30 minutes while WiFi is connected.
-static constexpr uint64_t kWeatherRefreshMs = 30ULL * 60 * 1000;
+static bool                                g_weather_result_pending{false};
+static std::atomic<bool>                   g_weather_fetching{false};
+
+// Day-of-year + hour of the last *scheduled* fetch (avoids re-triggering
+// multiple times within the same 00:xx or 12:xx window).
+static int g_last_sched_fetch_yday = -1;
+static int g_last_sched_fetch_hour = -1;
 
 static void weather_fetch_task(void* /*arg*/) {
   ESP_LOGI(kTag, "[weather] Fetching from wttr.in…");
@@ -97,7 +100,6 @@ static void weather_fetch_task(void* /*arg*/) {
     g_weather_result_pending = true;
     xSemaphoreGive(g_weather_mutex);
   }
-  g_last_weather_fetch_ms.store(fridge_ink::platform::monotonic_ms());
   g_weather_fetching.store(false);
   vTaskDelete(nullptr);
 }
@@ -461,10 +463,17 @@ extern "C" void app_main(void) {
 
     const std::uint64_t now_ms = fridge_ink::platform::monotonic_ms();
 
-    // Periodic weather refresh (every 30 min, non-blocking).
-    {
-      const uint64_t last = g_last_weather_fetch_ms.load();
-      if (last > 0 && (now_ms - last) >= kWeatherRefreshMs) {
+    // Scheduled weather refresh: trigger at 00:xx and 12:xx local time.
+    // Only fires once per window (guarded by day-of-year + hour pair).
+    if (fridge_ink::platform::wall_time_is_valid()) {
+      const std::time_t t  = fridge_ink::platform::wall_time_seconds();
+      const struct tm*  lt = localtime(&t);
+      const int h = lt->tm_hour;
+      const int d = lt->tm_yday;
+      if ((h == 0 || h == 12) &&
+          !(d == g_last_sched_fetch_yday && h == g_last_sched_fetch_hour)) {
+        g_last_sched_fetch_yday = d;
+        g_last_sched_fetch_hour = h;
         trigger_weather_fetch();
       }
     }
