@@ -7,7 +7,7 @@
 #include "ui/screens/memo_screen.hpp"
 #include "ui/screens/menu_screen.hpp"
 #include "ui/screens/onboarding_screen.hpp"
-#include "ui/screens/placeholder_screen.hpp"
+#include "ui/screens/weather_screen.hpp"
 #include "ui/screens/settings_screen.hpp"
 #include "ui/screens/timer_screen.hpp"
 

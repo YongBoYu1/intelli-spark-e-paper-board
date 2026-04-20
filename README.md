@@ -32,6 +32,13 @@ WAVESHARE_PYTHON_ROOT=third_party/waveshare_ePaper/RaspberryPi_JetsonNano/python
 ```
 Note: the scripts also auto-detect `third_party/waveshare_ePaper/...` without the env var.
 
+### ESP32 C++ Runtime Guide
+
+For the ESP32-S3 firmware architecture, startup-flow behavior (Home vs Landing),
+and product-facing config switches, see:
+
+- `firmware/README.md`
+
 ### Rotary Encoder Hardware Demo (Raspberry Pi 4B)
 
 If you want to validate rotary input (`S1/S2/KEY`) on Pi first:

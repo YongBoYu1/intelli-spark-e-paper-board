@@ -1,5 +1,6 @@
 #include "ui/screens/home_screen.hpp"
 
+#include "platform/clock.hpp"
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
 #include "ui/primitives.hpp"
@@ -8,7 +9,6 @@
 #include <algorithm>
 #include <cmath>
 #include <ctime>
-#include <cstdlib>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -49,7 +49,9 @@ struct ClockSnapshot {
   std::string date_label{"--- --, ----"};
 };
 
-constexpr int kInventoryVisibleMax = 3;
+constexpr int kInventoryVisibleLandscapeMax = 3;
+constexpr int kInventoryVisiblePortraitMax = 4;
+constexpr int kReminderVisiblePortraitMax = 4;
 constexpr int kReminderVisibleMax = 5;
 constexpr int kHomeMenuItemCount = 5;
 constexpr const char* kHomeMenuItems[kHomeMenuItemCount] = {
@@ -64,6 +66,32 @@ enum class HomeFocusKind {
   Clock,
   Weather,
   Row,
+};
+
+enum class HomeFontSizeMode {
+  Small,
+  Medium,
+  Large,
+};
+
+struct HomeTypography {
+  const BitmapFont* section_title_font{nullptr};
+  const BitmapFont* badge_font{nullptr};
+  const BitmapFont* item_font{nullptr};
+  const BitmapFont* family_label_font{nullptr};
+  const BitmapFont* family_name_font{nullptr};
+  const BitmapFont* family_quote_font{nullptr};
+  const BitmapFont* family_meta_font{nullptr};
+  const BitmapFont* voice_font{nullptr};
+  const BitmapFont* menu_hint_font{nullptr};
+  const BitmapFont* time_flow_font{nullptr};
+  const BitmapFont* time_display_font_large{nullptr};
+  const BitmapFont* time_display_font_mid{nullptr};
+  const BitmapFont* weekday_font{nullptr};
+  const BitmapFont* date_font{nullptr};
+  const BitmapFont* city_font{nullptr};
+  const BitmapFont* temp_font{nullptr};
+  const BitmapFont* weather_meta_font{nullptr};
 };
 
 struct HomeLandscapeMetrics {
@@ -121,7 +149,145 @@ struct HomeMenuOverlayLayout {
   bool compact{false};
 };
 
-int visible_inventory_count(const app::DashboardSummary& dashboard);
+std::string lowercase_copy(std::string value) {
+  for (char& ch : value) {
+    if (ch >= 'A' && ch <= 'Z') {
+      ch = static_cast<char>(ch - ('A' - 'a'));
+    }
+  }
+  return value;
+}
+
+HomeFontSizeMode home_font_size_mode(const app::AppState& state) {
+  const std::string value = lowercase_copy(state.settings.font_size);
+  if (value == "small") {
+    return HomeFontSizeMode::Small;
+  }
+  if (value == "large") {
+    return HomeFontSizeMode::Large;
+  }
+  return HomeFontSizeMode::Medium;
+}
+
+HomeTypography home_typography_for(const app::AppState& state) {
+  using namespace platform::panel_font_assets;
+  const HomeFontSizeMode mode = home_font_size_mode(state);
+  if (mode == HomeFontSizeMode::Small) {
+    return {
+        &kFontInterBold13,
+        &kFontJetBold13,
+        &kFontInterMedium13,
+        &kFontJetBold15,
+        &kFontJetBold13,
+        &kFontPlayfairBold28,
+        &kFontJetBold13,
+        &kFontInterMedium13,
+        &kFontJetBold13,
+        &kFontInterBlack66,
+        &kFontInterBlack87,
+        &kFontInterBlack84,
+        &kFontInterSemiBold13,
+        &kFontInterBold17,
+        &kFontInterSemiBold13,
+        &kFontInterBlack66,
+        &kFontJetBold13,
+    };
+  }
+  if (mode == HomeFontSizeMode::Large) {
+    return {
+        &kFontInterBold17,
+        &kFontJetBold15,
+        &kFontInterBold20,
+        &kFontJetExtraBold16,
+        &kFontJetBold15,
+        &kFontPlayfairBold28,
+        &kFontJetBold15,
+        &kFontInterBold17,
+        &kFontJetBold15,
+        &kFontInterBlack87,
+        &kFontInterBlack109,
+        &kFontInterBlack87,
+        &kFontInterBold18,
+        &kFontInterBold20,
+        &kFontInterBold17,
+        &kFontInterBlack66,
+        &kFontJetBold15,
+    };
+  }
+  return {
+      &kFontInterBold13,
+      &kFontJetBold13,
+      &kFontInterMedium18,
+      &kFontJetExtraBold16,
+      &kFontJetBold15,
+      &kFontPlayfairBold28,
+      &kFontJetBold13,
+      &kFontInterMedium13,
+      &kFontJetBold13,
+      &kFontInterBlack84,
+      &kFontInterBlack109,
+      &kFontInterBlack87,
+      &kFontInterSemiBold15,
+      &kFontInterBold18,
+      &kFontInterSemiBold13,
+      &kFontInterBlack66,
+      &kFontJetBold15,
+  };
+}
+
+std::vector<const BitmapFont*> home_menu_item_font_candidates(
+    const HomeFontSizeMode mode) {
+  using namespace platform::panel_font_assets;
+  if (mode == HomeFontSizeMode::Small) {
+    return {
+        &kFontInterBold17,
+        &kFontInterSemiBold15,
+        &kFontInterBold13,
+    };
+  }
+  if (mode == HomeFontSizeMode::Large) {
+    return {
+        &kFontInterBold20,
+        &kFontInterBold18,
+        &kFontInterBold17,
+        &kFontInterSemiBold15,
+    };
+  }
+  return {
+      &kFontInterBold18,
+      &kFontInterBold17,
+      &kFontInterSemiBold15,
+      &kFontInterBold13,
+  };
+}
+
+int normalize_rotation_deg(const int raw) {
+  const int rounded = ((raw % 360) + 360) % 360;
+  if (rounded >= 315 || rounded < 45) {
+    return 0;
+  }
+  if (rounded < 135) {
+    return 90;
+  }
+  if (rounded < 225) {
+    return 180;
+  }
+  return 270;
+}
+
+bool home_uses_portrait_layout(const int rotation_deg) {
+  const int deg = normalize_rotation_deg(rotation_deg);
+  return deg == 90 || deg == 270;
+}
+
+int home_inventory_visible_max(const int rotation_deg) {
+  return home_uses_portrait_layout(rotation_deg)
+             ? kInventoryVisiblePortraitMax
+             : kInventoryVisibleLandscapeMax;
+}
+
+std::vector<int> visible_inventory_indices(const app::AppState& state);
+int visible_inventory_count(const app::AppState& state);
 std::vector<int> visible_reminder_indices(const app::AppState& state);
 int visible_reminder_count(const app::AppState& state);
 
@@ -271,9 +437,13 @@ FocusBox home_header_focus_box(
   if (kind == HomeFocusKind::Weather) {
     return {
         metrics.weather_left - metrics.header_focus_pad_x,
-        std::max(metrics.oy0 + 2, metrics.weather_top - metrics.header_focus_pad_y),
+        std::max(
+            metrics.oy0 + 2,
+            metrics.weather_top - metrics.header_focus_pad_y - 20),
         metrics.weather_right + metrics.header_focus_pad_x,
-        std::min(metrics.oy1, metrics.weather_bottom + metrics.header_focus_pad_y),
+        std::min(
+            metrics.oy1,
+            metrics.weather_bottom + metrics.header_focus_pad_y + 8),
         true,
     };
   }
@@ -378,6 +548,39 @@ platform::DirtyRect home_right_list_rect(const HomeDirtySnapshot& snapshot) {
       metrics.height);
 }
 
+platform::DirtyRect home_inventory_section_rect(const HomeDirtySnapshot& snapshot) {
+  const HomeLandscapeMetrics metrics = home_landscape_metrics();
+  const int inventory_rows = std::max(0, snapshot.inventory_count);
+  const int y0 = std::max(metrics.oy0, metrics.inv_y - 8);
+  const int y1 = std::min(
+      metrics.oy1,
+      metrics.inv_row_y + (inventory_rows * metrics.inv_row_h) + 10);
+  return clip_rect(
+      {metrics.row_x0, y0, metrics.row_x1, std::max(y0 + 8, y1)},
+      metrics.width,
+      metrics.height);
+}
+
+platform::DirtyRect home_reminder_section_rect(const HomeDirtySnapshot& snapshot) {
+  const HomeLandscapeMetrics metrics = home_landscape_metrics();
+  const int inventory_rows = std::max(0, snapshot.inventory_count);
+  const int reminder_rows = std::max(0, snapshot.reminder_count);
+  const int inv_bottom_y = metrics.inv_row_y + (inventory_rows * metrics.inv_row_h);
+  const int shop_rule_y =
+      std::max(metrics.family_rule_y, inv_bottom_y + metrics.shop_rule_y_min_gap);
+  const int title_y = shop_rule_y - metrics.shop_title_h - metrics.shop_line_gap;
+  const int row_start_y =
+      std::max(title_y + metrics.shop_header_gap, shop_rule_y + 10);
+  const int y0 = std::max(metrics.oy0, title_y - 8);
+  const int y1 = std::min(
+      metrics.oy1,
+      row_start_y + (reminder_rows * metrics.shop_row_h) + 12);
+  return clip_rect(
+      {metrics.row_x0, y0, metrics.row_x1, std::max(y0 + 8, y1)},
+      metrics.width,
+      metrics.height);
+}
+
 platform::DirtyRect home_family_board_rect() {
   const HomeLandscapeMetrics metrics = home_landscape_metrics();
   const int left_x0 = metrics.ox0 + 24;
@@ -428,6 +631,370 @@ platform::DirtyRect home_menu_overlay_rect() {
       metrics.height);
 }
 
+struct HomePortraitSourceMetrics {
+  int src_w{0};
+  int src_h{0};
+  int x0{0};
+  int y0{0};
+  int x1{0};
+  int y1{0};
+  int pad{0};
+  int header_y0{0};
+  int header_y1{0};
+  int memo_y0{0};
+  int memo_y1{0};
+  int left_x0{0};
+  int left_x1{0};
+  int weather_x0{0};
+  int weather_x1{0};
+  int hy0{0};
+  int lx0{0};
+  int lx1{0};
+  int ly0{0};
+  int ly1{0};
+  int inv_zone_bottom{0};
+  int inv_header_y{0};
+  int inv_row_y{0};
+  int inv_row_h{0};
+  int shop_header_gap{0};
+  int shop_row_h{0};
+  int focus_pad_x{0};
+  int focus_pad_y{0};
+};
+
+HomePortraitSourceMetrics home_portrait_source_metrics() {
+  HomePortraitSourceMetrics m{};
+  m.src_w = platform::kPanelHeight;
+  m.src_h = platform::kPanelWidth;
+
+  constexpr int margin = 8;
+  constexpr int pad = 8;
+  constexpr int sec_gap = 4;
+  constexpr double header_h_ratio = 0.21;
+  constexpr double memo_h_ratio = 0.25;
+  constexpr int min_list_h = 220;
+  constexpr int header_col_gap = 16;
+  constexpr int weather_col_w = 156;
+  constexpr double list_split_ratio = 0.48;
+  constexpr int shop_min_h = 104;
+  constexpr int list_bottom_reserve = 20;
+  constexpr int voice_margin = 14;
+  constexpr int voice_lane_h = 29;
+  constexpr int focus_pad_x = 6;
+  constexpr int focus_pad_y = 4;
+  constexpr int inv_header_gap = 20;
+  constexpr int inv_row_h = 36;
+  constexpr int shop_header_gap = 18;
+  constexpr int shop_row_h = 36;
+  constexpr int header_text_h = 16;
+
+  m.x0 = margin;
+  m.y0 = margin;
+  m.x1 = m.src_w - margin;
+  m.y1 = m.src_h - margin;
+  const int inner_h = std::max(1, m.y1 - m.y0);
+  int header_h = std::max(160, static_cast<int>(inner_h * header_h_ratio));
+  int memo_h = std::max(188, static_cast<int>(inner_h * memo_h_ratio));
+  if (header_h + memo_h + (sec_gap * 2) + min_list_h > inner_h) {
+    const int overflow = header_h + memo_h + (sec_gap * 2) + min_list_h - inner_h;
+    memo_h = std::max(150, memo_h - overflow);
+  }
+
+  m.pad = pad;
+  m.header_y0 = m.y0;
+  m.header_y1 = std::min(m.y1 - (sec_gap * 2) - min_list_h, m.header_y0 + header_h);
+  m.memo_y0 = m.header_y1 + sec_gap;
+  m.memo_y1 = std::min(m.y1 - sec_gap - min_list_h, m.memo_y0 + memo_h);
+  const int list_y0 = m.memo_y1 + sec_gap;
+  const int list_y1 = m.y1;
+
+  const int hx0 = m.x0 + pad;
+  const int hx1 = m.x1 - pad;
+  m.hy0 = m.header_y0 + pad;
+  const int weather_w = std::min(weather_col_w, std::max(120, static_cast<int>((hx1 - hx0) * 0.36)));
+  m.left_x0 = hx0;
+  m.left_x1 = std::max(m.left_x0 + 120, hx1 - weather_w - header_col_gap);
+  m.weather_x0 = m.left_x1 + header_col_gap;
+  m.weather_x1 = hx1;
+
+  m.lx0 = m.x0 + pad;
+  m.lx1 = m.x1 - pad;
+  const int voice_guard = std::max(0, voice_margin + voice_lane_h - margin - pad + 4);
+  m.ly0 = list_y0 + pad;
+  m.ly1 = list_y1 - pad - std::max(list_bottom_reserve, voice_guard);
+  if (m.ly1 <= m.ly0) {
+    m.ly1 = m.ly0 + 1;
+  }
+  const int list_h = std::max(80, m.ly1 - m.ly0);
+  m.inv_zone_bottom = std::min(
+      m.ly1 - std::max(72, shop_min_h),
+      m.ly0 + std::max(96, static_cast<int>(list_h * list_split_ratio)));
+  m.inv_header_y = m.ly0 + std::max(8, (header_text_h / 2) + 2);
+  m.inv_row_y = m.inv_header_y + inv_header_gap;
+  m.inv_row_h = inv_row_h;
+  m.shop_header_gap = shop_header_gap;
+  m.shop_row_h = shop_row_h;
+  m.focus_pad_x = focus_pad_x;
+  m.focus_pad_y = focus_pad_y;
+  return m;
+}
+
+platform::DirtyRect transform_source_rect(
+    const platform::DirtyRect& source_rect,
+    const int src_w,
+    const int src_h,
+    const int rotation_deg) {
+  const platform::DirtyRect clipped = clip_rect(source_rect, src_w, src_h);
+  if (!is_valid_rect(clipped)) {
+    return {};
+  }
+  const int rot = normalize_rotation_deg(rotation_deg);
+  if (rot == 90) {
+    return {
+        clipped.y0,
+        src_w - clipped.x1,
+        clipped.y1,
+        src_w - clipped.x0,
+    };
+  }
+  if (rot == 180) {
+    return {
+        src_w - clipped.x1,
+        src_h - clipped.y1,
+        src_w - clipped.x0,
+        src_h - clipped.y0,
+    };
+  }
+  if (rot == 270) {
+    return {
+        src_h - clipped.y1,
+        clipped.x0,
+        src_h - clipped.y0,
+        clipped.x1,
+    };
+  }
+  return clipped;
+}
+
+FocusBox home_portrait_header_focus_source_box(
+    const HomePortraitSourceMetrics& m,
+    const HomeFocusKind kind,
+    const bool has_weather_data,
+    const bool has_humidity) {
+  constexpr int focus_pad_x = 6;
+  constexpr int focus_pad_y = 4;
+  const int time_y = std::max(-4, m.hy0 - 22);
+  const int time_h = approx_font_height(112, 1.0, 84);
+  const int week_h = approx_font_height(15, 0.86, 12);
+  const int date_h = approx_font_height(19, 0.96, 18);
+  const int week_y = time_y + time_h + 4;
+  const int date_y = week_y + week_h + 8;
+
+  if (kind == HomeFocusKind::Clock) {
+    return {
+        m.left_x0 - focus_pad_x,
+        std::max(0, time_y - focus_pad_y),
+        m.left_x1 + focus_pad_x,
+        std::min(m.header_y1 - 2, date_y + date_h + focus_pad_y + 4),
+        true,
+    };
+  }
+  if (kind != HomeFocusKind::Weather) {
+    return {};
+  }
+
+  const int weather_top = std::max(4, time_y - 4);
+  const int weather_right = m.weather_x1 - 18;
+  const int temp_h = approx_font_height(58, 0.78, 42);
+  const int icon_size = 34;
+  const int desc_h = approx_font_height(14, 0.86, 12);
+  const int hum_h = approx_font_height(14, 0.86, 12);
+  const int icon_y = weather_top + temp_h + 13;
+  const int desc_y = icon_y + icon_size + 11;
+  int weather_bottom = 0;
+  if (has_weather_data) {
+    weather_bottom = std::max(weather_top + temp_h, std::max(icon_y + icon_size, desc_y + desc_h));
+    if (has_humidity) {
+      const int hum_y = desc_y + desc_h + 8;
+      weather_bottom = std::max(weather_bottom, hum_y + hum_h);
+    }
+  } else {
+    const int placeholder_y = weather_top + 60;
+    weather_bottom = std::max(weather_top + temp_h, placeholder_y + desc_h);
+  }
+  return {
+      m.weather_x0 - focus_pad_x,
+      std::max(0, weather_top - focus_pad_y),
+      weather_right + focus_pad_x + 6,
+      std::min(m.header_y1 - 2, weather_bottom + focus_pad_y),
+      true,
+  };
+}
+
+platform::DirtyRect home_portrait_header_focus_rect(
+    const HomeDirtySnapshot& snapshot,
+    const HomeFocusKind kind) {
+  const HomePortraitSourceMetrics m = home_portrait_source_metrics();
+  const bool has_weather_data = snapshot.weather_sync_state == "ok";
+  const bool has_humidity = has_weather_data && snapshot.weather_humidity_percent > 0;
+  const FocusBox source_box =
+      home_portrait_header_focus_source_box(m, kind, has_weather_data, has_humidity);
+  if (!source_box.valid) {
+    return {};
+  }
+  const platform::DirtyRect source_rect =
+      closed_box_to_rect(source_box.x0, source_box.y0, source_box.x1, source_box.y1, 1);
+  return clip_rect(
+      transform_source_rect(source_rect, m.src_w, m.src_h, snapshot.rotation_deg),
+      platform::kPanelWidth,
+      platform::kPanelHeight);
+}
+
+platform::DirtyRect home_portrait_focus_row_rect(
+    const HomeDirtySnapshot& snapshot,
+    const int focus_index) {
+  if (focus_index <= 1) {
+    return {};
+  }
+  const HomePortraitSourceMetrics m = home_portrait_source_metrics();
+  const int inventory_rows = std::max(0, snapshot.inventory_count);
+  const int reminder_rows = std::max(0, snapshot.reminder_count);
+  int pos = focus_index - 2;
+  if (pos < 0) {
+    return {};
+  }
+
+  int row_y = 0;
+  int row_h = 0;
+  if (pos < inventory_rows) {
+    row_y = m.inv_row_y + (pos * m.inv_row_h);
+    row_h = m.inv_row_h;
+  } else {
+    pos -= inventory_rows;
+    if (pos < 0 || pos >= reminder_rows) {
+      return {};
+    }
+    const int shop_header_y = std::max(
+        m.inv_zone_bottom,
+        m.inv_row_y + (inventory_rows * m.inv_row_h) + 8);
+    const int shop_row_y = shop_header_y + m.shop_header_gap;
+    row_y = shop_row_y + (pos * m.shop_row_h);
+    row_h = m.shop_row_h;
+  }
+
+  const FocusBox source_box = {
+      m.lx0 - m.focus_pad_x,
+      row_y + m.focus_pad_y,
+      m.lx1 + m.focus_pad_x,
+      row_y + row_h - m.focus_pad_y,
+      true,
+  };
+  const platform::DirtyRect source_rect = closed_box_to_rect(
+      source_box.x0,
+      source_box.y0,
+      source_box.x1,
+      source_box.y1,
+      1,
+      7);
+  return clip_rect(
+      transform_source_rect(source_rect, m.src_w, m.src_h, snapshot.rotation_deg),
+      platform::kPanelWidth,
+      platform::kPanelHeight);
+}
+
+platform::DirtyRect home_portrait_focus_rect(
+    const HomeDirtySnapshot& snapshot,
+    const int focus_index,
+    const bool show_focus) {
+  if (!show_focus) {
+    return {};
+  }
+  const HomeFocusKind kind = home_focus_kind(focus_index);
+  if (kind == HomeFocusKind::Clock || kind == HomeFocusKind::Weather) {
+    return home_portrait_header_focus_rect(snapshot, kind);
+  }
+  return home_portrait_focus_row_rect(snapshot, focus_index);
+}
+
+platform::DirtyRect home_portrait_list_rect(const HomeDirtySnapshot& snapshot) {
+  const HomePortraitSourceMetrics m = home_portrait_source_metrics();
+  const platform::DirtyRect source_rect = {
+      m.lx0 - m.focus_pad_x,
+      m.ly0,
+      m.lx1 + m.focus_pad_x,
+      m.ly1,
+  };
+  return clip_rect(
+      transform_source_rect(source_rect, m.src_w, m.src_h, snapshot.rotation_deg),
+      platform::kPanelWidth,
+      platform::kPanelHeight);
+}
+
+platform::DirtyRect home_portrait_inventory_section_rect(const HomeDirtySnapshot& snapshot) {
+  const HomePortraitSourceMetrics m = home_portrait_source_metrics();
+  const int inventory_rows = std::max(0, snapshot.inventory_count);
+  const int y0 = m.inv_header_y - 12;
+  int y1 = m.inv_row_y + (inventory_rows * m.inv_row_h);
+  y1 = std::max(y0 + 16, std::min(m.inv_zone_bottom, y1));
+  const platform::DirtyRect source_rect = {
+      m.lx0 - m.focus_pad_x,
+      y0,
+      m.lx1 + m.focus_pad_x,
+      y1,
+  };
+  return clip_rect(
+      transform_source_rect(source_rect, m.src_w, m.src_h, snapshot.rotation_deg),
+      platform::kPanelWidth,
+      platform::kPanelHeight);
+}
+
+platform::DirtyRect home_portrait_reminder_section_rect(const HomeDirtySnapshot& snapshot) {
+  const HomePortraitSourceMetrics m = home_portrait_source_metrics();
+  const int inventory_rows = std::max(0, snapshot.inventory_count);
+  const int reminder_rows = std::max(0, snapshot.reminder_count);
+  const int shop_header_y = std::max(
+      m.inv_zone_bottom,
+      m.inv_row_y + (inventory_rows * m.inv_row_h) + 8);
+  const int shop_row_y = shop_header_y + m.shop_header_gap;
+  const int y0 = shop_header_y - 12;
+  int y1 = shop_row_y + (reminder_rows * m.shop_row_h);
+  y1 = std::max(y0 + 16, std::min(m.ly1, y1));
+  const platform::DirtyRect source_rect = {
+      m.lx0 - m.focus_pad_x,
+      y0,
+      m.lx1 + m.focus_pad_x,
+      y1,
+  };
+  return clip_rect(
+      transform_source_rect(source_rect, m.src_w, m.src_h, snapshot.rotation_deg),
+      platform::kPanelWidth,
+      platform::kPanelHeight);
+}
+
+platform::DirtyRect home_portrait_family_board_rect(const HomeDirtySnapshot& snapshot) {
+  const HomePortraitSourceMetrics m = home_portrait_source_metrics();
+  const platform::DirtyRect source_rect = {
+      m.x0 + m.pad,
+      m.memo_y0 + m.pad,
+      m.x1 - m.pad,
+      m.memo_y1 - m.pad,
+  };
+  return clip_rect(
+      transform_source_rect(source_rect, m.src_w, m.src_h, snapshot.rotation_deg),
+      platform::kPanelWidth,
+      platform::kPanelHeight);
+}
+
+platform::DirtyRect home_portrait_menu_overlay_rect(const HomeDirtySnapshot& snapshot) {
+  const HomePortraitSourceMetrics m = home_portrait_source_metrics();
+  const HomeMenuOverlayLayout layout = home_menu_overlay_layout(m.src_w, m.src_h);
+  const platform::DirtyRect source_rect = {layout.x0, layout.y0, layout.x1, layout.y1};
+  return clip_rect(
+      transform_source_rect(source_rect, m.src_w, m.src_h, snapshot.rotation_deg),
+      platform::kPanelWidth,
+      platform::kPanelHeight);
+}
+
 int normalized_menu_focus_index(const std::size_t raw_index) {
   return static_cast<int>(raw_index % static_cast<std::size_t>(kHomeMenuItemCount));
 }
@@ -473,22 +1040,7 @@ ClockSnapshot resolve_clock_snapshot(
   if (minute_bucket == 0) {
     return snapshot;
   }
-  const auto apply_posix_timezone = [&](const std::string& zone) {
-    static std::string active_tz{};
-    std::string posix = "UTC0";
-    if (zone == "America/Toronto" || zone == "America/New_York") {
-      posix = "EST5EDT,M3.2.0/2,M11.1.0/2";
-    } else if (zone == "America/Los_Angeles") {
-      posix = "PST8PDT,M3.2.0/2,M11.1.0/2";
-    }
-    if (active_tz == posix) {
-      return;
-    }
-    setenv("TZ", posix.c_str(), 1);
-    tzset();
-    active_tz = posix;
-  };
-  apply_posix_timezone(timezone_name);
+  platform::apply_timezone(timezone_name);
   const std::time_t now = static_cast<std::time_t>(minute_bucket * 60ULL);
 
   std::tm local_tm{};
@@ -958,25 +1510,59 @@ void draw_right_panel_focus_row(
   draw_focus_stroke(image, x0 - 6, row_y + 4, x1 + 6, row_y + row_h - 4);
 }
 
-int visible_inventory_count(const app::DashboardSummary& dashboard) {
-  return std::min(static_cast<int>(dashboard.inventory_items.size()), kInventoryVisibleMax);
-}
-
 bool contains_index(const std::vector<int>& values, const int index) {
   return std::find(values.begin(), values.end(), index) != values.end();
+}
+
+std::uint64_t index_list_digest(const std::vector<int>& values) {
+  constexpr std::uint64_t kFnvOffset = 1469598103934665603ULL;
+  constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+  std::uint64_t digest = kFnvOffset;
+  for (const int value : values) {
+    digest ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(value));
+    digest *= kFnvPrime;
+  }
+  digest ^= static_cast<std::uint64_t>(values.size());
+  digest *= kFnvPrime;
+  return digest;
+}
+
+std::vector<int> visible_inventory_indices(const app::AppState& state) {
+  const app::DashboardSummary& dashboard = state.dashboard;
+  std::vector<int> indices{};
+  const int total = static_cast<int>(dashboard.inventory_items.size());
+  const int visible_max = home_inventory_visible_max(state.settings.rotation_deg);
+  indices.reserve(std::min(total, visible_max));
+  for (int i = 0; i < total; ++i) {
+    if (contains_index(state.home.hidden_inventory_indices, i)) {
+      continue;
+    }
+    indices.push_back(i);
+    if (static_cast<int>(indices.size()) >= visible_max) {
+      break;
+    }
+  }
+  return indices;
+}
+
+int visible_inventory_count(const app::AppState& state) {
+  return static_cast<int>(visible_inventory_indices(state).size());
 }
 
 std::vector<int> visible_reminder_indices(const app::AppState& state) {
   const app::DashboardSummary& dashboard = state.dashboard;
   std::vector<int> indices{};
   const int total = static_cast<int>(dashboard.reminder_items.size());
-  indices.reserve(std::min(total, kReminderVisibleMax));
+  const int visible_max = home_uses_portrait_layout(state.settings.rotation_deg)
+                              ? kReminderVisiblePortraitMax
+                              : kReminderVisibleMax;
+  indices.reserve(std::min(total, visible_max));
   for (int i = 0; i < total; ++i) {
     if (contains_index(state.home.hidden_reminder_indices, i)) {
       continue;
     }
     indices.push_back(i);
-    if (static_cast<int>(indices.size()) >= kReminderVisibleMax) {
+    if (static_cast<int>(indices.size()) >= visible_max) {
       break;
     }
   }
@@ -999,11 +1585,9 @@ int normalized_memo_index(const app::AppState& state) {
   if (total <= 0) {
     return -1;
   }
-  int index = state.memo.index;
+  int index = state.memo.index % total;
   if (index < 0) {
-    index = total - 1;
-  } else if (index >= total) {
-    index = 0;
+    index += total;
   }
   return index;
 }
@@ -1096,14 +1680,14 @@ int home_focus_inventory_index(const app::AppState& state) {
     return -1;
   }
   const int index = state.home.focused_index - 2;
-  return index < visible_inventory_count(state.dashboard) ? index : -1;
+  return index < visible_inventory_count(state) ? index : -1;
 }
 
 int home_focus_reminder_index(const app::AppState& state) {
   if (!state.home.show_focus) {
     return -1;
   }
-  const int base = 2 + visible_inventory_count(state.dashboard);
+  const int base = 2 + visible_inventory_count(state);
   const int index = state.home.focused_index - base;
   return (index >= 0 && index < visible_reminder_count(state)) ? index : -1;
 }
@@ -1115,10 +1699,14 @@ void draw_inventory_section(
     const int title_y,
     const app::AppState& state) {
   const app::DashboardSummary& dashboard = state.dashboard;
-  const BitmapFont& title_font = platform::panel_font_assets::kFontInterBold13;
+  const HomeTypography typography = home_typography_for(state);
+  const BitmapFont& title_font = *typography.section_title_font;
+  const BitmapFont& badge_font = *typography.badge_font;
+  const BitmapFont& item_font = *typography.item_font;
   constexpr int title_spacing = 2;
   draw_text_with_font_spaced(image, x0, title_y, "INVENTORY", title_font, title_spacing);
-  const int visible_count = visible_inventory_count(dashboard);
+  const std::vector<int> inventory_indices = visible_inventory_indices(state);
+  const int visible_count = static_cast<int>(inventory_indices.size());
   const int open_count = open_item_count(
       static_cast<int>(dashboard.inventory_items.size()),
       dashboard.inventory_completed);
@@ -1140,26 +1728,28 @@ void draw_inventory_section(
   const HomeDirtySnapshot snapshot = capture_home_dirty_snapshot(state);
   for (int i = 0; i < visible_count; ++i) {
     const int row_y = title_y + 34 + i * row_h;
+    const int item_index = inventory_indices[static_cast<std::size_t>(i)];
     const bool completed =
-        i < static_cast<int>(dashboard.inventory_completed.size()) &&
-        dashboard.inventory_completed[static_cast<std::size_t>(i)];
+        item_index >= 0 &&
+        item_index < static_cast<int>(dashboard.inventory_completed.size()) &&
+        dashboard.inventory_completed[static_cast<std::size_t>(item_index)];
     std::string badge = "STOCKED";
     if (completed) {
       badge = "OUT";
     }
-    if (i < static_cast<int>(dashboard.inventory_badges.size()) &&
-        !dashboard.inventory_badges[i].empty() &&
+    if (item_index >= 0 &&
+        item_index < static_cast<int>(dashboard.inventory_badges.size()) &&
+        !dashboard.inventory_badges[static_cast<std::size_t>(item_index)].empty() &&
         !completed) {
-      badge = uppercase_copy(dashboard.inventory_badges[i]);
+      badge = uppercase_copy(dashboard.inventory_badges[static_cast<std::size_t>(item_index)]);
     }
     badge = truncate_text_px(badge, 1, 84);
-    const BitmapFont& badge_font = platform::panel_font_assets::kFontJetBold13;
     const int badge_width = text_width_with_font(badge, badge_font);
 
     const int title_max_w =
         std::max(86, (badge_right_x - badge_width - 14) - item_text_x);
     const std::string title =
-        truncate_text_px(dashboard.inventory_items[i], 2, title_max_w);
+        truncate_text_px(dashboard.inventory_items[static_cast<std::size_t>(item_index)], 2, title_max_w);
 
     if (focused_row == i) {
       const FocusBox box = home_focus_row_box(snapshot, state.home.focused_index);
@@ -1170,7 +1760,6 @@ void draw_inventory_section(
     // Hardware behavior: repeated partial refresh on weight flip (medium<->bold)
     // causes visible right-list fade on current panel batches. Keep row text
     // weight stable and express focus with stroke box only.
-    const BitmapFont& item_font = platform::panel_font_assets::kFontInterMedium18;
     draw_text_with_font(
         image,
         item_text_x,
@@ -1202,26 +1791,21 @@ void draw_checkbox_row(
     const int row_right_x,
     const int text_x,
     const std::string& text,
+    const BitmapFont& text_font,
     const bool checked,
     const bool focused) {
   const int checkbox_size = 14;
   const int cb_x0 = x0;
-  // Optical parity with Python/Pillow output after 1-bit quantization:
-  // keep checkbox 1px higher relative to text baseline.
-  const int cb_y0 = row_y + ((row_h - checkbox_size) / 2) - 1;
+  const int cb_y0 = row_y + ((row_h - checkbox_size) / 2);
   if (focused) {
     draw_right_panel_focus_row(image, x0, row_right_x, row_y, row_h);
   }
   draw_checkbox(image, cb_x0, cb_y0, checked, false, checkbox_size);
   // Same rationale as inventory rows: keep text weight stable to avoid
   // partial-refresh fade accumulation during navigation.
-  const BitmapFont& text_font = platform::panel_font_assets::kFontInterMedium18;
   const std::string clipped =
       truncate_text_px(text, 2, std::max(0, row_right_x - text_x - 8));
-  // Python parity: home_kitchen.py centers by text-height only (no glyph-top
-  // compensation), which lands reminder labels a bit lower than geometric
-  // center on panel output.
-  const int text_y = centered_sample_y_with_font(row_y, row_h, text_font) + 3;
+  const int text_y = centered_sample_y_with_font(row_y, row_h, text_font);
   draw_text_with_font(
       image,
       text_x,
@@ -1240,13 +1824,15 @@ void draw_reminders_section(
     const app::AppState& state,
     const HomeLandscapeMetrics& metrics) {
   const app::DashboardSummary& dashboard = state.dashboard;
-  const int inventory_rows = visible_inventory_count(dashboard);
+  const HomeTypography typography = home_typography_for(state);
+  const int inventory_rows = visible_inventory_count(state);
   const int inv_bottom_y = metrics.inv_row_y + (inventory_rows * metrics.inv_row_h);
   const int shop_rule_y =
       std::max(metrics.family_rule_y, inv_bottom_y + metrics.shop_rule_y_min_gap);
   const int title_y = shop_rule_y - metrics.shop_title_h - metrics.shop_line_gap;
   const int row_start_y = std::max(title_y + metrics.shop_header_gap, shop_rule_y + 10);
-  const BitmapFont& title_font = platform::panel_font_assets::kFontInterBold13;
+  const BitmapFont& title_font = *typography.section_title_font;
+  const BitmapFont& item_font = *typography.item_font;
   constexpr int title_spacing = 1;
   draw_text_with_font_spaced(image, x0, title_y, "REMINDERS", title_font, title_spacing);
   const std::vector<int> reminder_indices = visible_reminder_indices(state);
@@ -1296,6 +1882,7 @@ void draw_reminders_section(
         x1,
         x0 + 30,
         dashboard.reminder_items[static_cast<std::size_t>(item_index)],
+        item_font,
         checked,
         focused_row == i);
   }
@@ -1309,10 +1896,11 @@ void draw_family_board(
     const int rule_y,
     const int bottom_y,
     const app::AppState& state) {
-  const BitmapFont& label_font = platform::panel_font_assets::kFontJetExtraBold16;
-  const BitmapFont& family_name_font = platform::panel_font_assets::kFontJetBold15;
-  const BitmapFont& quote_font = platform::panel_font_assets::kFontPlayfairBold28;
-  const BitmapFont& meta_font = platform::panel_font_assets::kFontJetBold13;
+  const HomeTypography typography = home_typography_for(state);
+  const BitmapFont& label_font = *typography.family_label_font;
+  const BitmapFont& family_name_font = *typography.family_name_font;
+  const BitmapFont& quote_font = *typography.family_quote_font;
+  const BitmapFont& meta_font = *typography.family_meta_font;
   const FamilyBoardView view = resolve_family_board_view(state);
 
   constexpr int title_spacing = 3;
@@ -1395,7 +1983,7 @@ void draw_family_board(
         image,
         x1,
         bottom_y - 18,
-        uppercase_copy(view.memo_posted),
+        view.memo_posted,
         meta_font);
   }
 }
@@ -1404,10 +1992,12 @@ void draw_voice_lane(
     std::vector<uint8_t>& image,
     const int x0,
     const int y0,
-    const int x1) {
+    const int x1,
+    const app::AppState& state) {
   const int lane_h = 29;
   const int icon_size = 16;
-  const BitmapFont& font = platform::panel_font_assets::kFontInterMedium13;
+  const HomeTypography typography = home_typography_for(state);
+  const BitmapFont& font = *typography.voice_font;
   const std::string label = "Hold to talk";
   fill_white_rect(image, x0, y0 - 1, x1, y0 + lane_h + 1);
   const int icon_x = x0 + 2;
@@ -1453,8 +2043,10 @@ void draw_home_menu_overlay(
       overlay_radius,
       border_w);
 
-  const BitmapFont& hint_font = platform::panel_font_assets::kFontJetBold13;
-  const BitmapFont* item_font = &platform::panel_font_assets::kFontInterBold18;
+  const HomeTypography typography = home_typography_for(state);
+  const HomeFontSizeMode fs_mode = home_font_size_mode(state);
+  const BitmapFont& hint_font = *typography.menu_hint_font;
+  const BitmapFont* item_font = typography.item_font;
   constexpr int hint_spacing = 0;
   const std::string hint = "NAVIGATION";
   const int hint_w = text_width_with_font_spaced(hint, hint_font, hint_spacing);
@@ -1471,12 +2063,7 @@ void draw_home_menu_overlay(
 
   // Python parity intent: progressively reduce label size when pills are tight.
   // We use the closest available bitmap-font ladder on firmware.
-  std::vector<const BitmapFont*> candidates = {
-      &platform::panel_font_assets::kFontInterBold18,
-      &platform::panel_font_assets::kFontInterBold17,
-      &platform::panel_font_assets::kFontInterSemiBold15,
-      &platform::panel_font_assets::kFontInterBold13,
-  };
+  std::vector<const BitmapFont*> candidates = home_menu_item_font_candidates(fs_mode);
   item_font = candidates.back();
   for (const BitmapFont* candidate : candidates) {
     int max_w = 0;
@@ -1532,6 +2119,11 @@ void draw_home_menu_overlay(
 }  // namespace
 
 std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
+  const int deg = normalize_rotation_deg(state.settings.rotation_deg);
+  if (deg == 90 || deg == 270) {
+    return render_home_portrait_bitmap(state);
+  }
+
   using platform::kPanelBufferSize;
   using platform::kPanelHeight;
   using platform::kPanelWidth;
@@ -1558,41 +2150,38 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
           state.home.clock_minute_bucket,
           state.onboarding.timezone,
           state.home.clock_is_real);
+  const ClockSnapshot display_clock = (state.home.clock_minute_bucket > 0) ? clock : ClockSnapshot{};
   const int weather_col_w = 142;
   const int weather_right = left_x1 - 2;
   const int weather_left = weather_right - weather_col_w;
   const HomeLandscapeMetrics metrics = home_landscape_metrics();
+  const HomeTypography typography = home_typography_for(state);
 
-  if (state.home.show_focus && state.home.focused_index == 0) {
-    const FocusBox box = home_header_focus_box(metrics, HomeFocusKind::Clock);
-    if (box.valid) {
-      draw_focus_stroke(image, box.x0, box.y0, box.x1, box.y1);
-    }
-  }
-  if (state.home.show_focus && state.home.focused_index == 1) {
-    const FocusBox box = home_header_focus_box(metrics, HomeFocusKind::Weather);
-    if (box.valid) {
-      draw_focus_stroke(image, box.x0, box.y0, box.x1, box.y1);
-    }
-  }
+  const BitmapFont& time_flow_font = *typography.time_flow_font;
+  const BitmapFont& time_display_font_large = *typography.time_display_font_large;
+  const BitmapFont& time_display_font_mid = *typography.time_display_font_mid;
+  const BitmapFont& weekday_font = *typography.weekday_font;
+  const BitmapFont& date_font = *typography.date_font;
+  const BitmapFont& city_font = *typography.city_font;
+  const BitmapFont& temp_font = *typography.temp_font;
+  const BitmapFont& weather_meta_font = *typography.weather_meta_font;
+  const BitmapFont& family_label_font = *typography.family_label_font;
 
-  const BitmapFont& time_flow_font = platform::panel_font_assets::kFontInterBlack84;
-  const BitmapFont& time_display_font_large = platform::panel_font_assets::kFontInterBlack109;
-  const BitmapFont& time_display_font_mid = platform::panel_font_assets::kFontInterBlack87;
-  const BitmapFont& weekday_font = platform::panel_font_assets::kFontInterSemiBold15;
-  const BitmapFont& date_font = platform::panel_font_assets::kFontInterBold18;
-  const BitmapFont& city_font = platform::panel_font_assets::kFontInterSemiBold13;
-  const BitmapFont& temp_font = platform::panel_font_assets::kFontInterBlack66;
-  const BitmapFont& weather_meta_font = platform::panel_font_assets::kFontJetBold15;
-  const BitmapFont& family_label_font = platform::panel_font_assets::kFontJetExtraBold16;
-
-  const std::string weekday = uppercase_copy(clock.weekday_label);
-  const std::string date = clock.date_label;
-  const std::string temp = std::to_string(state.dashboard.weather_temperature_c);
+  const bool weather_synced = state.home.weather_sync_state == "ok";
+  const std::string weekday = uppercase_copy(display_clock.weekday_label);
+  const std::string date = display_clock.date_label;
+  const std::string temp =
+      weather_synced ? std::to_string(state.dashboard.weather_temperature_c) : "--";
   const std::string weather =
-      right_fit_with_font(state.dashboard.weather_condition, weather_meta_font, weather_col_w, 1);
+      right_fit_with_font(
+          weather_synced ? state.dashboard.weather_condition : "UNSYNCED",
+          weather_meta_font,
+          weather_col_w,
+          1);
   const std::string humidity = right_fit_with_font(
-      "HUM " + std::to_string(state.dashboard.weather_humidity_percent) + "%",
+      weather_synced
+          ? ("HUM " + std::to_string(state.dashboard.weather_humidity_percent) + "%")
+          : "HUM --",
       weather_meta_font,
       weather_col_w,
       1);
@@ -1607,46 +2196,53 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   const int clock_weather_gap = 14;
   const int clock_budget_w = weather_left - clock_x - clock_weather_gap;
   const BitmapFont* time_display_font = &time_display_font_large;
-  if (text_width_with_font(clock.time_label, *time_display_font) > clock_budget_w) {
+  if (text_width_with_font(display_clock.time_label, *time_display_font) > clock_budget_w) {
     time_display_font = &time_display_font_mid;
   }
-  if (text_width_with_font(clock.time_label, *time_display_font) > clock_budget_w) {
+  if (text_width_with_font(display_clock.time_label, *time_display_font) > clock_budget_w) {
     time_display_font = &time_flow_font;
   }
-  draw_text_with_font(image, clock_x, clock_y, clock.time_label, *time_display_font);
+  draw_text_with_font(image, clock_x, clock_y, display_clock.time_label, *time_display_font);
 
   const TextVerticalBounds time_flow_bounds =
-      text_vertical_bounds_with_font(clock.time_label, time_flow_font);
+      text_vertical_bounds_with_font(display_clock.time_label, time_flow_font);
   const int time_flow_bottom =
       top_y + (time_flow_bounds.valid ? time_flow_bounds.bottom : time_flow_font.line_height);
   const int weekday_y = time_flow_bottom + 13;
   int weather_bottom = weekday_y;
-  if (clock.valid) {
+  int clock_bottom_for_focus =
+      weekday_y + text_height_with_font("UNSYNCED", weather_meta_font) + 8;
+  if (display_clock.valid) {
     draw_text_with_font_spaced(image, left_x0, weekday_y, weekday, weekday_font, 4);
     const int weekday_h = text_height_with_font("Ag", weekday_font);
     const int date_y = weekday_y + weekday_h + 11;
     draw_text_with_font(image, left_x0, date_y, date, date_font);
     weather_bottom = date_y + text_height_with_font(date, date_font);
+    clock_bottom_for_focus = weather_bottom + 8;
   } else {
     draw_text_with_font(
         image,
         left_x0,
         weekday_y,
-        "--",
-        platform::panel_font_assets::kFontJetBold13);
+        "UNSYNCED",
+        weather_meta_font);
   }
 
   const int temp_y = top_y - 2;
+  int weather_focus_top = std::max(outer_y0 + 2, temp_y - 6);
   const int temp_w = text_width_with_font(temp, temp_font);
   constexpr int degree_gap = 0;
   constexpr int degree_size = 8;
   const int temp_group_w = temp_w + degree_gap + degree_size;
   const int temp_x = weather_right - temp_group_w;
   draw_text_with_font(image, temp_x, temp_y, temp, temp_font);
-  draw_degree_mark(image, temp_x + temp_w + degree_gap, temp_y + 7, degree_size);
+  if (weather_synced) {
+    draw_degree_mark(image, temp_x + temp_w + degree_gap, temp_y + 7, degree_size);
+  }
   if (!location.empty()) {
     const int city_h = text_height_with_font(location, city_font);
     const int city_y = std::max(outer_y0 + 4, temp_y - city_h - 6);
+    weather_focus_top = std::min(weather_focus_top, std::max(outer_y0 + 2, city_y - 4));
     draw_right_aligned_text_with_font_spaced(
         image,
         weather_right,
@@ -1694,6 +2290,23 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       weather_bottom,
       std::max(desc_y + desc_h, humidity_y + text_height_with_font(humidity, weather_meta_font)));
 
+  if (state.home.show_focus && state.home.focused_index == 0) {
+    draw_focus_stroke(
+        image,
+        left_x0 - 6,
+        std::max(outer_y0 + 2, top_y - 28),
+        std::max(left_x0 + 10, weather_left - 7),
+        std::min(outer_y1, clock_bottom_for_focus));
+  }
+  if (state.home.show_focus && state.home.focused_index == 1) {
+    draw_focus_stroke(
+        image,
+        weather_left - 6,
+        weather_focus_top,
+        weather_right + 6,
+        std::min(outer_y1, weather_bottom + 8));
+  }
+
   const int header_rule_y = weather_bottom + 28;
   const int family_label_y = header_rule_y + 8;
   const int family_rule_y = family_label_y + text_height_with_font("Ag", family_label_font) + 8;
@@ -1715,7 +2328,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       family_rule_y,
       voice_lane_y - 4,
       state);
-  draw_voice_lane(image, 14, voice_lane_y, 14 + 340);
+  draw_voice_lane(image, 14, voice_lane_y, 14 + 340, state);
 
   draw_inventory_section(image, right_x0, right_x1, render_metrics.inv_y, state);
   draw_reminders_section(image, right_x0, right_x1, state, render_metrics);
@@ -1729,14 +2342,27 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
 HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
   HomeDirtySnapshot snapshot{};
   snapshot.screen = state.screen;
+  snapshot.rotation_deg = normalize_rotation_deg(state.settings.rotation_deg);
+  snapshot.portrait_layout = home_uses_portrait_layout(snapshot.rotation_deg);
   snapshot.focused_index = state.home.focused_index;
   snapshot.show_focus = state.home.show_focus;
   snapshot.menu_overlay_active = state.home.menu_overlay_active;
   snapshot.menu_focused_index = normalized_menu_focus_index(state.menu.focused_index);
   snapshot.clock_minute_bucket = state.home.clock_minute_bucket;
+  snapshot.clock_sync_state = state.home.clock_sync_state;
+  snapshot.timezone = state.onboarding.timezone;
+  snapshot.weather_sync_state = state.home.weather_sync_state;
   snapshot.widget_mode = state.home.widget_mode;
-  snapshot.inventory_count = visible_inventory_count(state.dashboard);
+  snapshot.inventory_count = visible_inventory_count(state);
   snapshot.reminder_count = visible_reminder_count(state);
+  snapshot.hidden_inventory_digest =
+      index_list_digest(state.home.hidden_inventory_indices);
+  snapshot.hidden_inventory_count =
+      static_cast<int>(state.home.hidden_inventory_indices.size());
+  snapshot.hidden_reminder_digest =
+      index_list_digest(state.home.hidden_reminder_indices);
+  snapshot.hidden_reminder_count =
+      static_cast<int>(state.home.hidden_reminder_indices.size());
   snapshot.weather_condition = state.dashboard.weather_condition;
   snapshot.weather_temperature_c = state.dashboard.weather_temperature_c;
   snapshot.weather_humidity_percent = state.dashboard.weather_humidity_percent;
@@ -1745,13 +2371,17 @@ HomeDirtySnapshot capture_home_dirty_snapshot(const app::AppState& state) {
   snapshot.family_memo_text = family_view.memo_text;
   snapshot.family_memo_author = family_view.memo_author;
   snapshot.family_memo_posted = family_view.memo_posted;
-  const int count = std::min(
-      snapshot.inventory_count,
+  const std::vector<int> inventory_indices = visible_inventory_indices(state);
+  const int inventory_count = std::min(
+      static_cast<int>(inventory_indices.size()),
       static_cast<int>(snapshot.inventory_completed.size()));
-  for (int i = 0; i < count; ++i) {
+  for (int i = 0; i < inventory_count; ++i) {
+    const int item_index = inventory_indices[static_cast<std::size_t>(i)];
+    snapshot.visible_inventory_ids[static_cast<std::size_t>(i)] = item_index;
     snapshot.inventory_completed[static_cast<std::size_t>(i)] =
-        i < static_cast<int>(state.dashboard.inventory_completed.size()) &&
-        state.dashboard.inventory_completed[static_cast<std::size_t>(i)];
+        item_index >= 0 &&
+        item_index < static_cast<int>(state.dashboard.inventory_completed.size()) &&
+        state.dashboard.inventory_completed[static_cast<std::size_t>(item_index)];
   }
 
   const std::vector<int> reminder_indices = visible_reminder_indices(state);
@@ -1776,6 +2406,10 @@ HomeDirtyPlan home_dirty_plan(
   if (previous.screen != app::Screen::Home || current.screen != app::Screen::Home) {
     return plan;
   }
+  if (previous.rotation_deg != current.rotation_deg ||
+      previous.portrait_layout != current.portrait_layout) {
+    return plan;
+  }
 
   auto add_reason = [&](const char* reason) {
     if (reason == nullptr) {
@@ -1789,13 +2423,86 @@ HomeDirtyPlan home_dirty_plan(
     plan.reasons.emplace_back(reason);
   };
 
+  auto menu_overlay_rect_for = [&](const HomeDirtySnapshot& snapshot) -> platform::DirtyRect {
+    if (snapshot.portrait_layout) {
+      return home_portrait_menu_overlay_rect(snapshot);
+    }
+    return home_menu_overlay_rect();
+  };
+  auto focus_rect_for = [&](
+                            const HomeDirtySnapshot& snapshot,
+                            const int focus_index,
+                            const bool show_focus) -> platform::DirtyRect {
+    if (snapshot.portrait_layout) {
+      return home_portrait_focus_rect(snapshot, focus_index, show_focus);
+    }
+    return home_focus_rect(snapshot, focus_index, show_focus);
+  };
+  auto list_rect_for = [&](const HomeDirtySnapshot& snapshot) -> platform::DirtyRect {
+    if (snapshot.portrait_layout) {
+      return home_portrait_list_rect(snapshot);
+    }
+    return home_right_list_rect(snapshot);
+  };
+  auto inventory_rect_for = [&](const HomeDirtySnapshot& snapshot) -> platform::DirtyRect {
+    if (snapshot.portrait_layout) {
+      return home_portrait_inventory_section_rect(snapshot);
+    }
+    return home_inventory_section_rect(snapshot);
+  };
+  auto reminder_rect_for = [&](const HomeDirtySnapshot& snapshot) -> platform::DirtyRect {
+    if (snapshot.portrait_layout) {
+      return home_portrait_reminder_section_rect(snapshot);
+    }
+    return home_reminder_section_rect(snapshot);
+  };
+  auto family_rect_for = [&](const HomeDirtySnapshot& snapshot) -> platform::DirtyRect {
+    if (snapshot.portrait_layout) {
+      return home_portrait_family_board_rect(snapshot);
+    }
+    return home_family_board_rect();
+  };
+  auto header_clock_rect_for = [&](const HomeDirtySnapshot& snapshot) -> platform::DirtyRect {
+    if (snapshot.portrait_layout) {
+      return home_portrait_header_focus_rect(snapshot, HomeFocusKind::Clock);
+    }
+    return home_header_focus_rect(home_landscape_metrics(), HomeFocusKind::Clock);
+  };
+  auto header_weather_rect_for = [&](const HomeDirtySnapshot& snapshot) -> platform::DirtyRect {
+    if (snapshot.portrait_layout) {
+      return home_portrait_header_focus_rect(snapshot, HomeFocusKind::Weather);
+    }
+    return home_header_focus_rect(home_landscape_metrics(), HomeFocusKind::Weather);
+  };
+  auto focus_row_rect_for = [&](
+                                const HomeDirtySnapshot& snapshot,
+                                const int focus_index) -> platform::DirtyRect {
+    if (snapshot.portrait_layout) {
+      return home_portrait_focus_row_rect(snapshot, focus_index);
+    }
+    return home_focus_row_rect(snapshot, focus_index);
+  };
+  auto append_transition_rects = [&](
+                                     const platform::DirtyRect& previous_rect,
+                                     const platform::DirtyRect& current_rect) {
+    if (previous_rect.x0 == current_rect.x0 &&
+        previous_rect.y0 == current_rect.y0 &&
+        previous_rect.x1 == current_rect.x1 &&
+        previous_rect.y1 == current_rect.y1) {
+      append_rect_if_valid(plan.rects, current_rect);
+      return;
+    }
+    append_rect_if_valid(plan.rects, previous_rect);
+    append_rect_if_valid(plan.rects, current_rect);
+  };
+
   if (previous.menu_overlay_active != current.menu_overlay_active) {
-    append_rect_if_valid(plan.rects, home_menu_overlay_rect());
+    append_rect_if_valid(plan.rects, menu_overlay_rect_for(current));
     add_reason("home.menu_overlay_toggle");
   }
   if (current.menu_overlay_active &&
       previous.menu_focused_index != current.menu_focused_index) {
-    append_rect_if_valid(plan.rects, home_menu_overlay_rect());
+    append_rect_if_valid(plan.rects, menu_overlay_rect_for(current));
     add_reason("home.menu_overlay_focus");
   }
 
@@ -1804,22 +2511,28 @@ HomeDirtyPlan home_dirty_plan(
     const HomeFocusKind prev_kind = home_focus_kind(previous.focused_index);
     const HomeFocusKind curr_kind = home_focus_kind(current.focused_index);
     const platform::DirtyRect prev_rect =
-        home_focus_rect(previous, previous.focused_index, previous.show_focus);
+        focus_rect_for(previous, previous.focused_index, previous.show_focus);
     const platform::DirtyRect curr_rect =
-        home_focus_rect(current, current.focused_index, current.show_focus);
+        focus_rect_for(current, current.focused_index, current.show_focus);
 
-    if ((prev_kind == HomeFocusKind::Row && curr_kind == HomeFocusKind::Row) ||
-        (prev_kind != HomeFocusKind::Row && curr_kind != HomeFocusKind::Row)) {
+    if (prev_kind == HomeFocusKind::Row && curr_kind == HomeFocusKind::Row) {
       const platform::DirtyRect merged = merge_focus_transition_rects(prev_rect, curr_rect);
       if (is_valid_rect(merged)) {
         append_rect_if_valid(plan.rects, merged);
-      } else if (prev_kind == HomeFocusKind::Row) {
-        append_rect_if_valid(plan.rects, home_right_list_rect(current));
+      } else {
+        append_rect_if_valid(plan.rects, list_rect_for(current));
       }
-      add_reason(
-          prev_kind == HomeFocusKind::Row
-              ? "home.focus_move_row"
-              : "home.focus_move_left_target");
+      add_reason("home.focus_move_row");
+    } else if (prev_kind != HomeFocusKind::Row &&
+               curr_kind != HomeFocusKind::Row) {
+      const platform::DirtyRect merged = merge_focus_transition_rects(prev_rect, curr_rect);
+      if (is_valid_rect(merged)) {
+        append_rect_if_valid(plan.rects, merged);
+      } else {
+        append_rect_if_valid(plan.rects, prev_rect);
+        append_rect_if_valid(plan.rects, curr_rect);
+      }
+      add_reason("home.focus_move_left_target");
     } else {
       append_rect_if_valid(plan.rects, prev_rect);
       append_rect_if_valid(plan.rects, curr_rect);
@@ -1831,55 +2544,125 @@ HomeDirtyPlan home_dirty_plan(
   }
 
   if (previous.clock_minute_bucket != current.clock_minute_bucket ||
+      previous.clock_sync_state != current.clock_sync_state ||
+      previous.timezone != current.timezone ||
       previous.widget_mode != current.widget_mode) {
-    append_rect_if_valid(
-        plan.rects,
-        home_header_focus_rect(home_landscape_metrics(), HomeFocusKind::Clock));
+    append_rect_if_valid(plan.rects, header_clock_rect_for(current));
     add_reason("home.clock_or_timer_state");
   }
 
   if (previous.weather_condition != current.weather_condition ||
       previous.weather_temperature_c != current.weather_temperature_c ||
       previous.weather_humidity_percent != current.weather_humidity_percent ||
+      previous.weather_sync_state != current.weather_sync_state ||
       previous.location != current.location) {
-    append_rect_if_valid(
-        plan.rects,
-        home_header_focus_rect(home_landscape_metrics(), HomeFocusKind::Weather));
+    append_rect_if_valid(plan.rects, header_weather_rect_for(current));
     add_reason("home.weather_update");
   }
 
+  const bool inventory_ids_changed =
+      previous.visible_inventory_ids != current.visible_inventory_ids;
   const bool reminder_ids_changed =
       previous.visible_reminder_ids != current.visible_reminder_ids;
-  const bool reminder_rows_changed =
-      previous.reminder_completed != current.reminder_completed ||
+  const bool inventory_rows_changed =
       previous.inventory_completed != current.inventory_completed;
+  const bool reminder_rows_changed =
+      previous.reminder_completed != current.reminder_completed;
   const bool section_count_changed =
       previous.inventory_count != current.inventory_count ||
       previous.reminder_count != current.reminder_count;
-  if (previous.inventory_completed != current.inventory_completed ||
-      previous.reminder_completed != current.reminder_completed ||
+  const bool hidden_inventory_changed =
+      previous.hidden_inventory_count != current.hidden_inventory_count ||
+      previous.hidden_inventory_digest != current.hidden_inventory_digest;
+  const bool hidden_reminder_changed =
+      previous.hidden_reminder_count != current.hidden_reminder_count ||
+      previous.hidden_reminder_digest != current.hidden_reminder_digest;
+  const bool hidden_changed = hidden_inventory_changed || hidden_reminder_changed;
+  const bool inventory_section_changed =
+      previous.visible_inventory_ids != current.visible_inventory_ids ||
+      previous.inventory_count != current.inventory_count;
+  const bool reminder_section_changed =
+      previous.visible_reminder_ids != current.visible_reminder_ids ||
+      previous.reminder_count != current.reminder_count;
+  const bool reminder_changed =
+      inventory_ids_changed ||
+      inventory_rows_changed ||
+      reminder_rows_changed ||
       reminder_ids_changed ||
-      section_count_changed) {
-    std::size_t rect_count_before = plan.rects.size();
-    if (!reminder_ids_changed && !section_count_changed && reminder_rows_changed) {
-      append_rect_if_valid(plan.rects, home_focus_row_rect(previous, previous.focused_index));
-      append_rect_if_valid(plan.rects, home_focus_row_rect(current, current.focused_index));
-    }
-    const bool row_rect_added = plan.rects.size() > rect_count_before;
-    if (!row_rect_added || reminder_ids_changed || section_count_changed) {
-      append_rect_if_valid(plan.rects, home_right_list_rect(current));
-    }
-    if (reminder_ids_changed || section_count_changed) {
+      section_count_changed ||
+      hidden_changed;
+  if (reminder_changed) {
+    const bool should_compact =
+        section_count_changed ||
+        hidden_changed;
+    const bool should_reorder =
+        reminder_ids_changed &&
+        !should_compact;
+
+    if (should_compact) {
+      bool section_rect_added = false;
+      if (inventory_section_changed) {
+        append_transition_rects(
+            inventory_rect_for(previous),
+            inventory_rect_for(current));
+        section_rect_added = true;
+      }
+      if (reminder_section_changed) {
+        append_transition_rects(
+            reminder_rect_for(previous),
+            reminder_rect_for(current));
+        section_rect_added = true;
+      }
+      if (!section_rect_added) {
+        append_transition_rects(
+            list_rect_for(previous),
+            list_rect_for(current));
+      }
       add_reason("home.reminder_compact");
+    } else if (should_reorder) {
+      bool section_rect_added = false;
+      if (inventory_rows_changed ||
+          inventory_ids_changed ||
+          previous.inventory_count != current.inventory_count) {
+        append_transition_rects(
+            inventory_rect_for(previous),
+            inventory_rect_for(current));
+        section_rect_added = true;
+      }
+      if (reminder_rows_changed ||
+          reminder_ids_changed ||
+          previous.reminder_count != current.reminder_count) {
+        append_transition_rects(
+            reminder_rect_for(previous),
+            reminder_rect_for(current));
+        section_rect_added = true;
+      }
+      if (!section_rect_added) {
+        append_transition_rects(
+            list_rect_for(previous),
+            list_rect_for(current));
+      }
+      add_reason("home.reminder_reorder");
     } else {
-      add_reason("home.reminder_row_update");
+      std::size_t rect_count_before = plan.rects.size();
+      append_rect_if_valid(plan.rects, focus_row_rect_for(previous, previous.focused_index));
+      append_rect_if_valid(plan.rects, focus_row_rect_for(current, current.focused_index));
+      const bool row_rect_added = plan.rects.size() > rect_count_before;
+      if (!row_rect_added) {
+        append_transition_rects(
+            list_rect_for(previous),
+            list_rect_for(current));
+        add_reason("home.reminder_change_fallback");
+      } else {
+        add_reason("home.reminder_row_update");
+      }
     }
   }
 
   if (previous.family_memo_text != current.family_memo_text ||
       previous.family_memo_author != current.family_memo_author ||
       previous.family_memo_posted != current.family_memo_posted) {
-    append_rect_if_valid(plan.rects, home_family_board_rect());
+    append_rect_if_valid(plan.rects, family_rect_for(current));
     add_reason("home.family_board_update");
   }
 

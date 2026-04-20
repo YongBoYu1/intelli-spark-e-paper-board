@@ -5,6 +5,8 @@
 #include "ui/panel_font_assets_generated.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -176,7 +178,35 @@ std::string format_timer_value(const int seconds_remaining) {
   return std::string(buffer);
 }
 
+int round_minutes_python_style(const int seconds) {
+  const int q = seconds / 60;
+  const int r = seconds % 60;
+  if (r < 30) {
+    return q;
+  }
+  if (r > 30) {
+    return q + 1;
+  }
+  // Python round() uses bankers rounding for .5 ties.
+  return (q % 2 == 0) ? q : (q + 1);
+}
+
+std::string timer_done_message(const int done_seconds) {
+  const int secs = std::max(1, done_seconds);
+  const int mins = std::max(1, round_minutes_python_style(secs));
+  if (mins == 1) {
+    return "1 MINUTE COUNTDOWN FINISHED";
+  }
+  return std::to_string(mins) + " MINUTES COUNTDOWN FINISHED";
+}
+
 std::string timer_status_text(const app::TimerState& timer) {
+  if (timer.alert_active && timer.seconds_remaining <= 0) {
+    const int done = timer.last_completed_seconds > 0
+                         ? timer.last_completed_seconds
+                         : timer.target_seconds;
+    return timer_done_message(done);
+  }
   if (timer.seconds_remaining <= 0) {
     return "READY";
   }
@@ -191,17 +221,30 @@ const BitmapFont& pick_time_font(
     const int max_width,
     const int max_height) {
   static constexpr const BitmapFont* kCandidates[] = {
+      &platform::panel_font_assets::kFontJetExtraBold124,
       &platform::panel_font_assets::kFontJetExtraBold109,
-      &platform::panel_font_assets::kFontJetExtraBold87,
       &platform::panel_font_assets::kFontJetExtraBold66,
-      &platform::panel_font_assets::kFontInterBlack109,
-      &platform::panel_font_assets::kFontInterBlack87,
-      &platform::panel_font_assets::kFontInterBlack84,
-      &platform::panel_font_assets::kFontInterBlack66,
   };
   for (const BitmapFont* font : kCandidates) {
     if (text_width_with_font(text, *font) <= max_width &&
         text_height_with_font(text, *font) <= max_height) {
+      return *font;
+    }
+  }
+  return *kCandidates[(sizeof(kCandidates) / sizeof(kCandidates[0])) - 1];
+}
+
+const BitmapFont& pick_status_font(
+    const std::string& text,
+    const int max_width) {
+  static constexpr const BitmapFont* kCandidates[] = {
+      &platform::panel_font_assets::kFontInterBold22,
+      &platform::panel_font_assets::kFontInterBold20,
+      &platform::panel_font_assets::kFontInterBold18,
+      &platform::panel_font_assets::kFontInterBold17,
+  };
+  for (const BitmapFont* font : kCandidates) {
+    if (text_width_with_font(text, *font) <= max_width) {
       return *font;
     }
   }
@@ -240,7 +283,6 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
 
   const BitmapFont& title_font = platform::panel_font_assets::kFontInterBold29;
   const BitmapFont& hint_font = platform::panel_font_assets::kFontJetBold13;
-  const BitmapFont& status_font = platform::panel_font_assets::kFontInterBold22;
   const BitmapFont& button_font = platform::panel_font_assets::kFontInterBold20;
 
   const std::string hint_raw = "ROTATE=SELECT  |  CLICK=ENTER  |  HOLD=HOME";
@@ -250,6 +292,7 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
       std::max(80, kPanelWidth - 48));
   const std::string time_text = format_timer_value(state.timer.seconds_remaining);
   const std::string status_text = timer_status_text(state.timer);
+  const BitmapFont& status_font = pick_status_font(status_text, kPanelWidth - 72);
 
   draw_text_with_font(image, kTitleX, kTitleY, "TIMER", title_font);
   const int hint_w = text_width_with_font(hint_text, hint_font);
@@ -270,10 +313,35 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
   const int time_w = text_width_with_font(time_text, time_font);
   const int time_x = std::max(kMarginX, (kPanelWidth - time_w) / 2);
   const int time_y = centered_text_y_with_font(kContentTop, time_area_h, time_text, time_font);
-  draw_text_with_font(image, time_x, time_y, time_text, time_font);
-
   const TextVerticalBounds time_bounds = text_vertical_bounds_with_font(time_text, time_font);
+  const int time_top = time_y + (time_bounds.valid ? time_bounds.top : 0);
   const int time_bottom = time_y + (time_bounds.valid ? time_bounds.bottom : time_font.line_height);
+  const bool alert_reverse = state.timer.alert_active &&
+                             state.timer.seconds_remaining <= 0 &&
+                             !state.timer.alert_blink_on;
+  if (alert_reverse) {
+    const int text_h = std::max(1, time_bottom - time_top);
+    const int pad_x = std::max(10, (time_w * 6) / 100);
+    const int pad_y = std::max(6, (text_h * 18) / 100);
+    const int bx0 = std::max(16, time_x - pad_x);
+    const int by0 = std::max(74, time_top - pad_y);
+    const int bx1 = std::min(kPanelWidth - 16, time_x + time_w + pad_x);
+    const int by1 = std::min(kPanelHeight - 108, time_bottom + pad_y);
+    if (bx1 > bx0 && by1 > by0) {
+      fill_rounded_rect(
+          image,
+          bx0,
+          by0,
+          bx1,
+          by1,
+          std::max(8, ((by1 - by0) * 16) / 100),
+          true);
+    }
+    draw_text_with_font(image, time_x, time_y, time_text, time_font, false);
+  } else {
+    draw_text_with_font(image, time_x, time_y, time_text, time_font);
+  }
+
   int status_y = time_bottom + kStatusGap;
   if (status_y + status_h > available_bottom) {
     status_y = std::max(kContentTop + 8, available_bottom - status_h);
@@ -288,7 +356,7 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
       state.timer.running ? "PAUSE" : "START",
       "RESET",
   };
-  const int focused = std::max(0, std::min(state.timer.focused_index, 3));
+  const int focused = ((state.timer.focused_index % 4) + 4) % 4;
   const int button_width = (kPanelWidth - (kMarginX * 2) - (kButtonGap * 3)) / 4;
   for (int idx = 0; idx < 4; ++idx) {
     const int x0 = kMarginX + idx * (button_width + kButtonGap);
