@@ -22,24 +22,30 @@ static const char* kTag = "ntp_sync";
 
 bool do_ntp_sync(uint32_t timeout_ms) {
   // Already synced and wall clock is valid — nothing to do.
-  if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED &&
+  if (esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED &&
       wall_time_is_valid()) {
     ESP_LOGI(kTag, "Wall clock already valid — skipping NTP init");
     return true;
   }
 
-  sntp_setoperatingmode(SNTP_OPMODE_POLL);
-  sntp_setservername(0, "pool.ntp.org");
-  sntp_setservername(1, "time.cloudflare.com");
-  sntp_setservername(2, "ntp.aliyun.com");  // low-latency in China
-  sntp_init();
+  // Use POLL mode so the client actively sends a request.
+  // After the response arrives we call esp_sntp_stop() immediately so lwIP
+  // never schedules the next hourly poll — keeping the WiFi radio quiet.
+  esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+  esp_sntp_setservername(0, "pool.ntp.org");
+  esp_sntp_setservername(1, "time.cloudflare.com");
+  esp_sntp_setservername(2, "ntp.aliyun.com");  // low-latency in China
+  esp_sntp_init();
 
   ESP_LOGI(kTag, "Waiting for NTP sync (timeout %" PRIu32 " ms)…", timeout_ms);
 
   constexpr uint32_t kStepMs = 200;
   for (uint32_t elapsed = 0; elapsed < timeout_ms; elapsed += kStepMs) {
-    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED &&
+    if (esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED &&
         wall_time_is_valid()) {
+      // Stop SNTP immediately — prevents lwIP from scheduling the next
+      // hourly poll and keeps the WiFi radio idle between voice requests.
+      esp_sntp_stop();
       const std::time_t t = wall_time_seconds();
       const struct tm* lt = localtime(&t);
       ESP_LOGI(kTag, "NTP synced — UTC %04d-%02d-%02d %02d:%02d:%02d",
@@ -50,6 +56,7 @@ bool do_ntp_sync(uint32_t timeout_ms) {
     vTaskDelay(pdMS_TO_TICKS(kStepMs));
   }
 
+  esp_sntp_stop();  // clean up even on timeout — no lingering background task
   ESP_LOGW(kTag, "NTP sync timed out after %" PRIu32 " ms", timeout_ms);
   return false;
 }
