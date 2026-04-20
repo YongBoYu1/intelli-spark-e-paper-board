@@ -330,9 +330,9 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
 
   // Hero.
   const WpFit city_fit = wp_fit(city, content_w - 20, {&kFontInterBold29, &kFontInterBold22, &kFontInterBold20, &kFontInterBold18}, true);
-  const WpFit feels_fit = wp_fit(feels, content_w - 24, {&kFontInterMedium18, &kFontInterBold17, &kFontInterMedium13}, true);
+  const WpFit feels_fit = wp_fit(feels, content_w - 24, {&kFontInterBold29, &kFontInterBold22, &kFontInterMedium18, &kFontInterBold17}, true);
   const WpFit temp_fit = wp_fit(temp, content_w - 24, {&kFontInterBlack87, &kFontInterBlack66, &kFontInterBlack36}, false);
-  const WpFit range_fit = wp_fit(range, content_w - 24, {&kFontInterMedium18, &kFontInterBold17, &kFontInterMedium13}, true);
+  const WpFit range_fit = wp_fit(range, content_w - 24, {&kFontInterBold29, &kFontInterBold22, &kFontInterMedium18, &kFontInterBold17}, true);
 
   // °C is written as "\xB0" "C" — 0xB0 maps to glyph index 95 (U+00B0 DEGREE SIGN).
   static constexpr const char* kDegC = "\xB0" "C";

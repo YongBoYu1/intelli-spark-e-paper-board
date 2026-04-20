@@ -214,8 +214,8 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
   // (U+00B0 DEGREE SIGN, appended to the font charset by the generator).
   {
     const BitmapFont& temp_font  = kFontInterBlack66;
-    const BitmapFont& label_font = kFontInterMedium18;  // FEELS LIKE — readable
-    const BitmapFont& range_font = kFontInterMedium18;  // H / L row
+    const BitmapFont& label_font = kFontInterBold29;    // FEELS LIKE — ~50% larger than Medium18
+    const BitmapFont& range_font = kFontInterBold29;    // H / L row — ~50% larger than Medium18
     const BitmapFont& deg_font   = kFontInterBold22;    // °C superscript next to main temp
 
     const int inner_top    = kL_HeroY0 + 6;
