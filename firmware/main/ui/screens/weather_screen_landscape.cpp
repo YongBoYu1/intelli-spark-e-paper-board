@@ -21,7 +21,8 @@ using platform::panel_font_assets::Glyph;
 
 std::size_t wl_glyph_index(const char ch) {
   const unsigned char code = static_cast<unsigned char>(ch);
-  if (code < 32 || code > 126) return static_cast<std::size_t>('?' - 32);
+  if (code == 0xB0u) return 95u;  // U+00B0 DEGREE SIGN — appended at index 95
+  if (code < 32u || code > 126u) return static_cast<std::size_t>('?' - 32);
   return static_cast<std::size_t>(code - 32);
 }
 
@@ -209,27 +210,31 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
   }
 
   // ── Hero: Temperature + labels (center col) ───────────────────────────────
+  // °C is written as "\xB0" "C" — the 0xB0 byte maps to glyph index 95
+  // (U+00B0 DEGREE SIGN, appended to the font charset by the generator).
   {
     const BitmapFont& temp_font  = kFontInterBlack66;
-    const BitmapFont& label_font = kFontInterBold17;    // readable size for FEELS LIKE row
-    const BitmapFont& range_font = kFontInterMedium18;  // H / L row — keep legible
-    const BitmapFont& deg_font   = kFontInterBold17;    // "oC" superscript next to main temp
+    const BitmapFont& label_font = kFontInterMedium18;  // FEELS LIKE — readable
+    const BitmapFont& range_font = kFontInterMedium18;  // H / L row
+    const BitmapFont& deg_font   = kFontInterBold22;    // °C superscript next to main temp
 
     const int inner_top    = kL_HeroY0 + 6;
     const int inner_bottom = kL_HeroY1 - 24;
 
-    // ── "FEELS LIKE --" + "oC" superscript, pinned to top of inner zone ──────
+    // ── "FEELS LIKE --°C" pinned to top of inner zone ────────────────────────
+    // °C suffix is drawn at the same Y as the label text; the ° glyph sits in
+    // the upper portion of the cap-height of label_font, which is correct for
+    // a degree symbol following the number.
+    static constexpr const char* kDegC = "\xB0" "C";  // real ° (0xB0) + C
     const int feels_zone_h = label_font.line_height;
-    // Width of base text + "oC" glyph pair so we can centre them together.
     const int fl_text_w = wl_text_width(feels_like_str, label_font);
-    const int fl_deg_w  = weather_has_data ? wl_text_width("oC", label_font) : 0;
+    const int fl_deg_w  = weather_has_data ? wl_text_width(kDegC, label_font) : 0;
     const int fl_pair_w = fl_text_w + fl_deg_w;
     const int fl_x      = col1_x + (kL_ColW - fl_pair_w) / 2;
     const int feels_y   = wl_center_y(inner_top, feels_zone_h, feels_like_str, label_font);
     wl_draw_text(image, fl_x, feels_y, feels_like_str, label_font, true);
     if (weather_has_data) {
-      // "oC" right after the number at the same Y — "o" acts as the degree circle
-      wl_draw_text(image, fl_x + fl_text_w, feels_y, "oC", label_font, true);
+      wl_draw_text(image, fl_x + fl_text_w, feels_y, kDegC, label_font, true);
     }
     const int feels_bottom = inner_top + feels_zone_h + 6;
 
@@ -239,19 +244,25 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
                                     range_str, range_font);
     wl_draw_centered(image, col1_x, kL_ColW, range_y, range_str, range_font);
 
-    // ── Temperature centred in remaining space, with superscript "oC" ────────
+    // ── Temperature centred in remaining space, with °C at upper-right ───────
     const int temp_zone_h = range_zone_top - feels_bottom;
     const int temp_y = wl_center_y(feels_bottom, std::max(1, temp_zone_h), temp_num, temp_font);
 
-    const int temp_w  = wl_text_width(temp_num, temp_font);
-    const int deg_w   = weather_has_data ? wl_text_width("oC", deg_font) : 0;
-    const int pair_w  = temp_w + 2 + deg_w;
-    const int temp_x  = col1_x + (kL_ColW - pair_w) / 2;
+    // Compute the correct Y for the °C superscript: align its visual top with
+    // the visual top of the temperature digit so it appears at the upper-right.
+    const WlVBounds tmp_vb = wl_vbounds(temp_num, temp_font);
+    const WlVBounds deg_vb = wl_vbounds(kDegC,    deg_font);
+    const int deg_y = (tmp_vb.valid && deg_vb.valid)
+                          ? temp_y + tmp_vb.top - deg_vb.top
+                          : temp_y;
+
+    const int temp_w = wl_text_width(temp_num, temp_font);
+    const int deg_w  = weather_has_data ? (wl_text_width(kDegC, deg_font) + 2) : 0;
+    const int pair_w = temp_w + deg_w;
+    const int temp_x = col1_x + (kL_ColW - pair_w) / 2;
     wl_draw_text(image, temp_x, temp_y, temp_num, temp_font, true);
     if (weather_has_data) {
-      // "oC" at upper-right corner of the number — placed at temp_y so it sits
-      // near the top of the large digit, giving a superscript °C appearance.
-      wl_draw_text(image, temp_x + temp_w + 2, temp_y, "oC", deg_font, true);
+      wl_draw_text(image, temp_x + temp_w + 2, deg_y, kDegC, deg_font, true);
     }
   }
 

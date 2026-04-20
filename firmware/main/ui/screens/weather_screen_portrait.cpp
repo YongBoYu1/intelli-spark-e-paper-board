@@ -87,7 +87,8 @@ void wp_line(
 
 std::size_t wp_gi(const char ch) {
   const unsigned char c = static_cast<unsigned char>(ch);
-  if (c < 32 || c > 126) return static_cast<std::size_t>('?' - 32);
+  if (c == 0xB0u) return 95u;  // U+00B0 DEGREE SIGN — appended at index 95
+  if (c < 32u || c > 126u) return static_cast<std::size_t>('?' - 32);
   return static_cast<std::size_t>(c - 32);
 }
 
@@ -329,15 +330,18 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
 
   // Hero.
   const WpFit city_fit = wp_fit(city, content_w - 20, {&kFontInterBold29, &kFontInterBold22, &kFontInterBold20, &kFontInterBold18}, true);
-  const WpFit feels_fit = wp_fit(feels, content_w - 24, {&kFontInterBold17, &kFontInterMedium13}, true);
+  const WpFit feels_fit = wp_fit(feels, content_w - 24, {&kFontInterMedium18, &kFontInterBold17, &kFontInterMedium13}, true);
   const WpFit temp_fit = wp_fit(temp, content_w - 24, {&kFontInterBlack87, &kFontInterBlack66, &kFontInterBlack36}, false);
   const WpFit range_fit = wp_fit(range, content_w - 24, {&kFontInterMedium18, &kFontInterBold17, &kFontInterMedium13}, true);
+
+  // °C is written as "\xB0" "C" — 0xB0 maps to glyph index 95 (U+00B0 DEGREE SIGN).
+  static constexpr const char* kDegC = "\xB0" "C";
 
   const BitmapFont& city_font  = *city_fit.font;
   const BitmapFont& feels_font = *feels_fit.font;
   const BitmapFont& temp_font  = *temp_fit.font;
   const BitmapFont& range_font = *range_fit.font;
-  const BitmapFont& deg_font   = kFontInterBold17;  // superscript "o" size
+  const BitmapFont& deg_font   = kFontInterBold22;  // °C superscript next to main temp
 
   const int city_y = wp_y_for_top(hero_y0 + 2, city_fit.text, city_font);
   wp_centered(image, cx0, cx1, city_y, city_fit.text, city_font, r90);
@@ -347,15 +351,15 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
   const int icon_y = city_y + 44;
   wp_icon(image, icon_x, icon_y, icon_box, icon_box, icon_id, r90);
 
-  // "Feels Like --oC" drawn as a centred pair; "oC" acts as the degree symbol.
+  // "Feels Like --°C" drawn as a centred pair.
   const int feels_y = wp_y_for_top(icon_y + icon_box + 8, feels_fit.text, feels_font);
   {
     const int fl_w     = wp_text_width(feels_fit.text, feels_font);
-    const int fl_deg_w = weather_has_data ? wp_text_width("oC", feels_font) : 0;
+    const int fl_deg_w = weather_has_data ? wp_text_width(kDegC, feels_font) : 0;
     const int fl_x     = cx0 + ((cx1 - cx0 - fl_w - fl_deg_w) / 2);
     wp_text(image, fl_x, feels_y, feels_fit.text, feels_font, r90);
     if (weather_has_data) {
-      wp_text(image, fl_x + fl_w, feels_y, "oC", feels_font, r90);
+      wp_text(image, fl_x + fl_w, feels_y, kDegC, feels_font, r90);
     }
   }
 
@@ -366,17 +370,22 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
   const int temp_zone_top = feels_y + 26;
   const int temp_zone_h = std::max(42, range_y_top - temp_zone_top - 4);
   const int temp_y = wp_y_center(temp_zone_top, temp_zone_h, temp_fit.text, temp_font);
-  // Temperature number + "oC" superscript drawn as a centred pair.
-  // "oC" is placed at temp_y (top of the large digit) so it appears as a
-  // superscript degree-C symbol at the upper-right of the number.
+  // Temperature + °C at upper-right; align °C's visual top with the digit top.
   {
+    const WpVB tmp_vb = wp_vbounds(temp_fit.text, temp_font);
+    const WpVB deg_vb = wp_vbounds(kDegC,         deg_font);
+    // deg_y: shift °C up so its visual top aligns with the temperature digit top.
+    const int deg_y = (tmp_vb.ok && deg_vb.ok)
+                          ? temp_y + tmp_vb.top - deg_vb.top
+                          : temp_y;
+
     const int tmp_w  = wp_text_width(temp_fit.text, temp_font);
-    const int deg_w  = weather_has_data ? wp_text_width("oC", deg_font) : 0;
-    const int pair_w = tmp_w + 2 + deg_w;
+    const int deg_w  = weather_has_data ? (wp_text_width(kDegC, deg_font) + 2) : 0;
+    const int pair_w = tmp_w + deg_w;
     const int tmp_x  = cx0 + ((cx1 - cx0 - pair_w) / 2);
     wp_text(image, tmp_x, temp_y, temp_fit.text, temp_font, r90);
     if (weather_has_data) {
-      wp_text(image, tmp_x + tmp_w + 2, temp_y, "oC", deg_font, r90);
+      wp_text(image, tmp_x + tmp_w + 2, deg_y, kDegC, deg_font, r90);
     }
   }
 

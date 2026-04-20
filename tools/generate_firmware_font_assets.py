@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 OUT_PATH = REPO_ROOT / "firmware" / "main" / "ui" / "panel_font_assets_generated.hpp"
 FONT_DIR = REPO_ROOT / "assets" / "fonts"
 
-CHARSET = "".join(chr(code) for code in range(32, 127))
+CHARSET = "".join(chr(code) for code in range(32, 127)) + "\u00B0"  # index 95 = ° (U+00B0 DEGREE SIGN)
 
 
 @dataclass(frozen=True)
