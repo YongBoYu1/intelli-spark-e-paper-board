@@ -14,11 +14,13 @@ CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
-# WiFi credentials — change to your home network
-CONFIG_WIFI_SSID="You and Me"
-CONFIG_WIFI_PASSWORD="Xx9023149406xX"
+# WiFi credentials — override in a local sdkconfig or via idf.py menuconfig
+# NEVER commit real credentials here.
+CONFIG_WIFI_SSID=""
+CONFIG_WIFI_PASSWORD=""
 
 # Voice backend URL — change to your machine's LAN IP
-CONFIG_VOICE_API_URL="http://192.168.2.39:8000"
+CONFIG_VOICE_API_URL="http://192.168.1.1:8000"
 # Voice backend auth token — must match VOICE_API_TOKEN on the server
-CONFIG_VOICE_API_TOKEN="8e3f1d7c5a9b4e2f91c6d0ab73f4e8c2a1b5d9f0e7c3a6b1"
+# Override locally; do not commit the real token.
+CONFIG_VOICE_API_TOKEN=""
