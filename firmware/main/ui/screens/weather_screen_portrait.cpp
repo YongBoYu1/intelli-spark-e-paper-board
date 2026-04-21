@@ -331,7 +331,7 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
   // Hero.
   const WpFit city_fit = wp_fit(city, content_w - 20, {&kFontInterBold29, &kFontInterBold22, &kFontInterBold20, &kFontInterBold18}, true);
   const WpFit feels_fit = wp_fit(feels, content_w - 24, {&kFontInterBold29, &kFontInterBold22, &kFontInterMedium18, &kFontInterBold17}, true);
-  const WpFit temp_fit = wp_fit(temp, content_w - 24, {&kFontInterBlack87, &kFontInterBlack66, &kFontInterBlack36}, false);
+  const WpFit temp_fit = wp_fit(temp, content_w - 24, {&kFontInterBlack109, &kFontInterBlack87, &kFontInterBlack66, &kFontInterBlack36}, false);
   const WpFit range_fit = wp_fit(range, content_w - 24, {&kFontInterBold29, &kFontInterBold22, &kFontInterMedium18, &kFontInterBold17}, true);
 
   // °C is written as "\xB0" "C" — 0xB0 maps to glyph index 95 (U+00B0 DEGREE SIGN).
@@ -341,7 +341,7 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
   const BitmapFont& feels_font = *feels_fit.font;
   const BitmapFont& temp_font  = *temp_fit.font;
   const BitmapFont& range_font = *range_fit.font;
-  const BitmapFont& deg_font   = kFontInterBold22;  // °C superscript next to main temp
+  const BitmapFont& deg_font   = kFontInterBold29;  // °C superscript next to main temp
 
   const int city_y = wp_y_for_top(hero_y0 + 2, city_fit.text, city_font);
   wp_centered(image, cx0, cx1, city_y, city_fit.text, city_font, r90);
@@ -367,8 +367,8 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
   const int range_y = wp_y_for_top(range_y_top, range_fit.text, range_font);
   wp_centered(image, cx0, cx1, range_y, range_fit.text, range_font, r90);
 
-  const int temp_zone_top = feels_y + 26;
-  const int temp_zone_h = std::max(42, range_y_top - temp_zone_top - 4);
+  const int temp_zone_top = feels_y + 56;
+  const int temp_zone_h = std::max(42, range_y_top - temp_zone_top - 28);
   const int temp_y = wp_y_center(temp_zone_top, temp_zone_h, temp_fit.text, temp_font);
   // Temperature + °C at upper-right; align °C's visual top with the digit top.
   {

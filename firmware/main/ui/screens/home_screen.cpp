@@ -390,10 +390,8 @@ HomeLandscapeMetrics home_landscape_metrics() {
 }
 
 int home_shopping_row_y(const HomeLandscapeMetrics& metrics, const int inventory_rows) {
-  const int safe_inventory_rows = std::max(0, inventory_rows);
-  const int inv_bottom_y = metrics.inv_row_y + (safe_inventory_rows * metrics.inv_row_h);
-  const int shop_rule_y =
-      std::max(metrics.family_rule_y, inv_bottom_y + metrics.shop_rule_y_min_gap);
+  (void)inventory_rows;
+  const int shop_rule_y = metrics.family_rule_y;
   const int shop_title_y = shop_rule_y - metrics.shop_title_h - metrics.shop_line_gap;
   return std::max(shop_title_y + metrics.shop_header_gap, shop_rule_y + 10);
 }
@@ -563,11 +561,8 @@ platform::DirtyRect home_inventory_section_rect(const HomeDirtySnapshot& snapsho
 
 platform::DirtyRect home_reminder_section_rect(const HomeDirtySnapshot& snapshot) {
   const HomeLandscapeMetrics metrics = home_landscape_metrics();
-  const int inventory_rows = std::max(0, snapshot.inventory_count);
   const int reminder_rows = std::max(0, snapshot.reminder_count);
-  const int inv_bottom_y = metrics.inv_row_y + (inventory_rows * metrics.inv_row_h);
-  const int shop_rule_y =
-      std::max(metrics.family_rule_y, inv_bottom_y + metrics.shop_rule_y_min_gap);
+  const int shop_rule_y = metrics.family_rule_y;
   const int title_y = shop_rule_y - metrics.shop_title_h - metrics.shop_line_gap;
   const int row_start_y =
       std::max(title_y + metrics.shop_header_gap, shop_rule_y + 10);
@@ -1825,10 +1820,7 @@ void draw_reminders_section(
     const HomeLandscapeMetrics& metrics) {
   const app::DashboardSummary& dashboard = state.dashboard;
   const HomeTypography typography = home_typography_for(state);
-  const int inventory_rows = visible_inventory_count(state);
-  const int inv_bottom_y = metrics.inv_row_y + (inventory_rows * metrics.inv_row_h);
-  const int shop_rule_y =
-      std::max(metrics.family_rule_y, inv_bottom_y + metrics.shop_rule_y_min_gap);
+  const int shop_rule_y = metrics.family_rule_y;
   const int title_y = shop_rule_y - metrics.shop_title_h - metrics.shop_line_gap;
   const int row_start_y = std::max(title_y + metrics.shop_header_gap, shop_rule_y + 10);
   const BitmapFont& title_font = *typography.section_title_font;
@@ -1935,8 +1927,10 @@ void draw_family_board(
   if (row_x < min_row_x) {
     row_x = min_row_x;
   }
-  const int row_y = label_y + 1;
   const int name_h = text_height_with_font("Ag", family_name_font);
+  const int row_y = std::min(
+      label_y + 1,
+      rule_y - name_h - underline_gap - underline_w - 2);
   int cx = row_x;
   for (std::size_t i = 0; i < labels.size(); ++i) {
     const auto& [name, width] = labels[i];
@@ -1954,10 +1948,9 @@ void draw_family_board(
     cx += width + family_gap;
   }
 
-  const int dynamic_rule_y = std::max(rule_y, row_y + name_h + underline_gap + underline_w + 6);
-  draw_section_rule(image, x0, x1, dynamic_rule_y);
+  draw_section_rule(image, x0, x1, rule_y);
 
-  const int memo_y = dynamic_rule_y + 14;
+  const int memo_y = rule_y + 14;
   const int memo_width = x1 - x0 - 8;
   if (!view.memo_text.empty()) {
     const std::vector<std::string> lines = wrap_text_with_font(

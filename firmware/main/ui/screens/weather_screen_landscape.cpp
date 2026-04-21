@@ -213,10 +213,10 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
   // °C is written as "\xB0" "C" — the 0xB0 byte maps to glyph index 95
   // (U+00B0 DEGREE SIGN, appended to the font charset by the generator).
   {
-    const BitmapFont& temp_font  = kFontInterBlack66;
+    const BitmapFont& temp_font  = kFontInterBlack87;
     const BitmapFont& label_font = kFontInterBold29;    // FEELS LIKE — ~50% larger than Medium18
     const BitmapFont& range_font = kFontInterBold29;    // H / L row — ~50% larger than Medium18
-    const BitmapFont& deg_font   = kFontInterBold22;    // °C superscript next to main temp
+    const BitmapFont& deg_font   = kFontInterBold29;    // °C superscript next to main temp
 
     const int inner_top    = kL_HeroY0 + 6;
     const int inner_bottom = kL_HeroY1 - 24;
@@ -236,7 +236,7 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
     if (weather_has_data) {
       wl_draw_text(image, fl_x + fl_text_w, feels_y, kDegC, label_font, true);
     }
-    const int feels_bottom = inner_top + feels_zone_h + 6;
+    const int feels_bottom = inner_top + feels_zone_h + 18;
 
     // ── "H: --  L: --" pinned to bottom of inner zone ────────────────────────
     const int range_zone_top = inner_bottom - static_cast<int>(range_font.line_height) - 2;
@@ -245,8 +245,14 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
     wl_draw_centered(image, col1_x, kL_ColW, range_y, range_str, range_font);
 
     // ── Temperature centred in remaining space, with °C at upper-right ───────
-    const int temp_zone_h = range_zone_top - feels_bottom;
-    const int temp_y = wl_center_y(feels_bottom, std::max(1, temp_zone_h), temp_num, temp_font);
+    const int temp_zone_top = feels_bottom + 18;
+    const int temp_zone_bottom = range_zone_top - 18;
+    const int temp_zone_h = temp_zone_bottom - temp_zone_top;
+    const int temp_y = wl_center_y(
+        temp_zone_top,
+        std::max(1, temp_zone_h),
+        temp_num,
+        temp_font);
 
     // Compute the correct Y for the °C superscript: align its visual top with
     // the visual top of the temperature digit so it appears at the upper-right.

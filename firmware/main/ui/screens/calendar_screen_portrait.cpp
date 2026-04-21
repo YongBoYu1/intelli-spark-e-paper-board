@@ -436,11 +436,11 @@ void draw_month_grid(
       cp_outline(image, cx0 + 2, cy0 + 2, cx1 - 2, cy1 - 2, 1, r90);
     }
 
-    const int text_y = cy0 + ((cy1 - cy0) / 2) - 6;
+    const int text_y = cy0 + ((cy1 - cy0) / 2) - 10;
     if (selected) {
-      cp_centered_inverted(image, cx0, cx1, text_y, std::to_string(day), 1, 2, r90);
+      cp_centered_inverted(image, cx0, cx1, text_y, std::to_string(day), 2, 2, r90);
     } else {
-      cp_centered(image, cx0, cx1, text_y, std::to_string(day), 1, 2, r90);
+      cp_centered(image, cx0, cx1, text_y, std::to_string(day), 2, 2, r90);
     }
 
     const auto date = app::calendar_runtime::DateValue{cursor.year, cursor.month, day};
@@ -532,8 +532,7 @@ std::vector<uint8_t> render_calendar_portrait_bitmap(const app::AppState& state)
   const int list_x0 = 18;
   const int list_x1 = kPW - 18;
   const int list_top = header_y + 64;
-  const int footer_y = kPH - 30;
-  const int list_bottom = footer_y - 6;
+  const int list_bottom = kPH - 18;
   const int row_h = 56;
   const int row_gap = 8;
   const int slots = std::max(1, (list_bottom - list_top + row_gap) / (row_h + row_gap));
@@ -598,15 +597,6 @@ std::vector<uint8_t> render_calendar_portrait_bitmap(const app::AppState& state)
       cp_text_line(image, list_x1 - more_width - 2, list_bottom - 12, more, 1, 12, r90);
     }
   }
-
-  std::string footer = "ROTATE=DATE  |  CLICK=AGENDA  |  HOLD=HOME";
-  if (agenda_mode) {
-    footer = rows.empty()
-                 ? "ROTATE=DATE  |  CLICK=DATE  |  HOLD=HOME"
-                 : "ROTATE=ITEM  |  CLICK=TOGGLE  |  HOLD=HOME";
-  }
-  footer = cp_truncate(upper_copy(footer), 1, kPW - 24);
-  cp_text_line(image, 12, footer_y, footer, 1, 64, r90);
 
   return image;
 }

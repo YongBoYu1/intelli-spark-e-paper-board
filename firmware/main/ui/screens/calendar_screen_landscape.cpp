@@ -155,18 +155,18 @@ void draw_month_grid(
           image,
           cx0,
           cx1,
-          cy0 + ((cy1 - cy0) / 2) - 7,
+          cy0 + ((cy1 - cy0) / 2) - 12,
           std::to_string(day),
-          1,
+          2,
           2);
     } else {
       draw_text_centered(
           image,
           cx0,
           cx1,
-          cy0 + ((cy1 - cy0) / 2) - 7,
+          cy0 + ((cy1 - cy0) / 2) - 12,
           std::to_string(day),
-          1,
+          2,
           2);
     }
 
@@ -332,20 +332,11 @@ std::vector<uint8_t> render_calendar_landscape_bitmap(const app::AppState& state
         right_x0 + 14,
         126,
         right_x1,
-        kPanelHeight - 46,
+        kPanelHeight - 22,
         rows,
         selected_index,
         agenda_mode);
   }
-
-  std::string footer = "Rotate=Date | Click=Agenda | Hold=Home";
-  if (agenda_mode) {
-    footer = rows.empty()
-                 ? "Rotate=Date | Click=Date | Hold=Home"
-                 : "Rotate=Item | Click=Toggle | Hold=Home";
-  }
-  footer = truncate_text_px(footer, 1, std::max(80, content_x1 - content_x0));
-  draw_text_centered(image, content_x0, content_x1, kPanelHeight - 18, footer, 1, 64);
 
   return image;
 }

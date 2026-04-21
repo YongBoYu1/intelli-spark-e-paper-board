@@ -8,7 +8,6 @@
 #include "platform/mic_driver.hpp"
 #include "platform/voice_client.hpp"
 #include "platform/ntp_sync.hpp"
-#include "platform/weather_client.hpp"
 #include "platform/wifi_driver.hpp"
 
 #include "driver/usb_serial_jtag.h"
@@ -77,39 +76,6 @@ static std::unique_ptr<fridge_ink::app::Runtime> g_runtime_owner{};
 // Protected by g_voice_mutex so cross-task access is safe.
 static SemaphoreHandle_t g_voice_mutex{nullptr};
 static std::vector<fridge_ink::platform::VoiceAction> g_pending_voice_actions{};
-
-// ── Weather ───────────────────────────────────────────────────────────────────
-// Fetched once at first boot (after WiFi connects), then at 00:xx and 12:xx
-// local time each day.  All other times: no fetch.
-static SemaphoreHandle_t                   g_weather_mutex{nullptr};
-static fridge_ink::platform::WeatherResult g_weather_result{};
-static bool                                g_weather_result_pending{false};
-static std::atomic<bool>                   g_weather_fetching{false};
-
-// Day-of-year + hour of the last *scheduled* fetch (avoids re-triggering
-// multiple times within the same 00:xx or 12:xx window).
-static int g_last_sched_fetch_yday = -1;
-static int g_last_sched_fetch_hour = -1;
-
-static void weather_fetch_task(void* /*arg*/) {
-  ESP_LOGI(kTag, "[weather] Fetching from wttr.in…");
-  auto result = fridge_ink::platform::weather_fetch(12000);
-  if (g_weather_mutex) {
-    xSemaphoreTake(g_weather_mutex, portMAX_DELAY);
-    g_weather_result         = std::move(result);
-    g_weather_result_pending = true;
-    xSemaphoreGive(g_weather_mutex);
-  }
-  g_weather_fetching.store(false);
-  vTaskDelete(nullptr);
-}
-
-static void trigger_weather_fetch() {
-  if (!fridge_ink::platform::wifi_is_connected()) return;
-  if (g_weather_fetching.exchange(true)) return;  // already in flight
-  // 10 KB stack for HTTP + JSON parsing
-  xTaskCreate(weather_fetch_task, "weather", 10240, nullptr, 4, nullptr);
-}
 
 // FreeRTOS task: capture PCM → POST to backend → log result.
 static void voice_record_task(void* /*arg*/) {
@@ -372,11 +338,6 @@ extern "C" void app_main(void) {
     ESP_LOGE(kTag, "Failed to create voice mutex — halting");
     return;
   }
-  g_weather_mutex = xSemaphoreCreateMutex();
-  if (g_weather_mutex == nullptr) {
-    ESP_LOGE(kTag, "Failed to create weather mutex — halting");
-    return;
-  }
 
   g_display = fridge_ink::platform::make_default_display();
   g_runtime_owner = std::make_unique<fridge_ink::app::Runtime>(*g_display);
@@ -394,8 +355,6 @@ extern "C" void app_main(void) {
       if (wifi_ok) {
         // NTP time sync + IP-based timezone detection (20 s combined budget).
         fridge_ink::platform::ntp_sync(20000);
-        // Kick off the first weather fetch in the background.
-        trigger_weather_fetch();
       }
     } else {
       ESP_LOGW(kTag, "CONFIG_WIFI_SSID not set — WiFi / NTP skipped");
@@ -448,35 +407,7 @@ extern "C" void app_main(void) {
       }
     }
 
-    // Drain pending weather result (fetched off main task, applied here).
-    if (g_weather_mutex && xSemaphoreTake(g_weather_mutex, 0) == pdTRUE) {
-      if (g_weather_result_pending) {
-        fridge_ink::platform::WeatherResult wx;
-        wx = std::move(g_weather_result);
-        g_weather_result_pending = false;
-        xSemaphoreGive(g_weather_mutex);
-        g_runtime->apply_weather_result(wx);
-      } else {
-        xSemaphoreGive(g_weather_mutex);
-      }
-    }
-
     const std::uint64_t now_ms = fridge_ink::platform::monotonic_ms();
-
-    // Scheduled weather refresh: trigger at 00:xx and 12:xx local time.
-    // Only fires once per window (guarded by day-of-year + hour pair).
-    if (fridge_ink::platform::wall_time_is_valid()) {
-      const std::time_t t  = fridge_ink::platform::wall_time_seconds();
-      const struct tm*  lt = localtime(&t);
-      const int h = lt->tm_hour;
-      const int d = lt->tm_yday;
-      if ((h == 0 || h == 12) &&
-          !(d == g_last_sched_fetch_yday && h == g_last_sched_fetch_hour)) {
-        g_last_sched_fetch_yday = d;
-        g_last_sched_fetch_hour = h;
-        trigger_weather_fetch();
-      }
-    }
 
     g_runtime->flush_deferred(now_ms);
     if ((now_ms - last_tick_ms) >= kRuntimeTickMs) {
