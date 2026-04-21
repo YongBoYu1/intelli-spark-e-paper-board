@@ -23,7 +23,11 @@ namespace fridge_ink::platform {
 namespace {
 
 constexpr const char* kTag = "live_data";
+// Fallback poll interval used when wall time is unavailable or when inside a
+// sync window (00:xx / 12:xx) so we keep retrying on transient failures.
 constexpr uint32_t kTaskPollDelayMs = 5000U;
+// How many seconds before 00:00 / 12:00 to wake up and start polling.
+constexpr uint32_t kSyncWindowLeadS = 30U;
 constexpr uint32_t kHttpTimeoutMs = 8000U;
 
 struct HttpResult {
@@ -646,6 +650,42 @@ std::int64_t current_auto_sync_slot_id() {
          (local_tm.tm_hour == 12 ? 1LL : 0LL);
 }
 
+// Return how long the weather task should sleep before its next poll.
+//
+// Outside both sync windows:  sleep until kSyncWindowLeadS seconds before the
+//   next 00:00 or 12:00 (up to ~6 hours).  This eliminates thousands of
+//   pointless 5-second wakeups every day.
+// Inside a sync window (h==0 or h==12):  return kTaskPollDelayMs so the task
+//   keeps retrying quickly until the fetch succeeds.
+// No valid wall time:  return kTaskPollDelayMs (safe fallback).
+static TickType_t smart_sleep_ticks() {
+  if (!wall_time_is_valid()) {
+    return pdMS_TO_TICKS(kTaskPollDelayMs);
+  }
+  const std::time_t now = wall_time_seconds();
+  std::tm local_tm{};
+  if (localtime_r(&now, &local_tm) == nullptr) {
+    return pdMS_TO_TICKS(kTaskPollDelayMs);
+  }
+  const int h = local_tm.tm_hour;
+  // Inside a sync window — keep polling every 5 s for retry logic.
+  if (h == 0 || h == 12) {
+    return pdMS_TO_TICKS(kTaskPollDelayMs);
+  }
+  // Seconds elapsed since midnight.
+  const int day_s = h * 3600 + local_tm.tm_min * 60 + local_tm.tm_sec;
+  // Next sync window: 12:00 or tomorrow's 00:00.
+  const int next_s = (h < 12) ? (12 * 3600) : (24 * 3600);
+  const int sleep_s = next_s - day_s - static_cast<int>(kSyncWindowLeadS);
+  if (sleep_s <= 0) {
+    // We're within the lead-up window — poll normally.
+    return pdMS_TO_TICKS(kTaskPollDelayMs);
+  }
+  // Cap at 6 hours to tolerate NTP drift / DST changes gracefully.
+  const uint32_t capped_s = static_cast<uint32_t>(std::min(sleep_s, 6 * 3600));
+  return pdMS_TO_TICKS(capped_s * 1000U);
+}
+
 void weather_sync_task(void* /*arg*/) {
   while (true) {
     bool should_sync  = false;
@@ -687,7 +727,7 @@ void weather_sync_task(void* /*arg*/) {
     }
 
     if (!should_sync) {
-      vTaskDelay(pdMS_TO_TICKS(kTaskPollDelayMs));
+      vTaskDelay(smart_sleep_ticks());
       continue;
     }
 

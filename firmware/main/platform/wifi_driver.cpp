@@ -140,6 +140,9 @@ bool wifi_connect(const char* ssid, const char* password,
 
   if (bits & kConnectedBit) {
     ESP_LOGI(kTag, "WiFi connected successfully");
+    // Enable modem sleep: the radio can doze between DTIM beacon intervals
+    // while keeping the association, cutting idle WiFi current significantly.
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
     return true;
   }
 
