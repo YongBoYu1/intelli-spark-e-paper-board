@@ -648,18 +648,25 @@ std::int64_t current_auto_sync_slot_id() {
 
 void weather_sync_task(void* /*arg*/) {
   while (true) {
-    bool should_sync = false;
+    bool should_sync  = false;
     bool is_auto_sync = false;
+    std::int64_t auto_slot_id = -1;  // kept for post-sync slot recording
     std::string timezone_name{};
     std::string location_hint{};
 
     if (lock_provider(pdMS_TO_TICKS(100))) {
       const std::uint64_t now_ms = monotonic_ms();
       const std::int64_t slot_id = current_auto_sync_slot_id();
-      const bool initial_sync = !g_state.has_success && g_state.last_attempt_ms == 0;
+
+      // Retry initial sync on every poll until the first success — the old
+      // `last_attempt_ms == 0` guard was preventing retries after the first
+      // failed boot attempt.
+      const bool initial_sync = !g_state.has_success;
+
       is_auto_sync = slot_id >= 0 && slot_id != g_state.last_auto_sync_slot_id;
-      should_sync = g_state.bootstrapped &&
-                    (g_state.force_sync || initial_sync || is_auto_sync);
+      should_sync  = g_state.bootstrapped &&
+                     (g_state.force_sync || initial_sync || is_auto_sync);
+
       if (should_sync) {
         timezone_name = g_state.timezone_name;
         location_hint = g_state.location_hint;
@@ -669,7 +676,11 @@ void weather_sync_task(void* /*arg*/) {
           g_state.force_sync = false;
           is_auto_sync = false;
         } else if (is_auto_sync) {
-          g_state.last_auto_sync_slot_id = slot_id;
+          // Save slot_id but do NOT record it as consumed yet.
+          // We only mark the slot done after a successful fetch so that
+          // a transient WiFi outage during the 00:xx / 12:xx window
+          // does not silently skip the whole scheduled update.
+          auto_slot_id = slot_id;
         }
       }
       unlock_provider();
@@ -684,24 +695,37 @@ void weather_sync_task(void* /*arg*/) {
 
     if (lock_provider()) {
       if (!result.ok && g_state.has_success) {
-        result.location = g_state.latest.location;
-        result.condition = g_state.latest.condition;
-        result.icon = g_state.latest.icon;
-        result.temperature_c = g_state.latest.temperature_c;
-        result.humidity_percent = g_state.latest.humidity_percent;
-        result.feels_like_c = g_state.latest.feels_like_c;
-        result.hi_c = g_state.latest.hi_c;
-        result.lo_c = g_state.latest.lo_c;
-        result.wind_kmh = g_state.latest.wind_kmh;
-        result.uv_index = g_state.latest.uv_index;
-        result.forecast_days = g_state.latest.forecast_days;
+        // Carry forward the last good reading so the UI stays populated.
+        result.location              = g_state.latest.location;
+        result.condition             = g_state.latest.condition;
+        result.icon                  = g_state.latest.icon;
+        result.temperature_c         = g_state.latest.temperature_c;
+        result.humidity_percent      = g_state.latest.humidity_percent;
+        result.feels_like_c          = g_state.latest.feels_like_c;
+        result.hi_c                  = g_state.latest.hi_c;
+        result.lo_c                  = g_state.latest.lo_c;
+        result.wind_kmh              = g_state.latest.wind_kmh;
+        result.uv_index              = g_state.latest.uv_index;
+        result.forecast_days         = g_state.latest.forecast_days;
         result.observed_unix_seconds = g_state.latest.observed_unix_seconds;
       }
       if (result.ok) {
-        g_state.has_success = true;
-        g_state.last_success_ms = monotonic_ms();
+        g_state.has_success      = true;
+        g_state.last_success_ms  = monotonic_ms();
+        // Cache the resolved city so future syncs can use it as a geocoding
+        // fallback when IP-geolocation is unavailable (e.g. WiFi still
+        // connects but ip-api.com is slow, or the location_hint was empty).
+        if (!result.location.empty()) {
+          g_state.location_hint = result.location;
+        }
+        // Mark the scheduled slot as consumed only on success.
+        // Failed attempts leave the slot open so the task retries every
+        // kTaskPollDelayMs until WiFi recovers within the same hour window.
+        if (auto_slot_id >= 0) {
+          g_state.last_auto_sync_slot_id = auto_slot_id;
+        }
       }
-      g_state.latest = result;
+      g_state.latest         = result;
       g_state.sample_pending = true;
       g_state.sync_in_progress = false;
       unlock_provider();
