@@ -29,6 +29,9 @@ constexpr uint32_t kTaskPollDelayMs = 5000U;
 // How many seconds before 00:00 / 12:00 to wake up and start polling.
 constexpr uint32_t kSyncWindowLeadS = 30U;
 constexpr uint32_t kHttpTimeoutMs = 8000U;
+// Fallback: if wall clock is unavailable (NTP failed), sync every 12 h by
+// elapsed monotonic time so scheduled updates still happen.
+constexpr uint64_t kElapsedSyncIntervalMs = 12ULL * 60 * 60 * 1000;
 
 struct HttpResult {
   bool ok{false};
@@ -657,9 +660,21 @@ std::int64_t current_auto_sync_slot_id() {
 //   pointless 5-second wakeups every day.
 // Inside a sync window (h==0 or h==12):  return kTaskPollDelayMs so the task
 //   keeps retrying quickly until the fetch succeeds.
-// No valid wall time:  return kTaskPollDelayMs (safe fallback).
+// No valid wall time:  sleep up to kElapsedSyncIntervalMs from last success
+//   so the elapsed-time fallback fires on schedule without busy-spinning.
 static TickType_t smart_sleep_ticks() {
   if (!wall_time_is_valid()) {
+    // Wall clock unavailable (NTP failed).  Sleep until the elapsed-sync
+    // interval would fire, capped at 6 h so we don't miss it by much.
+    if (g_state.has_success && g_state.last_success_ms > 0) {
+      const uint64_t elapsed_ms = monotonic_ms() - g_state.last_success_ms;
+      if (elapsed_ms < kElapsedSyncIntervalMs) {
+        const uint64_t remain_ms = kElapsedSyncIntervalMs - elapsed_ms;
+        const uint32_t capped_ms = static_cast<uint32_t>(
+            std::min(remain_ms, static_cast<uint64_t>(6ULL * 3600 * 1000)));
+        return pdMS_TO_TICKS(capped_ms);
+      }
+    }
     return pdMS_TO_TICKS(kTaskPollDelayMs);
   }
   const std::time_t now = wall_time_seconds();
@@ -704,8 +719,16 @@ void weather_sync_task(void* /*arg*/) {
       const bool initial_sync = !g_state.has_success;
 
       is_auto_sync = slot_id >= 0 && slot_id != g_state.last_auto_sync_slot_id;
+
+      // Fallback: if NTP never synced (wall_time_is_valid() == false), the
+      // slot_id is always -1 and is_auto_sync is always false.  Use elapsed
+      // monotonic time so the 12-hourly update still fires even without a
+      // valid wall clock.
+      const bool elapsed_sync = g_state.has_success &&
+          (now_ms - g_state.last_success_ms >= kElapsedSyncIntervalMs);
+
       should_sync  = g_state.bootstrapped &&
-                     (g_state.force_sync || initial_sync || is_auto_sync);
+                     (g_state.force_sync || initial_sync || is_auto_sync || elapsed_sync);
 
       if (should_sync) {
         timezone_name = g_state.timezone_name;
