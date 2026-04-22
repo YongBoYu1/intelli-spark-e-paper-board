@@ -87,22 +87,22 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   }
 
   // ── Step: WiFi select (sub_step 0) ────────────────────────────────────
+  // Layout (800×480): header y=0-86 | title y=98 | list y=126-420 | footer y=432-460
   if (step_key == "pair_qr" && state.onboarding.wifi_sub_step == 0) {
-    draw_text_line(image, 40, 118, "SELECT WI-FI NETWORK", 3, 20);
+    draw_text_line(image, 40, 98, "SELECT WI-FI NETWORK", 2, 20);
 
     const auto& nets = state.onboarding.wifi_networks;
     const int list_x0 = 40;
     const int list_x1 = 760;
-    const int list_top = 160;
+    const int list_top = 126;  // below title
     const int row_h    = 54;
-    const int row_gap  = 6;
+    const int row_gap  = 6;    // row step = 60; 5 rows end at y=126+4*60+54=420
     constexpr int kVisible = 5;
 
     if (nets.empty()) {
-      // No scan results yet (still scanning or no networks found).
-      draw_text_line(image, list_x0, list_top + 60, status, 1, 54);
-      // RESCAN button.
-      const int bx0 = 280, by0 = 310, bx1 = 520, by1 = 358;
+      // No networks yet — show status and RESCAN button.
+      draw_text_line(image, list_x0, list_top + 40, status, 1, 54);
+      const int bx0 = 280, by0 = 300, bx1 = 520, by1 = 348;
       fill_black_rect(image, bx0, by0, bx1, by1);
       draw_outline_rect(image, bx0 - 3, by0 - 3, bx1 + 3, by1 + 3, 3);
       draw_text_centered_inverted(image, bx0 + 8, bx1 - 8, by0 + 14, "PRESS TO RESCAN", 1, 20);
@@ -115,15 +115,15 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
         const int idx = scroll + i;
         const int y0  = list_top + i * (row_h + row_gap);
         const int y1  = y0 + row_h;
-        const bool focused = (idx == focus);
+        const bool foc = (idx == focus);
 
-        // Signal bars: 4 levels based on RSSI.
+        // Signal strength: 4 bar levels from RSSI.
         const int rssi = nets[static_cast<std::size_t>(idx)].rssi;
         const int bars = rssi >= -55 ? 4 : rssi >= -67 ? 3 : rssi >= -79 ? 2 : 1;
         const std::string bar_str = std::string(static_cast<std::size_t>(bars), '*') +
                                     std::string(static_cast<std::size_t>(4 - bars), '-');
 
-        if (focused) {
+        if (foc) {
           fill_black_rect(image, list_x0, y0, list_x1, y1);
           draw_outline_rect(image, list_x0 - 3, y0 - 3, list_x1 + 3, y1 + 3, 3);
           draw_text_line_inverted(image, list_x0 + 16, y0 + 16,
@@ -136,38 +136,41 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
           draw_text_line(image, list_x1 - 80, y0 + 16, bar_str, 1, 14);
         }
       }
-      // Scroll indicator.
+      // Scroll counter (bottom-left, below list rows).
       if (total > kVisible) {
         const std::string ind = std::to_string(focus + 1) + "/" + std::to_string(total);
-        draw_text_line(image, list_x1 - 60, list_top + kVisible * (row_h + row_gap) + 4,
-                       ind, 1, 14);
+        draw_text_line(image, list_x0, 430, ind, 1, 14);
       }
     }
 
-    // SKIP button (bottom-right).
-    const int sx0 = 620, sy0 = 420, sx1 = 760, sy1 = 460;
+    // Bottom: hint (left) + SKIP button (right) — safely below list at y=432.
+    draw_text_line(image, 40, 440, "ROTATE TO SCROLL  -  PRESS TO SELECT", 1, 54);
+    const int sx0 = 622, sy0 = 430, sx1 = 760, sy1 = 458;
     draw_outline_rect(image, sx0, sy0, sx1, sy1, 2);
-    draw_text_centered(image, sx0 + 8, sx1 - 8, sy0 + 14, "SKIP", 1, 18);
-    draw_text_line(image, 40, 434, "ROTATE TO SCROLL  -  PRESS TO SELECT", 1, 54);
+    draw_text_centered(image, sx0 + 8, sx1 - 8, sy0 + 10, "SKIP", 1, 18);
     return image;
   }
 
   // ── Step: Password entry / QWERTY keyboard (sub_step 1) ──────────────
+  // Layout (800×480): global header y=0-86 | ssid+pwd y=98-156 | kbd y=162-456
+  // Row step = kh(54)+gap(6) = 60.  5 rows: 162,222,282,342,402 → last ends 456.
   if (step_key == "pair_qr" && state.onboarding.wifi_sub_step == 1) {
-    // ── Header ──────────────────────────────────────────────────────────
-    draw_text_line(image, 40, 20,
-                   "NETWORK: " + state.onboarding.wifi_ssid, 1, 44);
+    // ── SSID + password display (below global header) ────────────────────
+    draw_text_line(image, 40, 98, "NETWORK: " + state.onboarding.wifi_ssid, 1, 44);
     const std::string pwd_display = state.onboarding.wifi_password + "_";
-    draw_outline_rect(image, 40, 38, 760, 92, 2);
-    draw_text_line(image, 56, 54, pwd_display, 2, 20);
+    draw_outline_rect(image, 40, 114, 760, 154, 2);
+    draw_text_line(image, 56, 126, pwd_display, 2, 20);
 
     if (!state.onboarding.wifi_connect_error.empty()) {
-      draw_text_line(image, 40, 96, state.onboarding.wifi_connect_error, 1, 44);
+      draw_text_line(image, 40, 158, state.onboarding.wifi_connect_error, 1, 44);
     }
 
-    // ── Keyboard layout ──────────────────────────────────────────────────
-    // row0(10) + row1(10) + row2(9) + row3(7) + row4(8) = 44 keys
-    // Key size: 64×54px, gap: 8px horizontal, 6px vertical (kh+vg=60 per row)
+    // ── QWERTY keyboard ───────────────────────────────────────────────────
+    // row0(10)+row1(10)+row2(9)+row3(7)+row4(8) = 44 keys, kw=64 kh=54 hg=8
+    // Row widths: r0/r1=10*64+9*8=712 x_start=44
+    //             r2  = 9*64+8*8=640 x_start=80
+    //             r3  = 7*64+6*8=496 x_start=152
+    //             r4  = SFT(80)+6*64+SPC(120)+7*8=640 x_start=80
     const int kw = 64, kh = 54, hg = 8;
     const int focus = static_cast<int>(state.onboarding.kbd_focus);
     const bool shift = state.onboarding.kbd_shift;
@@ -178,30 +181,23 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
     static constexpr const char* kRow2  = "asdfghjkl";
     static constexpr const char* kRow3  = "zxcvbnm";
 
-    // Row y positions (keyboard starts at y=108)
-    const int ry[5] = {108, 108+60, 108+120, 108+180, 108+240};
+    // Keyboard top at y=162, row step=60.
+    const int ry[5] = {162, 222, 282, 342, 402};
+    const int rx[5] = {44, 44, 80, 152, 80};
 
-    // Row x start positions (centred on 800px panel)
-    // Rows 0,1: 10 keys → total=10*64+9*8=712 → x_start=44
-    // Row 2:    9 keys  → total=9*64+8*8=640  → x_start=80
-    // Row 3:    7 keys  → total=7*64+6*8=496  → x_start=152
-    // Row 4:    8 keys  → total=8*64+7*8=568  → x_start=116
-    const int rx[5] = {44, 44, 80, 152, 116};
-
-    // Helper lambda: draw one key
-    auto draw_key = [&](int x0, int y0, int w, const std::string& lbl, bool focused) {
+    auto draw_key = [&](int x0, int y0, int w, const std::string& lbl, bool foc) {
       const int x1 = x0 + w, y1 = y0 + kh;
-      if (focused) {
+      if (foc) {
         fill_black_rect(image, x0, y0, x1, y1);
         draw_outline_rect(image, x0 - 2, y0 - 2, x1 + 2, y1 + 2, 3);
-        draw_text_centered_inverted(image, x0 + 2, x1 - 2, y0 + 16, lbl, 2, 18);
+        draw_text_centered_inverted(image, x0 + 2, x1 - 2, y0 + 18, lbl, 2, 18);
       } else {
         draw_outline_rect(image, x0, y0, x1, y1, 1);
-        draw_text_centered(image, x0 + 2, x1 - 2, y0 + 16, lbl, 2, 18);
+        draw_text_centered(image, x0 + 2, x1 - 2, y0 + 18, lbl, 2, 18);
       }
     };
 
-    // Row 0: digits / symbols
+    // Row 0: digits (normal) / symbols (shift)
     for (int c = 0; c < 10; ++c) {
       const std::string lbl(1, shift ? kRow0S[c] : kRow0N[c]);
       draw_key(rx[0] + c * (kw + hg), ry[0], kw, lbl, focus == c);
@@ -224,26 +220,19 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
       const std::string lbl(1, shift ? static_cast<char>(base - 32) : base);
       draw_key(rx[3] + c * (kw + hg), ry[3], kw, lbl, focus == 29 + c);
     }
-    // Row 4: SHIFT - _ . @ SPACE DEL OK
+    // Row 4: SFT(80) - _ . @ SPACE(120) DEL OK — total 640px centred at rx[4]=80
     {
-      const int y4 = ry[4];
-      const int x4 = rx[4];
-      // SHIFT (idx 36, width 80)
-      draw_key(x4,           y4, 80, shift ? "SFT*" : "SFT", focus == 36);
-      // - _ . @ (idx 37-40, width 64 each)
-      draw_key(x4 + 88,      y4, kw, "-",     focus == 37);
-      draw_key(x4 + 88 + 72, y4, kw, "_",     focus == 38);
-      draw_key(x4 + 88 + 144,y4, kw, ".",     focus == 39);
-      draw_key(x4 + 88 + 216,y4, kw, "@",     focus == 40);
-      // SPACE (idx 41, width 120)
-      draw_key(x4 + 88 + 288,y4, 120, "SPACE", focus == 41);
-      // DEL (idx 42, width 64)
-      draw_key(x4 + 88 + 416,y4, kw,  "DEL",  focus == 42);
-      // OK  (idx 43, width 64)
-      draw_key(x4 + 88 + 488,y4, kw,  "OK",   focus == 43);
+      const int y4 = ry[4], x4 = rx[4];
+      draw_key(x4,             y4, 80,  shift ? "SFT*" : "SFT", focus == 36);
+      draw_key(x4 + 88,        y4, kw,  "-",     focus == 37);
+      draw_key(x4 + 88 + 72,   y4, kw,  "_",     focus == 38);
+      draw_key(x4 + 88 + 144,  y4, kw,  ".",     focus == 39);
+      draw_key(x4 + 88 + 216,  y4, kw,  "@",     focus == 40);
+      draw_key(x4 + 88 + 288,  y4, 120, "SPACE", focus == 41);
+      draw_key(x4 + 88 + 416,  y4, kw,  "DEL",  focus == 42);
+      draw_key(x4 + 88 + 488,  y4, kw,  "OK",   focus == 43);
     }
-
-    draw_text_line(image, 40, 434, "ROTATE TO MOVE  -  PRESS TO TYPE  -  B = BACK", 1, 54);
+    // (no bottom hint — keyboard row 4 ends at y=456, border at y=468)
     return image;
   }
 
