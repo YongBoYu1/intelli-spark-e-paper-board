@@ -285,33 +285,54 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   }
 
   // ── Step: Voice Guide ──────────────────────────────────────────────────
+  // Layout: global header y=0-86 | content y=98-460
   if (step_key == "voice_guide") {
-    draw_text_line(image, 40, 40, "VOICE SETUP", 3, 24);
-    draw_outline_rect(image, 40, 84, 240, 196, 2);
-    draw_text_centered(image, 56, 224, 120, "MIC", 4, 8);
-    draw_text_centered(image, 56, 224, 164, "HOLD VOICE KEY", 1, 20);
+    const bool recording = state.onboarding.voice_recording;
+    const bool has_result = !state.onboarding.voice_last_result.empty();
 
-    draw_text_line(image, 270, 96, "SPEAK", 1, 12);
-    draw_text_wrapped(image, 270, 128, 470, "ADD MILK TO INVENTORY", 3, 2);
-    fill_black_rect(image, 40, 206, 760, 208);
-    draw_outline_rect(image, 40, 228, 760, 330, 2);
-    draw_text_line(image, 58, 244, "RESULT", 1, 12);
-    draw_text_line(image, 58, 280, "NO RESULT YET.", 2, 40);
-    draw_text_wrapped(image, 40, 350, 720, status, 1, 2);
-
-    const bool focused = true;  // voice_guide only has one focus element
-    const int btn_x0 = 220;
-    const int btn_x1 = 580;
-    const int btn_y0 = 398;
-    const int btn_y1 = 438;
-    if (focused) {
-      fill_black_rect(image, btn_x0, btn_y0, btn_x1, btn_y1);
-      draw_outline_rect(image, btn_x0 - 3, btn_y0 - 3, btn_x1 + 3, btn_y1 + 3, 3);
-      draw_text_centered_inverted(image, btn_x0 + 8, btn_x1 - 8, btn_y0 + 12, "SKIP", 1, 16);
+    // ── Recording state indicator (big tap target) ──────────────────────
+    const int ind_x0 = 40, ind_x1 = 760;
+    const int ind_y0 = 98, ind_y1 = 158;
+    if (recording) {
+      fill_black_rect(image, ind_x0, ind_y0, ind_x1, ind_y1);
+      draw_outline_rect(image, ind_x0 - 3, ind_y0 - 3, ind_x1 + 3, ind_y1 + 3, 3);
+      draw_text_centered_inverted(image, ind_x0 + 16, ind_x1 - 16,
+                                  ind_y0 + 20, "* RECORDING... SPEAK NOW *", 2, 24);
     } else {
-      draw_outline_rect(image, btn_x0, btn_y0, btn_x1, btn_y1, 2);
-      draw_text_centered(image, btn_x0 + 8, btn_x1 - 8, btn_y0 + 12, "SKIP", 1, 16);
+      draw_outline_rect(image, ind_x0, ind_y0, ind_x1, ind_y1, 2);
+      draw_text_centered(image, ind_x0 + 16, ind_x1 - 16,
+                         ind_y0 + 20, "HOLD VOICE KEY TO RECORD", 2, 24);
     }
+
+    // ── Example commands ────────────────────────────────────────────────
+    draw_text_line(image, 40, 172, "EXAMPLE COMMANDS:", 1, 38);
+    draw_text_line(image, 60, 192, "* Add milk to the shopping list", 1, 38);
+    draw_text_line(image, 60, 210, "* Set a 5-minute timer", 1, 38);
+    draw_text_line(image, 60, 228, "* Show the calendar", 1, 38);
+
+    // ── Result area ──────────────────────────────────────────────────────
+    fill_black_rect(image, 40, 248, 760, 250);   // divider
+    draw_text_line(image, 40, 260, "RESULT:", 1, 38);
+    draw_outline_rect(image, 40, 278, 760, 390, 2);
+
+    if (!has_result && !recording) {
+      // Idle state — no test done yet.
+      draw_text_line(image, 56, 310, "No result yet.", 2, 32);
+      draw_text_line(image, 56, 344, "Hold the voice key above to test.", 1, 38);
+    } else if (recording) {
+      draw_text_line(image, 56, 318, "Listening...", 2, 32);
+    } else {
+      // Show last result from backend.
+      draw_text_wrapped(image, 56, 296, 688, state.onboarding.voice_last_result, 2, 32);
+    }
+
+    // ── Skip / Done button ───────────────────────────────────────────────
+    draw_text_line(image, 40, 416, "Press to skip voice test and open Home.", 1, 38);
+    const int btn_x0 = 544, btn_y0 = 406, btn_x1 = 760, btn_y1 = 446;
+    fill_black_rect(image, btn_x0, btn_y0, btn_x1, btn_y1);
+    draw_outline_rect(image, btn_x0 - 3, btn_y0 - 3, btn_x1 + 3, btn_y1 + 3, 3);
+    draw_text_centered_inverted(image, btn_x0 + 8, btn_x1 - 8, btn_y0 + 14,
+                                 has_result ? "DONE >" : "SKIP >", 2, 22);
     return image;
   }
 

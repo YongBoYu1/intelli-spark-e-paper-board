@@ -1654,6 +1654,18 @@ void handle_long_press(AppState& state, const Event& event) {
   if (event.now_ms > 0) {
     state.home.last_interaction_ms = event.now_ms;
   }
+
+  // Onboarding voice guide: long-press starts the voice test recording.
+  // main.cpp also calls trigger_voice_recording() for the actual capture.
+  if (state.screen == Screen::Onboarding && state.onboarding.step_index == 3) {
+    if (!state.onboarding.voice_recording) {
+      state.onboarding.voice_recording = true;
+      state.onboarding.voice_last_result.clear();
+      state.onboarding.status = "Recording...";
+    }
+    return;
+  }
+
   // Python parity:
   // - HOME long press toggles the menu overlay.
   // - Non-HOME long press returns to HOME.
@@ -2313,6 +2325,29 @@ void apply_voice_actions(AppState& state,
     g_done_stack.push_back(std::move(before_snap));
     g_redo_stack.clear();  // New action invalidates redo history.
     ESP_LOGI(kTag, "[voice] snapshot saved (done=%zu)", g_done_stack.size());
+  }
+
+  // If we're on the onboarding voice guide step, update the UI status/result.
+  if (state.screen == Screen::Onboarding && state.onboarding.step_index == 3) {
+    state.onboarding.voice_recording = false;
+    if (actions.empty()) {
+      state.onboarding.status = "No command detected — try again.";
+      state.onboarding.voice_last_result.clear();
+    } else {
+      // Build a human-readable summary from tool names.
+      std::string summary;
+      for (const auto& a : actions) {
+        if (!summary.empty()) summary += "  +  ";
+        // Convert "shopping_add_item" → "SHOPPING ADD ITEM" for readability.
+        std::string label = a.tool;
+        for (char& c : label) {
+          c = (c == '_') ? ' ' : static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        summary += label;
+      }
+      state.onboarding.voice_last_result = summary;
+      state.onboarding.status = "Done: " + summary;
+    }
   }
 }
 

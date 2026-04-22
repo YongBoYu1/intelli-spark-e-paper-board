@@ -199,6 +199,10 @@ struct OnboardingState {
   std::string timezone{"America/Toronto"};
   bool auto_sync_enabled{true};
   std::string status{};
+
+  // ── Step 3: Voice guide ────────────────────────────────────────────────
+  bool voice_recording{false};   // true while mic_record_task is running
+  std::string voice_last_result{};  // summary from last voice response
 };
 
 // Total on-screen keyboard keys: row0(10)+row1(10)+row2(9)+row3(7)+row4(8)=44
