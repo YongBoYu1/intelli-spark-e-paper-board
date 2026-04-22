@@ -20,7 +20,7 @@ namespace {
 constexpr const char* kTag = "reducer";
 
 constexpr int kMenuItemCount = 5;
-constexpr int kSettingsItemCount = 8;
+constexpr int kSettingsItemCount = 9;
 constexpr int kHomeInventoryVisibleLandscapeMax = 3;
 constexpr int kHomeInventoryVisiblePortraitMax = 4;
 constexpr int kHomeReminderVisiblePortraitMax = 4;
@@ -54,7 +54,8 @@ enum class SettingsItem {
   Connectivity = 4,
   AutoSync = 5,
   SyncNow = 6,
-  ResetAndWipe = 7,
+  ChangeWifi = 7,
+  ResetAndWipe = 8,
 };
 
 enum class HomeFocusTargetKind {
@@ -388,6 +389,11 @@ void handle_settings_click(AppState& state, const Event& event) {
         set_settings_notice(state, "SYNC UNAVAILABLE", event.now_ms);
         ESP_LOGW(kTag, "[settings] sync_now=unavailable");
       }
+      return;
+    case SettingsItem::ChangeWifi:
+      enter_onboarding_wifi_select(state);
+      state.onboarding.wifi_from_settings = true;
+      ESP_LOGI(kTag, "[settings] change_wifi=entering wifi select");
       return;
     case SettingsItem::ResetAndWipe:
       set_settings_notice(state, "NOT IMPLEMENTED", event.now_ms);
@@ -1333,7 +1339,17 @@ void handle_click(AppState& state, const Event& event) {
               15000);
           state.onboarding.wifi_connecting = false;
           if (ok) {
-            enter_onboarding_prefs(state, /*wifi_connected=*/true);
+            if (state.onboarding.wifi_from_settings) {
+              // Return to Settings with a confirmation notice.
+              state.screen = Screen::Settings;
+              state.onboarding.wifi_from_settings = false;
+              set_settings_notice(state,
+                  "WI-FI: " + state.onboarding.wifi_ssid, event.now_ms);
+              ESP_LOGI(kTag, "[settings] wifi updated to \"%s\"",
+                       state.onboarding.wifi_ssid.c_str());
+            } else {
+              enter_onboarding_prefs(state, /*wifi_connected=*/true);
+            }
           } else {
             state.onboarding.wifi_connect_error =
                 "Connection failed. Check password and try again.";
@@ -1717,6 +1733,10 @@ void handle_back(AppState& state, const Event& event) {
       state.onboarding.wifi_connect_error.clear();
       state.onboarding.kbd_focus = 0;
       state.onboarding.kbd_shift = false;
+    } else if (state.onboarding.wifi_from_settings) {
+      // Launched from Settings → return there instead of going to step 0.
+      state.screen = Screen::Settings;
+      state.onboarding.wifi_from_settings = false;
     } else if (state.onboarding.step_index > 0) {
       state.onboarding.step_index -= 1;
       state.onboarding.wifi_sub_step = 0;

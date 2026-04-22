@@ -115,10 +115,11 @@ enum class SettingsItem {
   Connectivity = 4,
   AutoSync = 5,
   SyncNow = 6,
-  ResetAndWipe = 7,
+  ChangeWifi = 7,
+  ResetAndWipe = 8,
 };
 
-constexpr std::array<SettingsItem, 8> kSettingsOrder = {
+constexpr std::array<SettingsItem, 9> kSettingsOrder = {
     SettingsItem::FontSize,
     SettingsItem::PartialRefresh,
     SettingsItem::FullRefresh,
@@ -126,6 +127,7 @@ constexpr std::array<SettingsItem, 8> kSettingsOrder = {
     SettingsItem::Connectivity,
     SettingsItem::AutoSync,
     SettingsItem::SyncNow,
+    SettingsItem::ChangeWifi,
     SettingsItem::ResetAndWipe,
 };
 
@@ -155,6 +157,7 @@ std::string setting_label(const SettingsItem item) {
     case SettingsItem::Connectivity:   return "WIFI + BT";
     case SettingsItem::AutoSync:       return "AUTO SYNC";
     case SettingsItem::SyncNow:        return "SYNC NOW";
+    case SettingsItem::ChangeWifi:     return "CHANGE WI-FI";
     case SettingsItem::ResetAndWipe:   return "RESET / WEB DATA";
   }
   return {};
@@ -179,6 +182,8 @@ std::string setting_value(const app::AppState& state, const SettingsItem item) {
              " / BT " + bool_text(state.settings.bluetooth_enabled);
     case SettingsItem::AutoSync:     return bool_text(state.settings.auto_sync_enabled);
     case SettingsItem::SyncNow:      return "PRESS ENTER";
+    case SettingsItem::ChangeWifi:
+      return state.onboarding.wifi_ssid.empty() ? "NOT SET" : state.onboarding.wifi_ssid;
     case SettingsItem::ResetAndWipe: return "PLACEHOLDER";
   }
   return {};
@@ -248,9 +253,10 @@ std::vector<uint8_t> render_settings_landscape_bitmap(const app::AppState& state
   const int min_group_h = 14;
 
   // Matches Python's dynamic shrink loop.
+  // Groups: DISPLAY(5) + SYNC(3: AutoSync,SyncNow,ChangeWifi) + OTHER(1)
   auto content_h = [&]() -> int {
     return group_h + (5 * row_h) + (4 * row_gap) + group_gap +
-           group_h + (2 * row_h) + row_gap       + group_gap +
+           group_h + (3 * row_h) + (2 * row_gap) + group_gap +
            group_h + row_h;
   };
   const int avail = content_bottom - content_top;
@@ -311,8 +317,8 @@ std::vector<uint8_t> render_settings_landscape_bitmap(const app::AppState& state
   };
 
   draw_group("DISPLAY", 0, 5);
-  draw_group("SYNC",    5, 2);
-  draw_group("OTHER",   7, 1);
+  draw_group("SYNC",    5, 3);  // AutoSync, SyncNow, ChangeWifi
+  draw_group("OTHER",   8, 1);  // ResetAndWipe
 
   // ── Footer ─────────────────────────────────────────────────────────────────
   fill_black_rect(image, left, footer_top - 1, right, footer_top);

@@ -214,6 +214,7 @@ AppState make_state_from_defaults(
   state.onboarding.status            = "";
   state.onboarding.voice_recording   = false;
   state.onboarding.voice_last_result = "";
+  state.onboarding.wifi_from_settings = false;
   state.home.focused_index = 0;
   state.home.clock_minute_bucket = current_minute_bucket(&state.home.clock_is_real);
   state.home.clock_seed_monotonic_ms = now_ms;

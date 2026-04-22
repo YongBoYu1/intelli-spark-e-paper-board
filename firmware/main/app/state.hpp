@@ -203,6 +203,9 @@ struct OnboardingState {
   // ── Step 3: Voice guide ────────────────────────────────────────────────
   bool voice_recording{false};   // true while mic_record_task is running
   std::string voice_last_result{};  // summary from last voice response
+
+  // ── Settings → Change Wi-Fi ────────────────────────────────────────────
+  bool wifi_from_settings{false};  // true when wifi flow was launched from Settings
 };
 
 // Total on-screen keyboard keys: row0(10)+row1(10)+row2(9)+row3(7)+row4(8)=44
