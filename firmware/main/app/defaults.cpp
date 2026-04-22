@@ -195,15 +195,22 @@ AppState make_state_from_defaults(
   state.landing.status = state.screen == Screen::Landing
                              ? "Rotate to choose language."
                              : "Opening Home from built-in defaults.";
-  state.onboarding.step_index = 0;
+  state.onboarding.step_index        = 0;
   state.onboarding.start_focus_index = 0;
-  state.onboarding.qr_focus_index = 0;
+  state.onboarding.wifi_sub_step     = 0;
+  state.onboarding.wifi_networks.clear();
+  state.onboarding.wifi_list_focus   = 0;
+  state.onboarding.wifi_list_scroll  = 0;
+  state.onboarding.wifi_scanning     = false;
+  state.onboarding.wifi_connecting   = false;
+  state.onboarding.wifi_password     = "";
+  state.onboarding.password_char_sel = 0;
+  state.onboarding.wifi_connect_error = "";
   state.onboarding.prefs_focus_index = 0;
-  state.onboarding.pair_token = "A1B2-C3D4";
-  state.onboarding.wifi_ssid = "";
-  state.onboarding.timezone = kDefaultTimezone;
+  state.onboarding.wifi_ssid         = "";
+  state.onboarding.timezone          = kDefaultTimezone;
   state.onboarding.auto_sync_enabled = true;
-  state.onboarding.status = "";
+  state.onboarding.status            = "";
   state.home.focused_index = 0;
   state.home.clock_minute_bucket = current_minute_bucket(&state.home.clock_is_real);
   state.home.clock_seed_monotonic_ms = now_ms;

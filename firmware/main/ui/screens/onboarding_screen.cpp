@@ -1,5 +1,6 @@
 #include "ui/screens/onboarding_screen.hpp"
 
+#include "app/state.hpp"
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
 
@@ -85,44 +86,131 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
     return image;
   }
 
-  // ── Step: Pair QR ──────────────────────────────────────────────────────
-  if (step_key == "pair_qr") {
-    const int qr_focus = static_cast<int>(state.onboarding.qr_focus_index);
-    draw_text_line(image, 40, 118, "PHONE PAIRING", 3, 24);
-    draw_text_line(image, 40, 150, "SCAN QR TO CONFIGURE WI-FI", 1, 42);
+  // ── Step: WiFi select (sub_step 0) ────────────────────────────────────
+  if (step_key == "pair_qr" && state.onboarding.wifi_sub_step == 0) {
+    draw_text_line(image, 40, 118, "SELECT WI-FI NETWORK", 3, 20);
 
-    draw_outline_rect(image, 52, 192, 336, 416, 2);
-    draw_text_line(image, 96, 278, "QR", 4, 6);
+    const auto& nets = state.onboarding.wifi_networks;
+    const int list_x0 = 40;
+    const int list_x1 = 760;
+    const int list_top = 160;
+    const int row_h    = 54;
+    const int row_gap  = 6;
+    constexpr int kVisible = 5;
 
-    draw_text_line(image, 372, 202, "1) OPEN PHONE CAMERA", 1, 34);
-    draw_text_line(image, 372, 226, "2) SCAN CODE AND SUBMIT WI-FI", 1, 40);
-    draw_text_line(image, 372, 250, "3) RETURN HERE AND CONFIRM", 1, 38);
-    if (!state.onboarding.pair_token.empty()) {
-      draw_text_line(image, 372, 292,
-                     "Pair token: " + state.onboarding.pair_token, 1, 40);
-    }
-    draw_text_wrapped(image, 372, 316, 360, status, 1, 3);
+    if (nets.empty()) {
+      // No scan results yet (still scanning or no networks found).
+      draw_text_line(image, list_x0, list_top + 60, status, 1, 54);
+      // RESCAN button.
+      const int bx0 = 280, by0 = 310, bx1 = 520, by1 = 358;
+      fill_black_rect(image, bx0, by0, bx1, by1);
+      draw_outline_rect(image, bx0 - 3, by0 - 3, bx1 + 3, by1 + 3, 3);
+      draw_text_centered_inverted(image, bx0 + 8, bx1 - 8, by0 + 14, "PRESS TO RESCAN", 1, 20);
+    } else {
+      const int scroll = static_cast<int>(state.onboarding.wifi_list_scroll);
+      const int focus  = static_cast<int>(state.onboarding.wifi_list_focus);
+      const int total  = static_cast<int>(nets.size());
 
-    constexpr std::array<const char*, 3> kActions = {"REFRESH QR", "I AM DONE", "SKIP"};
-    const int bx = 372;
-    const int by = 360;
-    const int gap = 10;
-    const int bw = 114;
-    const int bh = 48;
-    for (int i = 0; i < 3; ++i) {
-      const int x0 = bx + i * (bw + gap);
-      const int x1 = x0 + bw;
-      const int y0 = by;
-      const int y1 = y0 + bh;
-      if (i == qr_focus) {
-        fill_black_rect(image, x0, y0, x1, y1);
-        draw_outline_rect(image, x0 - 3, y0 - 3, x1 + 3, y1 + 3, 3);
-        draw_text_centered_inverted(image, x0 + 6, x1 - 6, y0 + 16, kActions[i], 1, 16);
-      } else {
-        draw_outline_rect(image, x0, y0, x1, y1, 2);
-        draw_text_centered(image, x0 + 6, x1 - 6, y0 + 16, kActions[i], 1, 16);
+      for (int i = 0; i < kVisible && (scroll + i) < total; ++i) {
+        const int idx = scroll + i;
+        const int y0  = list_top + i * (row_h + row_gap);
+        const int y1  = y0 + row_h;
+        const bool focused = (idx == focus);
+
+        // Signal bars: 4 levels based on RSSI.
+        const int rssi = nets[static_cast<std::size_t>(idx)].rssi;
+        const int bars = rssi >= -55 ? 4 : rssi >= -67 ? 3 : rssi >= -79 ? 2 : 1;
+        const std::string bar_str = std::string(static_cast<std::size_t>(bars), '*') +
+                                    std::string(static_cast<std::size_t>(4 - bars), '-');
+
+        if (focused) {
+          fill_black_rect(image, list_x0, y0, list_x1, y1);
+          draw_outline_rect(image, list_x0 - 3, y0 - 3, list_x1 + 3, y1 + 3, 3);
+          draw_text_line_inverted(image, list_x0 + 16, y0 + 16,
+                                  nets[static_cast<std::size_t>(idx)].ssid, 2, 20);
+          draw_text_line_inverted(image, list_x1 - 80, y0 + 16, bar_str, 1, 14);
+        } else {
+          draw_outline_rect(image, list_x0, y0, list_x1, y1, 1);
+          draw_text_line(image, list_x0 + 16, y0 + 16,
+                         nets[static_cast<std::size_t>(idx)].ssid, 2, 20);
+          draw_text_line(image, list_x1 - 80, y0 + 16, bar_str, 1, 14);
+        }
+      }
+      // Scroll indicator.
+      if (total > kVisible) {
+        const std::string ind = std::to_string(focus + 1) + "/" + std::to_string(total);
+        draw_text_line(image, list_x1 - 60, list_top + kVisible * (row_h + row_gap) + 4,
+                       ind, 1, 14);
       }
     }
+
+    // SKIP button (bottom-right).
+    const int sx0 = 620, sy0 = 420, sx1 = 760, sy1 = 460;
+    draw_outline_rect(image, sx0, sy0, sx1, sy1, 2);
+    draw_text_centered(image, sx0 + 8, sx1 - 8, sy0 + 14, "SKIP", 1, 18);
+    draw_text_line(image, 40, 434, "ROTATE TO SCROLL  -  PRESS TO SELECT", 1, 54);
+    return image;
+  }
+
+  // ── Step: Password entry (sub_step 1) ─────────────────────────────────
+  if (step_key == "pair_qr" && state.onboarding.wifi_sub_step == 1) {
+    draw_text_line(image, 40, 118, "ENTER PASSWORD", 3, 18);
+    draw_text_line(image, 40, 152,
+                   "Network: " + state.onboarding.wifi_ssid, 1, 44);
+
+    // Current password display with cursor.
+    const std::string pwd_display = state.onboarding.wifi_password + "_";
+    draw_outline_rect(image, 40, 180, 760, 240, 2);
+    draw_text_line(image, 56, 196, pwd_display, 2, 18);
+
+    // ── Character picker ──────────────────────────────────────────────
+    // Show 7 chars centred on the selected one.
+    const int sel = static_cast<int>(state.onboarding.password_char_sel);
+    const int n   = static_cast<int>(kOnboardingPwdCharsCount);
+    const int picker_y = 270;
+    const int cell_w   = 72;
+    const int cell_h   = 64;
+    const int cells    = 9;  // number of visible cells (must be odd)
+    const int half     = cells / 2;
+    const int picker_x0 = (kPanelWidth - cells * cell_w) / 2;
+
+    for (int slot = 0; slot < cells; ++slot) {
+      const int char_idx = ((sel - half + slot) % n + n) % n;
+      const char ch      = kOnboardingPwdChars[char_idx];
+      const int cx0 = picker_x0 + slot * cell_w;
+      const int cx1 = cx0 + cell_w;
+      const bool is_center = (slot == half);
+
+      // Label for special chars.
+      std::string label;
+      if (ch == '\x08')      label = "DEL";
+      else if (ch == '\x0D') label = "OK";
+      else                   label = std::string(1, ch);
+
+      if (is_center) {
+        fill_black_rect(image, cx0, picker_y, cx1, picker_y + cell_h);
+        draw_outline_rect(image, cx0 - 3, picker_y - 3,
+                          cx1 + 3, picker_y + cell_h + 3, 3);
+        draw_text_centered_inverted(image, cx0 + 4, cx1 - 4,
+                                    picker_y + 20, label, 2, 22);
+      } else {
+        draw_outline_rect(image, cx0, picker_y, cx1, picker_y + cell_h, 1);
+        draw_text_centered(image, cx0 + 4, cx1 - 4,
+                           picker_y + 20, label, 2, 22);
+      }
+    }
+
+    // Error / status message.
+    if (!state.onboarding.wifi_connect_error.empty()) {
+      draw_text_wrapped(image, 40, 360, 720,
+                        state.onboarding.wifi_connect_error, 1, 2);
+    } else {
+      draw_text_line(image, 40, 364, status, 1, 54);
+    }
+
+    draw_text_line(image, 40, 434,
+                   "ROTATE TO CHOOSE  -  PRESS TO TYPE  -  SELECT OK TO CONNECT",
+                   1, 54);
     return image;
   }
 

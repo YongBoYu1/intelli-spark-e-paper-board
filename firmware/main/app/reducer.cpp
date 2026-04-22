@@ -3,6 +3,7 @@
 #include "platform/clock.hpp"
 #include "platform/live_data_provider.hpp"
 #include "platform/voice_client.hpp"
+#include "platform/wifi_driver.hpp"
 #include "esp_log.h"
 
 #include <algorithm>
@@ -787,10 +788,30 @@ void enter_onboarding_start(AppState& state) {
   state.onboarding.status.clear();
 }
 
-void enter_onboarding_pair_qr(AppState& state) {
+void enter_onboarding_wifi_select(AppState& state) {
   state.screen = Screen::Onboarding;
-  state.onboarding.step_index = 1;
-  state.onboarding.status = "Waiting for phone callback...";
+  state.onboarding.step_index    = 1;
+  state.onboarding.wifi_sub_step = 0;
+  state.onboarding.wifi_list_focus  = 0;
+  state.onboarding.wifi_list_scroll = 0;
+  state.onboarding.wifi_networks.clear();
+  state.onboarding.status = "Scanning for networks...";
+
+  // Scan synchronously — blocks ~2-4 s; fine for a one-time setup step.
+  const auto aps = platform::wifi_scan_networks(4000);
+  state.onboarding.wifi_scanning = false;
+  if (aps.empty()) {
+    state.onboarding.status = "No networks found. Rotate to retry or press SKIP.";
+  } else {
+    state.onboarding.wifi_networks.reserve(aps.size());
+    for (const auto& ap : aps) {
+      app::WifiScanEntry e;
+      e.ssid = ap.ssid;
+      e.rssi = ap.rssi;
+      state.onboarding.wifi_networks.push_back(std::move(e));
+    }
+    state.onboarding.status = "Rotate to select network, press to confirm.";
+  }
 }
 
 void enter_onboarding_prefs(AppState& state, const bool wifi_connected) {
@@ -914,7 +935,10 @@ void refresh_onboarding_status(AppState& state) {
   }
   if (step == 1) {
     if (state.onboarding.status.empty()) {
-      state.onboarding.status = "Waiting for phone callback...";
+      if (state.onboarding.wifi_sub_step == 0)
+        state.onboarding.status = "Rotate to select network, press to confirm.";
+      else
+        state.onboarding.status = "Rotate to select character, press to confirm.";
     }
     return;
   }
@@ -1097,8 +1121,28 @@ void handle_rotate(AppState& state, const Event& event) {
       return;
     }
     if (state.onboarding.step_index == 1) {
-      const int next = static_cast<int>(state.onboarding.qr_focus_index) + delta;
-      state.onboarding.qr_focus_index = static_cast<std::size_t>(next < 0 ? 0 : (next > 2 ? 2 : next));
+      if (state.onboarding.wifi_sub_step == 0) {
+        // Scroll through WiFi list.
+        const int n = static_cast<int>(state.onboarding.wifi_networks.size());
+        if (n > 0) {
+          const int next = static_cast<int>(state.onboarding.wifi_list_focus) + delta;
+          state.onboarding.wifi_list_focus =
+              static_cast<std::size_t>(next < 0 ? 0 : (next >= n ? n - 1 : next));
+          // Keep focused item inside the 5-row visible window.
+          constexpr int kVisible = 5;
+          const int focus = static_cast<int>(state.onboarding.wifi_list_focus);
+          const int scroll = static_cast<int>(state.onboarding.wifi_list_scroll);
+          if (focus < scroll)
+            state.onboarding.wifi_list_scroll = static_cast<std::size_t>(focus);
+          else if (focus >= scroll + kVisible)
+            state.onboarding.wifi_list_scroll = static_cast<std::size_t>(focus - kVisible + 1);
+        }
+      } else {
+        // Cycle through password character set (wraps around).
+        const int n = static_cast<int>(kOnboardingPwdCharsCount);
+        const int next = (static_cast<int>(state.onboarding.password_char_sel) + delta + n) % n;
+        state.onboarding.password_char_sel = static_cast<std::size_t>(next);
+      }
       return;
     }
     if (state.onboarding.step_index == 2) {
@@ -1213,20 +1257,57 @@ void handle_click(AppState& state, const Event& event) {
   if (state.screen == Screen::Onboarding) {
     if (state.onboarding.step_index == 0) {
       if (state.onboarding.start_focus_index == 0) {
-        enter_onboarding_pair_qr(state);
+        enter_onboarding_wifi_select(state);
       } else {
         enter_onboarding_prefs(state, false);
       }
       return;
     }
     if (state.onboarding.step_index == 1) {
-      if (state.onboarding.qr_focus_index == 0) {
-        state.onboarding.pair_token = "E5F6-G7H8";
-        state.onboarding.status = "QR refreshed.";
-      } else if (state.onboarding.qr_focus_index == 1) {
-        enter_onboarding_prefs(state, true);
+      if (state.onboarding.wifi_sub_step == 0) {
+        // ── Select SSID ──────────────────────────────────────────────────
+        if (state.onboarding.wifi_networks.empty()) {
+          // No networks — re-scan.
+          enter_onboarding_wifi_select(state);
+        } else {
+          const auto& ap =
+              state.onboarding.wifi_networks[state.onboarding.wifi_list_focus];
+          state.onboarding.wifi_ssid     = ap.ssid;
+          state.onboarding.wifi_sub_step = 1;
+          state.onboarding.wifi_password.clear();
+          state.onboarding.password_char_sel = 0;
+          state.onboarding.wifi_connect_error.clear();
+          state.onboarding.status =
+              "Rotate to select character, press to type.";
+        }
       } else {
-        enter_onboarding_prefs(state, false);
+        // ── Password entry ───────────────────────────────────────────────
+        const char ch = kOnboardingPwdChars[state.onboarding.password_char_sel];
+        if (ch == '\x08') {
+          // DEL — remove last character.
+          if (!state.onboarding.wifi_password.empty())
+            state.onboarding.wifi_password.pop_back();
+        } else if (ch == '\x0D') {
+          // OK — attempt WiFi connection with entered credentials.
+          state.onboarding.wifi_connecting = true;
+          state.onboarding.wifi_connect_error.clear();
+          state.onboarding.status = "Connecting...";
+          const bool ok = platform::wifi_connect_to(
+              state.onboarding.wifi_ssid.c_str(),
+              state.onboarding.wifi_password.c_str(),
+              15000);
+          state.onboarding.wifi_connecting = false;
+          if (ok) {
+            enter_onboarding_prefs(state, /*wifi_connected=*/true);
+          } else {
+            state.onboarding.wifi_connect_error =
+                "Connection failed. Check password and try again.";
+            state.onboarding.status = state.onboarding.wifi_connect_error;
+          }
+        } else {
+          // Append character to password.
+          state.onboarding.wifi_password += ch;
+        }
       }
       return;
     }

@@ -172,17 +172,45 @@ struct SettingsState {
   std::uint64_t notice_due_ms{0};
 };
 
+struct WifiScanEntry {
+  std::string ssid{};
+  int rssi{0};
+};
+
 struct OnboardingState {
   std::size_t step_index{0};
   std::size_t start_focus_index{0};
-  std::size_t qr_focus_index{0};
+
+  // ── Step 1: WiFi selection (sub_step 0) + password entry (sub_step 1) ──
+  std::size_t wifi_sub_step{0};
+  std::vector<WifiScanEntry> wifi_networks;
+  std::size_t wifi_list_focus{0};
+  std::size_t wifi_list_scroll{0};
+  bool wifi_scanning{false};
+  bool wifi_connecting{false};
+  std::string wifi_connect_error{};
+  std::string wifi_password{};
+  std::size_t password_char_sel{0};   // index into kOnboardingPwdChars
+
+  // ── Step 2: Preferences ────────────────────────────────────────────────
   std::size_t prefs_focus_index{0};
-  std::string pair_token{"A1B2-C3D4"};
   std::string wifi_ssid{};
   std::string timezone{"America/Toronto"};
   bool auto_sync_enabled{true};
   std::string status{};
 };
+
+// Character set for on-screen WiFi password entry.
+// Last two entries are sentinel bytes: \x08 = DEL, \x0D = OK (confirm).
+static constexpr const char kOnboardingPwdChars[] =
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "0123456789"
+    " !@#$%^&*()-_+=."
+    "\x08"   // DEL
+    "\x0D";  // OK
+static constexpr std::size_t kOnboardingPwdCharsCount =
+    sizeof(kOnboardingPwdChars) - 1;  // exclude null terminator
 
 struct AppState {
   Screen screen{Screen::Landing};
