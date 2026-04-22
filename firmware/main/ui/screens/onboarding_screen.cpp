@@ -14,8 +14,6 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   using platform::kPanelWidth;
   using platform::kPanelHeight;
   using platform::kPanelBufferSize;
-  using app::kOnboardingPwdChars;
-  using app::kOnboardingPwdCharsCount;
 
   constexpr int kStepTotal = 4;
   constexpr std::array<const char*, 4> kStepKeys = {
@@ -169,8 +167,8 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
 
     // ── Keyboard layout ──────────────────────────────────────────────────
     // row0(10) + row1(10) + row2(9) + row3(7) + row4(8) = 44 keys
-    // Key size: 64×54px, gap: 8px horizontal, 6px vertical
-    const int kw = 64, kh = 54, hg = 8, vg = 6;
+    // Key size: 64×54px, gap: 8px horizontal, 6px vertical (kh+vg=60 per row)
+    const int kw = 64, kh = 54, hg = 8;
     const int focus = static_cast<int>(state.onboarding.kbd_focus);
     const bool shift = state.onboarding.kbd_shift;
 

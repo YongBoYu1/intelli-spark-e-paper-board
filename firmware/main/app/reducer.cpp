@@ -1275,7 +1275,8 @@ void handle_click(AppState& state, const Event& event) {
           state.onboarding.wifi_ssid     = ap.ssid;
           state.onboarding.wifi_sub_step = 1;
           state.onboarding.wifi_password.clear();
-          state.onboarding.password_char_sel = 0;
+          state.onboarding.kbd_focus = 0;
+          state.onboarding.kbd_shift = false;
           state.onboarding.wifi_connect_error.clear();
           state.onboarding.status =
               "Rotate to select character, press to type.";
