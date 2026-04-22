@@ -148,6 +148,12 @@ bool wifi_connect_to(const char* ssid, const char* password,
   }
   if (!wifi_stack_init()) return false;
 
+  // Disconnect any existing association before reconfiguring.
+  // ESP-IDF rejects esp_wifi_connect() with "sta is connected" if skipped.
+  g_stop_retry = true;   // suppress the disconnect-handler retry during teardown
+  esp_wifi_disconnect();
+  vTaskDelay(pdMS_TO_TICKS(100));  // brief settle so STA_DISCONNECTED fires first
+
   // Switch out of scan-only mode so the disconnect handler retries.
   g_scan_only  = false;
   g_stop_retry = false;
