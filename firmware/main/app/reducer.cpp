@@ -1138,10 +1138,10 @@ void handle_rotate(AppState& state, const Event& event) {
             state.onboarding.wifi_list_scroll = static_cast<std::size_t>(focus - kVisible + 1);
         }
       } else {
-        // Cycle through password character set (wraps around).
-        const int n = static_cast<int>(kOnboardingPwdCharsCount);
-        const int next = (static_cast<int>(state.onboarding.password_char_sel) + delta + n) % n;
-        state.onboarding.password_char_sel = static_cast<std::size_t>(next);
+        // Move keyboard focus (wraps around all 44 keys).
+        const int n    = static_cast<int>(kOnboardingKbdKeyCount);
+        const int next = (static_cast<int>(state.onboarding.kbd_focus) + delta + n) % n;
+        state.onboarding.kbd_focus = static_cast<std::size_t>(next);
       }
       return;
     }
@@ -1281,14 +1281,48 @@ void handle_click(AppState& state, const Event& event) {
               "Rotate to select character, press to type.";
         }
       } else {
-        // ── Password entry ───────────────────────────────────────────────
-        const char ch = kOnboardingPwdChars[state.onboarding.password_char_sel];
-        if (ch == '\x08') {
-          // DEL — remove last character.
+        // ── QWERTY keyboard ──────────────────────────────────────────────
+        // Key index layout (44 total):
+        //   0-9  : row0 "1234567890" (shift: "!@#$%^&*()")
+        //   10-19: row1 "qwertyuiop" (shift: uppercase)
+        //   20-28: row2 "asdfghjkl"  (shift: uppercase)
+        //   29-35: row3 "zxcvbnm"    (shift: uppercase)
+        //   36: SHIFT  37: '-'  38: '_'  39: '.'  40: '@'
+        //   41: SPACE  42: DEL  43: OK
+        static constexpr const char* kRow0N = "1234567890";
+        static constexpr const char* kRow0S = "!@#$%^&*()";
+        static constexpr const char* kRow1  = "qwertyuiop";
+        static constexpr const char* kRow2  = "asdfghjkl";
+        static constexpr const char* kRow3  = "zxcvbnm";
+
+        const std::size_t k = state.onboarding.kbd_focus;
+        const bool shift    = state.onboarding.kbd_shift;
+
+        char typed = '\0';
+        if (k < 10) {
+          typed = shift ? kRow0S[k] : kRow0N[k];
+        } else if (k < 20) {
+          const char base = kRow1[k - 10];
+          typed = shift ? static_cast<char>(base - 32) : base;
+        } else if (k < 29) {
+          const char base = kRow2[k - 20];
+          typed = shift ? static_cast<char>(base - 32) : base;
+        } else if (k < 36) {
+          const char base = kRow3[k - 29];
+          typed = shift ? static_cast<char>(base - 32) : base;
+        } else if (k == 36) {
+          state.onboarding.kbd_shift = !shift;  // toggle SHIFT
+        } else if (k == 37) { typed = '-';
+        } else if (k == 38) { typed = '_';
+        } else if (k == 39) { typed = '.';
+        } else if (k == 40) { typed = '@';
+        } else if (k == 41) { typed = ' ';
+        } else if (k == 42) {
+          // DEL
           if (!state.onboarding.wifi_password.empty())
             state.onboarding.wifi_password.pop_back();
-        } else if (ch == '\x0D') {
-          // OK — attempt WiFi connection with entered credentials.
+        } else if (k == 43) {
+          // OK — attempt connection
           state.onboarding.wifi_connecting = true;
           state.onboarding.wifi_connect_error.clear();
           state.onboarding.status = "Connecting...";
@@ -1304,9 +1338,13 @@ void handle_click(AppState& state, const Event& event) {
                 "Connection failed. Check password and try again.";
             state.onboarding.status = state.onboarding.wifi_connect_error;
           }
-        } else {
-          // Append character to password.
-          state.onboarding.wifi_password += ch;
+        }
+
+        // Append typed character and auto-clear shift after a letter.
+        if (typed != '\0') {
+          state.onboarding.wifi_password += typed;
+          if (shift && k >= 10 && k <= 35)
+            state.onboarding.kbd_shift = false;  // auto-release shift after letter
         }
       }
       return;
@@ -1654,6 +1692,23 @@ void handle_back(AppState& state, const Event& event) {
       return;
     }
     state.home.menu_overlay_active = true;
+    return;
+  }
+
+  // Onboarding: back navigates within the wizard, never exits to Home.
+  if (state.screen == Screen::Onboarding) {
+    if (state.onboarding.step_index == 1 && state.onboarding.wifi_sub_step == 1) {
+      // Password entry → back to WiFi list.
+      state.onboarding.wifi_sub_step = 0;
+      state.onboarding.wifi_password.clear();
+      state.onboarding.wifi_connect_error.clear();
+      state.onboarding.kbd_focus = 0;
+      state.onboarding.kbd_shift = false;
+    } else if (state.onboarding.step_index > 0) {
+      state.onboarding.step_index -= 1;
+      state.onboarding.wifi_sub_step = 0;
+    }
+    // step 0 (start): ignore back — nowhere to go
     return;
   }
 

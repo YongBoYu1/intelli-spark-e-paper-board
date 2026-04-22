@@ -203,8 +203,9 @@ AppState make_state_from_defaults(
   state.onboarding.wifi_list_scroll  = 0;
   state.onboarding.wifi_scanning     = false;
   state.onboarding.wifi_connecting   = false;
-  state.onboarding.wifi_password     = "";
-  state.onboarding.password_char_sel = 0;
+  state.onboarding.wifi_password = "";
+  state.onboarding.kbd_focus     = 0;
+  state.onboarding.kbd_shift     = false;
   state.onboarding.wifi_connect_error = "";
   state.onboarding.prefs_focus_index = 0;
   state.onboarding.wifi_ssid         = "";

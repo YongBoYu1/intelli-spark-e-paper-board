@@ -190,7 +190,8 @@ struct OnboardingState {
   bool wifi_connecting{false};
   std::string wifi_connect_error{};
   std::string wifi_password{};
-  std::size_t password_char_sel{0};   // index into kOnboardingPwdChars
+  std::size_t kbd_focus{0};   // 0-43, linear QWERTY key index
+  bool        kbd_shift{false};
 
   // ── Step 2: Preferences ────────────────────────────────────────────────
   std::size_t prefs_focus_index{0};
@@ -200,17 +201,9 @@ struct OnboardingState {
   std::string status{};
 };
 
-// Character set for on-screen WiFi password entry.
-// Last two entries are sentinel bytes: \x08 = DEL, \x0D = OK (confirm).
-static constexpr const char kOnboardingPwdChars[] =
-    "abcdefghijklmnopqrstuvwxyz"
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    "0123456789"
-    " !@#$%^&*()-_+=."
-    "\x08"   // DEL
-    "\x0D";  // OK
-static constexpr std::size_t kOnboardingPwdCharsCount =
-    sizeof(kOnboardingPwdChars) - 1;  // exclude null terminator
+// Total on-screen keyboard keys: row0(10)+row1(10)+row2(9)+row3(7)+row4(8)=44
+// Row 4 special indices: 36=SHIFT 37='-' 38='_' 39='.' 40='@' 41=SPACE 42=DEL 43=OK
+static constexpr std::size_t kOnboardingKbdKeyCount = 44u;
 
 struct AppState {
   Screen screen{Screen::Landing};

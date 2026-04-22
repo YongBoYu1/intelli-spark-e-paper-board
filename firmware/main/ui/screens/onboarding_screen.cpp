@@ -154,65 +154,98 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
     return image;
   }
 
-  // ── Step: Password entry (sub_step 1) ─────────────────────────────────
+  // ── Step: Password entry / QWERTY keyboard (sub_step 1) ──────────────
   if (step_key == "pair_qr" && state.onboarding.wifi_sub_step == 1) {
-    draw_text_line(image, 40, 118, "ENTER PASSWORD", 3, 18);
-    draw_text_line(image, 40, 152,
-                   "Network: " + state.onboarding.wifi_ssid, 1, 44);
-
-    // Current password display with cursor.
+    // ── Header ──────────────────────────────────────────────────────────
+    draw_text_line(image, 40, 20,
+                   "NETWORK: " + state.onboarding.wifi_ssid, 1, 44);
     const std::string pwd_display = state.onboarding.wifi_password + "_";
-    draw_outline_rect(image, 40, 180, 760, 240, 2);
-    draw_text_line(image, 56, 196, pwd_display, 2, 18);
+    draw_outline_rect(image, 40, 38, 760, 92, 2);
+    draw_text_line(image, 56, 54, pwd_display, 2, 20);
 
-    // ── Character picker ──────────────────────────────────────────────
-    // Show 7 chars centred on the selected one.
-    const int sel = static_cast<int>(state.onboarding.password_char_sel);
-    const int n   = static_cast<int>(kOnboardingPwdCharsCount);
-    const int picker_y = 270;
-    const int cell_w   = 72;
-    const int cell_h   = 64;
-    const int cells    = 9;  // number of visible cells (must be odd)
-    const int half     = cells / 2;
-    const int picker_x0 = (kPanelWidth - cells * cell_w) / 2;
-
-    for (int slot = 0; slot < cells; ++slot) {
-      const int char_idx = ((sel - half + slot) % n + n) % n;
-      const char ch      = kOnboardingPwdChars[char_idx];
-      const int cx0 = picker_x0 + slot * cell_w;
-      const int cx1 = cx0 + cell_w;
-      const bool is_center = (slot == half);
-
-      // Label for special chars.
-      std::string label;
-      if (ch == '\x08')      label = "DEL";
-      else if (ch == '\x0D') label = "OK";
-      else                   label = std::string(1, ch);
-
-      if (is_center) {
-        fill_black_rect(image, cx0, picker_y, cx1, picker_y + cell_h);
-        draw_outline_rect(image, cx0 - 3, picker_y - 3,
-                          cx1 + 3, picker_y + cell_h + 3, 3);
-        draw_text_centered_inverted(image, cx0 + 4, cx1 - 4,
-                                    picker_y + 20, label, 2, 22);
-      } else {
-        draw_outline_rect(image, cx0, picker_y, cx1, picker_y + cell_h, 1);
-        draw_text_centered(image, cx0 + 4, cx1 - 4,
-                           picker_y + 20, label, 2, 22);
-      }
-    }
-
-    // Error / status message.
     if (!state.onboarding.wifi_connect_error.empty()) {
-      draw_text_wrapped(image, 40, 360, 720,
-                        state.onboarding.wifi_connect_error, 1, 2);
-    } else {
-      draw_text_line(image, 40, 364, status, 1, 54);
+      draw_text_line(image, 40, 96, state.onboarding.wifi_connect_error, 1, 44);
     }
 
-    draw_text_line(image, 40, 434,
-                   "ROTATE TO CHOOSE  -  PRESS TO TYPE  -  SELECT OK TO CONNECT",
-                   1, 54);
+    // ── Keyboard layout ──────────────────────────────────────────────────
+    // row0(10) + row1(10) + row2(9) + row3(7) + row4(8) = 44 keys
+    // Key size: 64×54px, gap: 8px horizontal, 6px vertical
+    const int kw = 64, kh = 54, hg = 8, vg = 6;
+    const int focus = static_cast<int>(state.onboarding.kbd_focus);
+    const bool shift = state.onboarding.kbd_shift;
+
+    static constexpr const char* kRow0N = "1234567890";
+    static constexpr const char* kRow0S = "!@#$%^&*()";
+    static constexpr const char* kRow1  = "qwertyuiop";
+    static constexpr const char* kRow2  = "asdfghjkl";
+    static constexpr const char* kRow3  = "zxcvbnm";
+
+    // Row y positions (keyboard starts at y=108)
+    const int ry[5] = {108, 108+60, 108+120, 108+180, 108+240};
+
+    // Row x start positions (centred on 800px panel)
+    // Rows 0,1: 10 keys → total=10*64+9*8=712 → x_start=44
+    // Row 2:    9 keys  → total=9*64+8*8=640  → x_start=80
+    // Row 3:    7 keys  → total=7*64+6*8=496  → x_start=152
+    // Row 4:    8 keys  → total=8*64+7*8=568  → x_start=116
+    const int rx[5] = {44, 44, 80, 152, 116};
+
+    // Helper lambda: draw one key
+    auto draw_key = [&](int x0, int y0, int w, const std::string& lbl, bool focused) {
+      const int x1 = x0 + w, y1 = y0 + kh;
+      if (focused) {
+        fill_black_rect(image, x0, y0, x1, y1);
+        draw_outline_rect(image, x0 - 2, y0 - 2, x1 + 2, y1 + 2, 3);
+        draw_text_centered_inverted(image, x0 + 2, x1 - 2, y0 + 16, lbl, 2, 18);
+      } else {
+        draw_outline_rect(image, x0, y0, x1, y1, 1);
+        draw_text_centered(image, x0 + 2, x1 - 2, y0 + 16, lbl, 2, 18);
+      }
+    };
+
+    // Row 0: digits / symbols
+    for (int c = 0; c < 10; ++c) {
+      const std::string lbl(1, shift ? kRow0S[c] : kRow0N[c]);
+      draw_key(rx[0] + c * (kw + hg), ry[0], kw, lbl, focus == c);
+    }
+    // Row 1: qwertyuiop
+    for (int c = 0; c < 10; ++c) {
+      const char base = kRow1[c];
+      const std::string lbl(1, shift ? static_cast<char>(base - 32) : base);
+      draw_key(rx[1] + c * (kw + hg), ry[1], kw, lbl, focus == 10 + c);
+    }
+    // Row 2: asdfghjkl
+    for (int c = 0; c < 9; ++c) {
+      const char base = kRow2[c];
+      const std::string lbl(1, shift ? static_cast<char>(base - 32) : base);
+      draw_key(rx[2] + c * (kw + hg), ry[2], kw, lbl, focus == 20 + c);
+    }
+    // Row 3: zxcvbnm
+    for (int c = 0; c < 7; ++c) {
+      const char base = kRow3[c];
+      const std::string lbl(1, shift ? static_cast<char>(base - 32) : base);
+      draw_key(rx[3] + c * (kw + hg), ry[3], kw, lbl, focus == 29 + c);
+    }
+    // Row 4: SHIFT - _ . @ SPACE DEL OK
+    {
+      const int y4 = ry[4];
+      const int x4 = rx[4];
+      // SHIFT (idx 36, width 80)
+      draw_key(x4,           y4, 80, shift ? "SFT*" : "SFT", focus == 36);
+      // - _ . @ (idx 37-40, width 64 each)
+      draw_key(x4 + 88,      y4, kw, "-",     focus == 37);
+      draw_key(x4 + 88 + 72, y4, kw, "_",     focus == 38);
+      draw_key(x4 + 88 + 144,y4, kw, ".",     focus == 39);
+      draw_key(x4 + 88 + 216,y4, kw, "@",     focus == 40);
+      // SPACE (idx 41, width 120)
+      draw_key(x4 + 88 + 288,y4, 120, "SPACE", focus == 41);
+      // DEL (idx 42, width 64)
+      draw_key(x4 + 88 + 416,y4, kw,  "DEL",  focus == 42);
+      // OK  (idx 43, width 64)
+      draw_key(x4 + 88 + 488,y4, kw,  "OK",   focus == 43);
+    }
+
+    draw_text_line(image, 40, 434, "ROTATE TO MOVE  -  PRESS TO TYPE  -  B = BACK", 1, 54);
     return image;
   }
 
