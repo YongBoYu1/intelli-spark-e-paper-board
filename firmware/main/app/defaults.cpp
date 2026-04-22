@@ -83,7 +83,7 @@ std::uint64_t current_minute_bucket(bool* is_real) {
 ProductDefaults make_factory_defaults() {
   ProductDefaults defaults;
   // #52 is validating the post-setup Home flow before persistence lands in #53.
-  defaults.setup_completed = true;
+  defaults.setup_completed = false;
   defaults.device_language = Language::EnUs;
   defaults.voice_locale = Language::EnUs;
   defaults.dashboard.location = "Toronto";
