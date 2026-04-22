@@ -14,6 +14,8 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   using platform::kPanelWidth;
   using platform::kPanelHeight;
   using platform::kPanelBufferSize;
+  using app::kOnboardingPwdChars;
+  using app::kOnboardingPwdCharsCount;
 
   constexpr int kStepTotal = 4;
   constexpr std::array<const char*, 4> kStepKeys = {
