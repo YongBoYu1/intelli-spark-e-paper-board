@@ -264,6 +264,7 @@ AppState make_state_from_defaults(
   state.settings.rotation_deg = 0;
   state.settings.notice.clear();
   state.settings.notice_due_ms = 0;
+  state.settings.reset_pending = false;
   state.dashboard = defaults.dashboard;
   return state;
 }

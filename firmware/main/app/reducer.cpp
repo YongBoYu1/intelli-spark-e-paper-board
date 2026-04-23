@@ -1,5 +1,6 @@
 #include "app/reducer.hpp"
 #include "app/calendar_runtime.hpp"
+#include "app/defaults.hpp"
 #include "platform/clock.hpp"
 #include "platform/live_data_provider.hpp"
 #include "platform/voice_client.hpp"
@@ -378,26 +379,63 @@ void handle_settings_click(AppState& state, const Event& event) {
       state.settings.auto_sync_enabled = !state.settings.auto_sync_enabled;
       ESP_LOGI(kTag, "[settings] auto_sync=%d", static_cast<int>(state.settings.auto_sync_enabled));
       return;
-    case SettingsItem::SyncNow:
-      if (platform::live_data_request_sync_now()) {
+    case SettingsItem::SyncNow: {
+      // If provider was never bootstrapped (WiFi not connected at boot),
+      // try to bootstrap now using current WiFi connection.
+      if (!platform::live_data_request_sync_now()) {
+        if (platform::wifi_is_connected()) {
+          ESP_LOGI(kTag, "[settings] sync_now: bootstrapping live_data first");
+          platform::live_data_bootstrap(
+              state.onboarding.timezone.c_str(),
+              state.dashboard.location.c_str());
+          platform::live_data_request_sync_now();
+        }
+      }
+      if (platform::live_data_weather_sync_in_progress() ||
+          state.settings.sync_state == "syncing") {
+        // A sync is already running (possibly just triggered above).
         state.settings.sync_state = "syncing";
         state.home.weather_sync_state = "syncing";
-        set_settings_notice(state, "SYNC REQUESTED", event.now_ms);
+        set_settings_notice(state, "SYNC REQUESTED", event.now_ms, 3000);
         ESP_LOGI(kTag, "[settings] sync_now=requested");
-      } else {
+      } else if (!platform::wifi_is_connected()) {
         state.settings.sync_state = "error";
-        set_settings_notice(state, "SYNC UNAVAILABLE", event.now_ms);
-        ESP_LOGW(kTag, "[settings] sync_now=unavailable");
+        set_settings_notice(state, "NO WI-FI — CONNECT FIRST", event.now_ms, 4000);
+        ESP_LOGW(kTag, "[settings] sync_now=no_wifi");
+      } else {
+        // force_sync was set; task will pick it up on next poll.
+        state.settings.sync_state = "syncing";
+        state.home.weather_sync_state = "syncing";
+        set_settings_notice(state, "SYNC REQUESTED", event.now_ms, 3000);
+        ESP_LOGI(kTag, "[settings] sync_now=force_sync_set");
       }
       return;
+    }
     case SettingsItem::ChangeWifi:
       enter_onboarding_wifi_select(state);
       state.onboarding.wifi_from_settings = true;
       ESP_LOGI(kTag, "[settings] change_wifi=entering wifi select");
       return;
     case SettingsItem::ResetAndWipe:
-      set_settings_notice(state, "NOT IMPLEMENTED", event.now_ms);
-      ESP_LOGI(kTag, "[settings] reset_and_wipe=not_implemented");
+      if (state.settings.reset_pending) {
+        // Second click — confirmed.  Reset all dashboard + home data to defaults.
+        state.settings.reset_pending = false;
+        const ProductDefaults factory = make_factory_defaults();
+        state.dashboard = factory.dashboard;
+        state.home.hidden_inventory_indices.clear();
+        state.home.hidden_reminder_indices.clear();
+        state.home.pending_hide_inventory_indices.clear();
+        state.home.pending_hide_reminder_indices.clear();
+        state.memo.index = 0;
+        state.memo.expanded = false;
+        set_settings_notice(state, "DATA RESET TO DEFAULTS", event.now_ms, 4000);
+        ESP_LOGI(kTag, "[settings] reset_and_wipe=done");
+      } else {
+        // First click — request confirmation (expires after 5 s).
+        state.settings.reset_pending = true;
+        set_settings_notice(state, "CLICK AGAIN TO CONFIRM RESET", event.now_ms, 5000);
+        ESP_LOGI(kTag, "[settings] reset_and_wipe=awaiting_confirm");
+      }
       return;
   }
 }
@@ -1101,6 +1139,8 @@ void handle_tick(AppState& state, const Event& event) {
       event.now_ms >= state.settings.notice_due_ms) {
     state.settings.notice.clear();
     state.settings.notice_due_ms = 0;
+    // If the reset confirmation notice expired, cancel the pending reset.
+    state.settings.reset_pending = false;
   }
 }
 

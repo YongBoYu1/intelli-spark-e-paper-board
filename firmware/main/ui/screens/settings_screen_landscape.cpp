@@ -181,10 +181,15 @@ std::string setting_value(const app::AppState& state, const SettingsItem item) {
       return "WIFI " + bool_text(state.settings.wifi_enabled) +
              " / BT " + bool_text(state.settings.bluetooth_enabled);
     case SettingsItem::AutoSync:     return bool_text(state.settings.auto_sync_enabled);
-    case SettingsItem::SyncNow:      return "PRESS ENTER";
+    case SettingsItem::SyncNow:
+      if (state.settings.sync_state == "syncing") return "SYNCING...";
+      if (state.settings.sync_state == "ok")      return "LAST OK";
+      if (state.settings.sync_state == "error")   return "RETRY";
+      return "PRESS ENTER";
     case SettingsItem::ChangeWifi:
       return state.onboarding.wifi_ssid.empty() ? "NOT SET" : state.onboarding.wifi_ssid;
-    case SettingsItem::ResetAndWipe: return "PLACEHOLDER";
+    case SettingsItem::ResetAndWipe:
+      return state.settings.reset_pending ? "CLICK AGAIN!" : "PRESS ENTER";
   }
   return {};
 }

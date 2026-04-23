@@ -170,6 +170,7 @@ struct SettingsState {
   int rotation_deg{0};
   std::string notice{};
   std::uint64_t notice_due_ms{0};
+  bool reset_pending{false};  // true after first click on ResetAndWipe; second click confirms
 };
 
 struct WifiScanEntry {
