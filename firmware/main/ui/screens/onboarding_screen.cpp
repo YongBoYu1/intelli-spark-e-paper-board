@@ -15,7 +15,9 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   using platform::kPanelHeight;
   using platform::kPanelBufferSize;
 
-  constexpr int kStepTotal = 4;
+  // Voice guide (step 3) is excluded from the main 3-step flow.
+  // It is still rendered if step_index reaches 3 (e.g. via serial shortcut).
+  constexpr int kStepTotal = 3;
   constexpr std::array<const char*, 4> kStepKeys = {
       "start", "pair_qr", "prefs", "voice_guide"};
 
@@ -64,9 +66,9 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   // ── Step: Start ────────────────────────────────────────────────────────
   if (step_key == "start") {
     const int start_focus = static_cast<int>(state.onboarding.start_focus_index);
-    draw_text_line(image, 40, 118, "CONFIGURE NETWORK AND BASIC PREFERENCES.", 1, 52);
-    draw_text_line(image, 40, 142, "PHONE PAIRING IS RECOMMENDED FOR WI-FI SETUP.", 1, 56);
-    constexpr std::array<const char*, 2> kOptions = {"START PHONE PAIRING", "SKIP FOR NOW"};
+    draw_text_line(image, 40, 118, "CONFIGURE WI-FI AND BASIC PREFERENCES.", 1, 52);
+    draw_text_line(image, 40, 142, "CONNECT TO WI-FI TO ENABLE WEATHER AND SYNC.", 1, 56);
+    constexpr std::array<const char*, 2> kOptions = {"SELECT WI-FI", "SKIP FOR NOW"};
     const int box_x0 = 184;
     const int box_x1 = 616;
     const int first_y = 218;
@@ -272,14 +274,14 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
     const int guide_x1 = 758;
     const int guide_y0 = 390;
     const int guide_y1 = 438;
-    draw_text_line(image, 42, 404, "NEXT STEP ->", 2, 16);
+    draw_text_line(image, 42, 404, "DONE ->", 2, 16);
     if (prefs_focus == 3) {
       fill_black_rect(image, guide_x0, guide_y0, guide_x1, guide_y1);
       draw_outline_rect(image, guide_x0 - 3, guide_y0 - 3, guide_x1 + 3, guide_y1 + 3, 3);
-      draw_text_centered_inverted(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, "VOICE GUIDE >", 1, 24);
+      draw_text_centered_inverted(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, "ENTER HOME >", 1, 24);
     } else {
       draw_outline_rect(image, guide_x0, guide_y0, guide_x1, guide_y1, 2);
-      draw_text_centered(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, "VOICE GUIDE >", 1, 24);
+      draw_text_centered(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, "ENTER HOME >", 1, 24);
     }
     return image;
   }

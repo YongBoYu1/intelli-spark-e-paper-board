@@ -340,6 +340,9 @@ void adjust_timer_seconds(
   }
 }
 
+// Forward declaration — defined later in this file.
+void enter_onboarding_wifi_select(AppState& state);
+
 void handle_settings_click(AppState& state, const Event& event) {
   switch (settings_item_for_focus(state)) {
     case SettingsItem::FontSize:
@@ -1414,11 +1417,14 @@ void handle_click(AppState& state, const Event& event) {
       } else if (state.onboarding.prefs_focus_index == 2) {
         state.onboarding.auto_sync_enabled = !state.onboarding.auto_sync_enabled;
       } else {
-        enter_onboarding_voice_guide(state);
+        // prefs_focus_index == 3 → "ENTER HOME" button → finish onboarding.
+        enter_home(state);
+        return;
       }
       refresh_onboarding_status(state);
       return;
     }
+    // step_index == 3 (voice guide, reachable only via serial 'g' shortcut):
     if (state.onboarding.step_index == 3) {
       enter_home(state);
       return;
