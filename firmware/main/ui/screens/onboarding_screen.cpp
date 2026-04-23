@@ -15,9 +15,7 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   using platform::kPanelHeight;
   using platform::kPanelBufferSize;
 
-  // Voice guide (step 3) is excluded from the main 3-step flow.
-  // It is still rendered if step_index reaches 3 (e.g. via serial shortcut).
-  constexpr int kStepTotal = 3;
+  constexpr int kStepTotal = 4;
   constexpr std::array<const char*, 4> kStepKeys = {
       "start", "pair_qr", "prefs", "voice_guide"};
 
@@ -274,14 +272,14 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
     const int guide_x1 = 758;
     const int guide_y0 = 390;
     const int guide_y1 = 438;
-    draw_text_line(image, 42, 404, "DONE ->", 2, 16);
+    draw_text_line(image, 42, 404, "NEXT STEP ->", 2, 16);
     if (prefs_focus == 3) {
       fill_black_rect(image, guide_x0, guide_y0, guide_x1, guide_y1);
       draw_outline_rect(image, guide_x0 - 3, guide_y0 - 3, guide_x1 + 3, guide_y1 + 3, 3);
-      draw_text_centered_inverted(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, "ENTER HOME >", 1, 24);
+      draw_text_centered_inverted(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, "VOICE GUIDE >", 1, 24);
     } else {
       draw_outline_rect(image, guide_x0, guide_y0, guide_x1, guide_y1, 2);
-      draw_text_centered(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, "ENTER HOME >", 1, 24);
+      draw_text_centered(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, "VOICE GUIDE >", 1, 24);
     }
     return image;
   }

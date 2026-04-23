@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -181,11 +182,21 @@ std::string setting_value(const app::AppState& state, const SettingsItem item) {
       return "WIFI " + bool_text(state.settings.wifi_enabled) +
              " / BT " + bool_text(state.settings.bluetooth_enabled);
     case SettingsItem::AutoSync:     return bool_text(state.settings.auto_sync_enabled);
-    case SettingsItem::SyncNow:
+    case SettingsItem::SyncNow: {
       if (state.settings.sync_state == "syncing") return "SYNCING...";
-      if (state.settings.sync_state == "ok")      return "LAST OK";
-      if (state.settings.sync_state == "error")   return "RETRY";
+      if (state.settings.last_sync_ms > 0) {
+        const std::time_t t =
+            static_cast<std::time_t>(state.settings.last_sync_ms / 1000);
+        const std::tm* tm_ptr = std::localtime(&t);
+        if (tm_ptr) {
+          char buf[16];
+          std::strftime(buf, sizeof(buf), "%H:%M", tm_ptr);
+          return std::string(buf);
+        }
+      }
+      if (state.settings.sync_state == "error") return "RETRY";
       return "PRESS ENTER";
+    }
     case SettingsItem::ChangeWifi:
       return state.onboarding.wifi_ssid.empty() ? "NOT SET" : state.onboarding.wifi_ssid;
     case SettingsItem::ResetAndWipe:
@@ -195,10 +206,20 @@ std::string setting_value(const app::AppState& state, const SettingsItem item) {
 }
 
 std::string sync_footer_status(const app::AppState& state) {
-  if (state.settings.sync_state == "ok")      return "LAST SYNC OK";
-  if (state.settings.sync_state == "pending") return "SYNC IN PROGRESS";
-  if (state.settings.sync_state == "fail")    return "LAST SYNC FAIL";
-  return "LAST SYNC NEVER";
+  if (state.settings.sync_state == "syncing" ||
+      state.settings.sync_state == "pending") return "SYNCING...";
+  if (state.settings.last_sync_ms > 0) {
+    const std::time_t t =
+        static_cast<std::time_t>(state.settings.last_sync_ms / 1000);
+    const std::tm* tm_ptr = std::localtime(&t);
+    if (tm_ptr) {
+      char buf[32];
+      std::strftime(buf, sizeof(buf), "LAST SYNC  %Y-%m-%d  %H:%M", tm_ptr);
+      return std::string(buf);
+    }
+  }
+  if (state.settings.sync_state == "error") return "LAST SYNC FAILED";
+  return "LAST SYNC: NEVER";
 }
 
 }  // namespace

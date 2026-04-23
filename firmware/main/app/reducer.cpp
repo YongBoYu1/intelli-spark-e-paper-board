@@ -421,22 +421,18 @@ void handle_settings_click(AppState& state, const Event& event) {
       return;
     case SettingsItem::ResetAndWipe:
       if (state.settings.reset_pending) {
-        // Second click — confirmed.  Reset all dashboard + home data to defaults.
-        state.settings.reset_pending = false;
-        const ProductDefaults factory = make_factory_defaults();
-        state.dashboard = factory.dashboard;
-        state.home.hidden_inventory_indices.clear();
-        state.home.hidden_reminder_indices.clear();
-        state.home.pending_hide_inventory_indices.clear();
-        state.home.pending_hide_reminder_indices.clear();
-        state.memo.index = 0;
-        state.memo.expanded = false;
-        set_settings_notice(state, "DATA RESET TO DEFAULTS", event.now_ms, 4000);
-        ESP_LOGI(kTag, "[settings] reset_and_wipe=done");
+        // Second click — confirmed.
+        // Full in-memory factory reset: reconstruct entire AppState from defaults,
+        // which sets screen=Landing and setup_completed=false.
+        ESP_LOGI(kTag, "[settings] reset_and_wipe=confirmed — full state reset");
+        const std::uint64_t now_ms =
+            event.now_ms > 0 ? event.now_ms : state.last_tick_ms;
+        state = make_state_from_defaults(make_factory_defaults(), now_ms);
+        // (state.screen is now Screen::Landing; user will go through setup again)
       } else {
         // First click — request confirmation (expires after 5 s).
         state.settings.reset_pending = true;
-        set_settings_notice(state, "CLICK AGAIN TO CONFIRM RESET", event.now_ms, 5000);
+        set_settings_notice(state, "CLICK AGAIN TO WIPE ALL DATA", event.now_ms, 5000);
         ESP_LOGI(kTag, "[settings] reset_and_wipe=awaiting_confirm");
       }
       return;
@@ -1417,14 +1413,12 @@ void handle_click(AppState& state, const Event& event) {
       } else if (state.onboarding.prefs_focus_index == 2) {
         state.onboarding.auto_sync_enabled = !state.onboarding.auto_sync_enabled;
       } else {
-        // prefs_focus_index == 3 → "ENTER HOME" button → finish onboarding.
-        enter_home(state);
-        return;
+        // prefs_focus_index == 3 → "VOICE GUIDE >" button.
+        enter_onboarding_voice_guide(state);
       }
       refresh_onboarding_status(state);
       return;
     }
-    // step_index == 3 (voice guide, reachable only via serial 'g' shortcut):
     if (state.onboarding.step_index == 3) {
       enter_home(state);
       return;
