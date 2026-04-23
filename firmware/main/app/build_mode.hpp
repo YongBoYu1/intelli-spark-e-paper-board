@@ -13,6 +13,6 @@ namespace fridge_ink::app {
 //
 // To toggle: change the value below and rebuild.  No other file needs to
 // change.
-constexpr bool kDeveloperMode = true;
+constexpr bool kDeveloperMode = false;
 
 }  // namespace fridge_ink::app
