@@ -2191,11 +2191,23 @@ static void va_inventory_log_event(AppState& state, const std::string& args) {
       }
     }
   } else {
-    // "added" or unknown — add to inventory list.
+    // "added" / "bought" / unknown — add to inventory list.
     state.dashboard.inventory_items.push_back(item);
     state.dashboard.inventory_completed.push_back(false);
     ESP_LOGI(kTag, "[voice] inventory_log_event: added \"%s\" to inventory (event=%s)",
              item.c_str(), event.c_str());
+
+    // Auto-complete: if there is a matching reminder (e.g. "Buy Milk"),
+    // hide it so the user doesn't have to dismiss it manually.
+    const int rem_idx = find_item_index(state.dashboard.reminder_items,
+                                        state.home.hidden_reminder_indices, item);
+    if (rem_idx >= 0) {
+      if (!contains_index(state.home.hidden_reminder_indices, rem_idx)) {
+        state.home.hidden_reminder_indices.push_back(rem_idx);
+      }
+      ESP_LOGI(kTag, "[voice] inventory_log_event: auto-completed reminder[%d] for \"%s\"",
+               rem_idx, item.c_str());
+    }
   }
 }
 
