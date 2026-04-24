@@ -1141,6 +1141,15 @@ void handle_tick(AppState& state, const Event& event) {
     // If the reset confirmation notice expired, cancel the pending reset.
     state.settings.reset_pending = false;
   }
+
+  // Auto-hide the home focus ring after 10 s of inactivity.
+  constexpr std::uint64_t kHomeFocusTimeoutMs = 10000ULL;
+  if (state.screen == Screen::Home &&
+      state.home.show_focus &&
+      state.home.last_interaction_ms > 0 &&
+      event.now_ms >= state.home.last_interaction_ms + kHomeFocusTimeoutMs) {
+    state.home.show_focus = false;
+  }
 }
 
 void handle_rotate(AppState& state, const Event& event) {
