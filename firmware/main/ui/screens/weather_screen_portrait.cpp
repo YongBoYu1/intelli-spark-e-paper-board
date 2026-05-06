@@ -6,6 +6,7 @@
 #include "ui/draw.hpp"
 #include "ui/panel_font_assets_generated.hpp"
 #include "ui/primitives.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <array>
@@ -266,6 +267,7 @@ float wp_forecast_h_scale(const std::string& icon_name) {
 
 std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) {
   using namespace platform::panel_font_assets;
+  const auto& s = get_ui_strings(state.device_language);
   using platform::kPanelBufferSize;
 
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
@@ -273,7 +275,7 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
 
   const bool weather_has_data = !state.dashboard.weather_condition.empty();
   const bool weather_syncing = state.home.weather_sync_state == "syncing";
-  const std::string city = state.dashboard.location.empty() ? "Unknown" : state.dashboard.location;
+  const std::string city = state.dashboard.location.empty() ? s.wx_unknown_location : state.dashboard.location;
   const std::string condition = weather_has_data
                                     ? (state.dashboard.weather_condition.empty()
                                            ? std::string("Cloudy")
@@ -291,14 +293,15 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
   const int uv_index = state.dashboard.weather_uv_index;
 
   // "C" suffix removed — degree "o" is drawn as a superscript separately.
-  const std::string feels = weather_has_data ? ("Feels Like " + std::to_string(feels_like_c))
-                                             : (weather_syncing ? std::string("Syncing...")
-                                                                : std::string("No weather data"));
+  const std::string feels = weather_has_data
+                                ? (std::string(s.wx_feels_like_lc) + " " + std::to_string(feels_like_c))
+                                : (weather_syncing ? std::string(s.wx_syncing_lc)
+                                                   : std::string(s.wx_no_weather_data));
   const std::string temp = weather_has_data ? std::to_string(temp_c) : std::string("--");
   const std::string range = weather_has_data
                                 ? ("H: " + std::to_string(hi_c) + "  L: " + std::to_string(lo_c))
-                                : (weather_syncing ? std::string("Waiting for sync")
-                                                   : std::string("Waiting for WiFi"));
+                                : (weather_syncing ? std::string(s.wx_waiting_sync)
+                                                   : std::string(s.wx_waiting_wifi));
   const std::string humidity_v =
       (weather_has_data && humidity > 0) ? (std::to_string(humidity) + "%") : "--";
 
@@ -395,9 +398,9 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
   // smaller font so it doesn't dominate the metric tile.
   const std::string wind_num = weather_has_data ? std::to_string(wind_kmh) : "--";
   const std::array<MetricRow, 3> metrics = {{
-      {humidity_v, "Humidity"},
-      {wind_num,   "Wind"},
-      {weather_has_data ? std::to_string(uv_index) : "--", "UV Index"},
+      {humidity_v, s.wx_humidity_lc},
+      {wind_num,   s.wx_wind_lc},
+      {weather_has_data ? std::to_string(uv_index) : "--", s.wx_uv_index_lc},
   }};
 
   for (int i = 0; i < 3; ++i) {

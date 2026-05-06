@@ -2,6 +2,7 @@
 
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,6 +15,8 @@ std::vector<uint8_t> render_landing_bitmap(const app::AppState& state) {
   using platform::kPanelWidth;
   using platform::kPanelHeight;
   using platform::kPanelBufferSize;
+
+  const auto& s = get_ui_strings(state.device_language);
 
   const std::string lang_label = app::language_label(state.device_language);
   const std::string lang_code = app::language_code(state.device_language);
@@ -38,16 +41,16 @@ std::vector<uint8_t> render_landing_bitmap(const app::AppState& state) {
 
   // ── Subtitle ───────────────────────────────────────────────────────────
   const std::string subtitle = truncate_text_px(
-      "Welcome. Learn controls before first setup.",
+      s.land_subtitle,
       body_scale, content_w);
   draw_text_centered(image, content_x0, content_x1, y, subtitle, body_scale, 64);
   const int subtitle_block_h = 36;
 
   // ── Tip cards (2×2 grid) ───────────────────────────────────────────────
-  constexpr std::array<const char*, 4> tip_title = {
-      "Rotate", "Press", "Long Press", "Hold Voice Key"};
-  constexpr std::array<const char*, 4> tip_body = {
-      "MOVE FOCUS", "CONFIRM", "BACK TO HOME", "TALK TO ASSISTANT"};
+  const std::array<const char*, 4> tip_title = {
+      s.land_tip_rotate, s.land_tip_press, s.land_tip_long, s.land_tip_voice};
+  const std::array<const char*, 4> tip_body = {
+      s.land_tip_move_focus, s.land_tip_confirm, s.land_tip_back_home, s.land_tip_talk};
   const int tip_gap_x = 12;
   const int tip_gap_y = 10;
   const int tip_w = (content_w - tip_gap_x) / 2;
@@ -76,11 +79,11 @@ std::vector<uint8_t> render_landing_bitmap(const app::AppState& state) {
   // ── Voice hint ─────────────────────────────────────────────────────────
   const int voice_hint_y = tips_y0 + (2 * tip_h) + tip_gap_y + 12;
   draw_text_line(image, content_x0, voice_hint_y,
-                 "VOICE KEY UNLOCKS AFTER FIRST SETUP.", meta_scale, 48);
+                 s.land_voice_unlock, meta_scale, 48);
 
   // ── Language selector ──────────────────────────────────────────────────
   const int language_label_y = voice_hint_y + 20;
-  draw_text_line(image, content_x0, language_label_y, "Language", button_scale, 18);
+  draw_text_line(image, content_x0, language_label_y, s.land_language, button_scale, 18);
   const int chips_y0 = language_label_y + 26;
   const int chip_gap_x = 10;
   const int chip_w = (content_w - (2 * chip_gap_x)) / 3;
@@ -111,9 +114,9 @@ std::vector<uint8_t> render_landing_bitmap(const app::AppState& state) {
   // ── Status text ────────────────────────────────────────────────────────
   std::string status;
   if (state.setup_completed) {
-    status = "SETUP COMPLETE. PRESS CLICK TO OPEN HOME.";
+    status = s.land_status_done;
   } else {
-    status = "ROTATE TO CHOOSE LANGUAGE, THEN CLICK TO START SETUP.";
+    status = s.land_status_choose;
   }
 
   // Layout from bottom — matching Python landing_layout_metrics()
@@ -144,11 +147,11 @@ std::vector<uint8_t> render_landing_bitmap(const app::AppState& state) {
 
   std::string cta;
   if (state.setup_completed) {
-    cta = "Enter Home";
+    cta = s.land_cta_home;
   } else if (!state.landing.rotate_seen) {
-    cta = "Rotate to choose language";
+    cta = s.land_cta_rotate;
   } else {
-    cta = "Click to start onboarding";
+    cta = s.land_cta_click;
   }
   cta = truncate_text_px(cta, button_scale, button_w - 24);
   draw_text_centered_inverted(

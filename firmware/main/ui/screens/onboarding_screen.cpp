@@ -3,6 +3,7 @@
 #include "app/state.hpp"
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
+#include "ui/strings.hpp"
 
 #include <array>
 #include <string>
@@ -15,6 +16,8 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   using platform::kPanelHeight;
   using platform::kPanelBufferSize;
 
+  const auto& s = get_ui_strings(state.device_language);
+
   constexpr int kStepTotal = 4;
   constexpr std::array<const char*, 4> kStepKeys = {
       "start", "pair_qr", "prefs", "voice_guide"};
@@ -24,23 +27,23 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   const std::string step_key = kStepKeys[step];
 
   const std::string lang_line =
-      std::string("Language: ") +
+      std::string(s.ob_language_prefix) +
       app::language_label(state.device_language) +
       " (" + app::language_code(state.device_language) + ")";
 
   std::string status = state.onboarding.status;
   if (status.empty()) {
-    status = "Rotate to choose setting, click to continue.";
+    status = s.ob_rotate_choose_press;
   }
 
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);  // white (1=white, 0=black)
   draw_outline_rect(image, 12, 12, kPanelWidth - 12, kPanelHeight - 12, 3);
 
   // ── Header ─────────────────────────────────────────────────────────────
-  draw_text_line(image, 40, 30, "FIRST SETUP", 3, 26);
+  draw_text_line(image, 40, 30, s.ob_title, 3, 26);
   draw_text_line(
       image, 40, 66,
-      "STEP " + std::to_string(step_cur) + "/" + std::to_string(kStepTotal),
+      std::string(s.ob_step_prefix) + " " + std::to_string(step_cur) + "/" + std::to_string(kStepTotal),
       2, 20);
 
   // ── Progress bar ───────────────────────────────────────────────────────
@@ -64,9 +67,9 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   // ── Step: Start ────────────────────────────────────────────────────────
   if (step_key == "start") {
     const int start_focus = static_cast<int>(state.onboarding.start_focus_index);
-    draw_text_line(image, 40, 118, "CONFIGURE WI-FI AND BASIC PREFERENCES.", 1, 52);
-    draw_text_line(image, 40, 142, "CONNECT TO WI-FI TO ENABLE WEATHER AND SYNC.", 1, 56);
-    constexpr std::array<const char*, 2> kOptions = {"SELECT WI-FI", "SKIP FOR NOW"};
+    draw_text_line(image, 40, 118, s.ob_configure_wifi, 1, 52);
+    draw_text_line(image, 40, 142, s.ob_connect_wifi, 1, 56);
+    const std::array<const char*, 2> kOptions = {s.ob_select_wifi, s.ob_skip_now};
     const int box_x0 = 184;
     const int box_x1 = 616;
     const int first_y = 218;
@@ -82,14 +85,14 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
         draw_text_centered(image, box_x0 + 10, box_x1 - 10, y0 + 18, kOptions[i], 2, 34);
       }
     }
-    draw_text_line(image, 40, 428, "ROTATE TO CHOOSE  -  PRESS TO CONTINUE", 1, 54);
+    draw_text_line(image, 40, 428, s.ob_rotate_choose_press, 1, 54);
     return image;
   }
 
   // ── Step: WiFi select (sub_step 0) ────────────────────────────────────
   // Layout (800×480): header y=0-86 | title y=98 | list y=126-420 | footer y=432-460
   if (step_key == "pair_qr" && state.onboarding.wifi_sub_step == 0) {
-    draw_text_line(image, 40, 98, "SELECT WI-FI NETWORK", 2, 20);
+    draw_text_line(image, 40, 98, s.ob_select_network, 2, 20);
 
     const auto& nets = state.onboarding.wifi_networks;
     const int list_x0 = 40;
@@ -105,7 +108,7 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
       const int bx0 = 280, by0 = 300, bx1 = 520, by1 = 348;
       fill_black_rect(image, bx0, by0, bx1, by1);
       draw_outline_rect(image, bx0 - 3, by0 - 3, bx1 + 3, by1 + 3, 3);
-      draw_text_centered_inverted(image, bx0 + 8, bx1 - 8, by0 + 14, "PRESS TO RESCAN", 1, 20);
+      draw_text_centered_inverted(image, bx0 + 8, bx1 - 8, by0 + 14, s.ob_press_rescan, 1, 20);
     } else {
       const int scroll = static_cast<int>(state.onboarding.wifi_list_scroll);
       const int focus  = static_cast<int>(state.onboarding.wifi_list_focus);
@@ -144,10 +147,10 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
     }
 
     // Bottom: hint (left) + SKIP button (right) — safely below list at y=432.
-    draw_text_line(image, 40, 440, "ROTATE TO SCROLL  -  PRESS TO SELECT", 1, 54);
+    draw_text_line(image, 40, 440, s.ob_rotate_scroll, 1, 54);
     const int sx0 = 622, sy0 = 430, sx1 = 760, sy1 = 458;
     draw_outline_rect(image, sx0, sy0, sx1, sy1, 2);
-    draw_text_centered(image, sx0 + 8, sx1 - 8, sy0 + 10, "SKIP", 1, 18);
+    draw_text_centered(image, sx0 + 8, sx1 - 8, sy0 + 10, s.ob_skip, 1, 18);
     return image;
   }
 
@@ -156,7 +159,7 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   // Row step = kh(54)+gap(6) = 60.  5 rows: 162,222,282,342,402 → last ends 456.
   if (step_key == "pair_qr" && state.onboarding.wifi_sub_step == 1) {
     // ── SSID + password display (below global header) ────────────────────
-    draw_text_line(image, 40, 98, "NETWORK: " + state.onboarding.wifi_ssid, 1, 44);
+    draw_text_line(image, 40, 98, std::string(s.ob_network) + " " + state.onboarding.wifi_ssid, 1, 44);
     const std::string pwd_display = state.onboarding.wifi_password + "_";
     draw_outline_rect(image, 40, 114, 760, 154, 2);
     draw_text_line(image, 56, 126, pwd_display, 2, 20);
@@ -239,10 +242,10 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
   // ── Step: Prefs ────────────────────────────────────────────────────────
   if (step_key == "prefs") {
     const int prefs_focus = static_cast<int>(state.onboarding.prefs_focus_index);
-    draw_text_line(image, 40, 118, "QUICK PREFERENCES", 3, 30);
-    draw_text_line(image, 40, 150, "YOU CAN CHANGE THESE LATER IN SETTINGS.", 1, 54);
+    draw_text_line(image, 40, 118, s.ob_quick_prefs, 3, 30);
+    draw_text_line(image, 40, 150, s.ob_change_later, 1, 54);
     if (!state.onboarding.wifi_ssid.empty()) {
-      draw_text_line(image, 40, 176, "Wi-Fi: " + state.onboarding.wifi_ssid, 1, 54);
+      draw_text_line(image, 40, 176, std::string(s.ob_wifi_prefix) + state.onboarding.wifi_ssid, 1, 54);
     }
 
     const int row_x0 = 42;
@@ -250,11 +253,11 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
     const int row_h = 48;
     const int row_gap = 10;
     const int rows_top = 206;
-    std::array<std::string, 3> labels = {"LANGUAGE", "TIMEZONE", "AUTO SYNC"};
+    std::array<std::string, 3> labels = {s.ob_language, s.ob_timezone, s.ob_auto_sync};
     std::array<std::string, 3> values = {
         lang_line,
-        "Timezone: " + state.onboarding.timezone,
-        std::string("Auto Sync: ") + (state.onboarding.auto_sync_enabled ? "ON" : "OFF"),
+        std::string(s.ob_timezone_prefix) + state.onboarding.timezone,
+        std::string(s.ob_auto_sync_prefix) + (state.onboarding.auto_sync_enabled ? s.on : s.off),
     };
     for (int i = 0; i < 3; ++i) {
       const int y0 = rows_top + i * (row_h + row_gap);
@@ -272,14 +275,14 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
     const int guide_x1 = 758;
     const int guide_y0 = 390;
     const int guide_y1 = 438;
-    draw_text_line(image, 42, 404, "NEXT STEP ->", 2, 16);
+    draw_text_line(image, 42, 404, s.ob_next_step, 2, 16);
     if (prefs_focus == 3) {
       fill_black_rect(image, guide_x0, guide_y0, guide_x1, guide_y1);
       draw_outline_rect(image, guide_x0 - 3, guide_y0 - 3, guide_x1 + 3, guide_y1 + 3, 3);
-      draw_text_centered_inverted(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, "VOICE GUIDE >", 1, 24);
+      draw_text_centered_inverted(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, s.ob_voice_guide, 1, 24);
     } else {
       draw_outline_rect(image, guide_x0, guide_y0, guide_x1, guide_y1, 2);
-      draw_text_centered(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, "VOICE GUIDE >", 1, 24);
+      draw_text_centered(image, guide_x0 + 8, guide_x1 - 8, guide_y0 + 16, s.ob_voice_guide, 1, 24);
     }
     return image;
   }
@@ -297,60 +300,60 @@ std::vector<uint8_t> render_onboarding_bitmap(const app::AppState& state) {
       fill_black_rect(image, ind_x0, ind_y0, ind_x1, ind_y1);
       draw_outline_rect(image, ind_x0 - 3, ind_y0 - 3, ind_x1 + 3, ind_y1 + 3, 3);
       draw_text_centered_inverted(image, ind_x0 + 16, ind_x1 - 16,
-                                  ind_y0 + 20, "* RECORDING... SPEAK NOW *", 2, 24);
+                                  ind_y0 + 20, s.ob_recording, 2, 24);
     } else {
       draw_outline_rect(image, ind_x0, ind_y0, ind_x1, ind_y1, 2);
       draw_text_centered(image, ind_x0 + 16, ind_x1 - 16,
-                         ind_y0 + 20, "HOLD VOICE KEY TO RECORD", 2, 24);
+                         ind_y0 + 20, s.ob_hold_to_record, 2, 24);
     }
 
     // ── Example commands ────────────────────────────────────────────────
-    draw_text_line(image, 40, 172, "EXAMPLE COMMANDS:", 1, 38);
-    draw_text_line(image, 60, 192, "* Add milk to the shopping list", 1, 38);
-    draw_text_line(image, 60, 210, "* Set a 5-minute timer", 1, 38);
-    draw_text_line(image, 60, 228, "* Show the calendar", 1, 38);
+    draw_text_line(image, 40, 172, s.ob_example_cmds, 1, 38);
+    draw_text_line(image, 60, 192, s.ob_ex_add_milk, 1, 38);
+    draw_text_line(image, 60, 210, s.ob_ex_set_timer, 1, 38);
+    draw_text_line(image, 60, 228, s.ob_ex_show_cal, 1, 38);
 
     // ── Result area ──────────────────────────────────────────────────────
     fill_black_rect(image, 40, 248, 760, 250);   // divider
-    draw_text_line(image, 40, 260, "RESULT:", 1, 38);
+    draw_text_line(image, 40, 260, s.ob_result, 1, 38);
     draw_outline_rect(image, 40, 278, 760, 390, 2);
 
     if (!has_result && !recording) {
       // Idle state — no test done yet.
-      draw_text_line(image, 56, 310, "No result yet.", 2, 32);
-      draw_text_line(image, 56, 344, "Hold the voice key above to test.", 1, 38);
+      draw_text_line(image, 56, 310, s.ob_no_result, 2, 32);
+      draw_text_line(image, 56, 344, s.ob_hold_to_test, 1, 38);
     } else if (recording) {
-      draw_text_line(image, 56, 318, "Listening...", 2, 32);
+      draw_text_line(image, 56, 318, s.ob_listening, 2, 32);
     } else {
       // Show last result from backend.
       draw_text_wrapped(image, 56, 296, 688, state.onboarding.voice_last_result, 2, 32);
     }
 
     // ── Skip / Done button ───────────────────────────────────────────────
-    draw_text_line(image, 40, 416, "Press to skip voice test and open Home.", 1, 38);
+    draw_text_line(image, 40, 416, s.ob_press_skip, 1, 38);
     const int btn_x0 = 544, btn_y0 = 406, btn_x1 = 760, btn_y1 = 446;
     fill_black_rect(image, btn_x0, btn_y0, btn_x1, btn_y1);
     draw_outline_rect(image, btn_x0 - 3, btn_y0 - 3, btn_x1 + 3, btn_y1 + 3, 3);
     draw_text_centered_inverted(image, btn_x0 + 8, btn_x1 - 8, btn_y0 + 14,
-                                 has_result ? "DONE >" : "SKIP >", 2, 22);
+                                 has_result ? s.ob_done_btn : s.ob_skip_btn, 2, 22);
     return image;
   }
 
   // ── Fallback: Setup Complete ───────────────────────────────────────────
-  draw_text_line(image, 40, 60, "SETUP COMPLETE", 3, 24);
-  draw_text_line(image, 40, 102, "YOUR BOARD IS READY.", 1, 28);
+  draw_text_line(image, 40, 60, s.ob_setup_complete, 3, 24);
+  draw_text_line(image, 40, 102, s.ob_board_ready, 1, 28);
   draw_text_line(image, 62, 156, lang_line, 1, 40);
-  draw_text_line(image, 62, 184, "Timezone: " + state.onboarding.timezone, 1, 40);
+  draw_text_line(image, 62, 184, std::string(s.ob_timezone_prefix) + state.onboarding.timezone, 1, 40);
   draw_text_line(image, 62, 212,
-                 std::string("Auto Sync: ") +
-                     (state.onboarding.auto_sync_enabled ? "ON" : "OFF"),
+                 std::string(s.ob_auto_sync_prefix) +
+                     (state.onboarding.auto_sync_enabled ? s.on : s.off),
                  1, 40);
   if (!state.onboarding.wifi_ssid.empty()) {
-    draw_text_line(image, 62, 240, "Wi-Fi: " + state.onboarding.wifi_ssid, 1, 40);
+    draw_text_line(image, 62, 240, std::string(s.ob_wifi_prefix) + state.onboarding.wifi_ssid, 1, 40);
   }
   fill_black_rect(image, 240, 380, 560, 438);
   draw_outline_rect(image, 237, 377, 563, 441, 3);
-  draw_text_centered_inverted(image, 252, 548, 400, "ENTER HOME", 2, 24);
+  draw_text_centered_inverted(image, 252, 548, 400, s.ob_enter_home, 2, 24);
   return image;
 }
 

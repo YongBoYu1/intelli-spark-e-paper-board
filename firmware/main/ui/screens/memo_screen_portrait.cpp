@@ -3,6 +3,7 @@
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
 #include "ui/panel_font_assets_generated.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -221,6 +222,7 @@ int selected_memo_index(const app::AppState& state) {
 std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
   using platform::kPanelBufferSize;
 
+  const auto& s = get_ui_strings(state.device_language);
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
   const bool r90 = use_r90_map(state);
 
@@ -229,9 +231,9 @@ std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
   const int content_top = 86;
   const int content_bottom = kPH - 56;
 
-  memo_text_line(image, left, 16, "FAMILY BOARD", 3, 20, r90);
+  memo_text_line(image, left, 16, s.memo_title, 3, 20, r90);
   const std::string hint = truncate_text_px(
-      "ROTATE=SELECT  |  CLICK=ENTER  |  HOLD=HOME",
+      s.memo_hint,
       1,
       std::max(80, right - left));
   const int hint_w = memo_text_width(hint, 1);
@@ -243,12 +245,12 @@ std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
   const int selected = selected_memo_index(state);
 
   if (total <= 0) {
-    memo_text_line(image, left + 4, content_top + 8, "NO FAMILY NOTES YET", 2, 24, r90);
+    memo_text_line(image, left + 4, content_top + 8, s.memo_empty, 2, 24, r90);
     memo_text_line(
         image,
         left + 4,
         content_top + 42,
-        "TRY VOICE: LEAVE A NOTE DINNER IS READY",
+        s.memo_empty_voice,
         1,
         52,
         r90);
@@ -261,9 +263,9 @@ std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
     }
 
     const std::string summary =
-        "TOTAL " + std::to_string(total) +
-        "   NEW " + std::to_string(unread) +
-        "   FOCUS " + std::to_string(selected + 1) + "/" + std::to_string(total);
+        std::string(s.memo_total) + " " + std::to_string(total) +
+        "   " + s.memo_count_new + " " + std::to_string(unread) +
+        "   " + s.memo_focus + " " + std::to_string(selected + 1) + "/" + std::to_string(total);
     memo_text_line(
         image,
         left + 4,
@@ -302,8 +304,8 @@ std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
       }
 
       const auto& memo = memos[static_cast<std::size_t>(idx)];
-      const std::string author = upper_copy(trim_or_default(memo.author, "UNKNOWN"));
-      const std::string posted = upper_copy(trim_or_default(memo.posted, "UNKNOWN TIME"));
+      const std::string author = upper_copy(trim_or_default(memo.author, s.memo_unknown));
+      const std::string posted = upper_copy(trim_or_default(memo.posted, s.memo_unknown_time));
       const std::string body = trim_or_default(memo.text, "No content.");
 
       const int content_x0 = cx0 + 10;
@@ -347,7 +349,7 @@ std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
       }
 
       if (memo.is_new) {
-        const std::string badge = "NEW";
+        const std::string badge = s.memo_badge_new;
         const int badge_w = memo_text_width(badge, 1);
         const int badge_x = std::max(content_x0, content_x1 - badge_w);
         if (is_selected) {
@@ -360,9 +362,9 @@ std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
 
     if (total > slots) {
       const std::string tail =
-          "SHOWING " + std::to_string(start + 1) + "-" +
+          std::string(s.memo_showing) + " " + std::to_string(start + 1) + "-" +
           std::to_string(std::min(total, start + slots)) +
-          " OF " + std::to_string(total);
+          " " + s.memo_of + " " + std::to_string(total);
       memo_text_line(
           image,
           left + 4,
@@ -375,7 +377,7 @@ std::vector<uint8_t> render_memo_portrait_bitmap(const app::AppState& state) {
   }
 
   const std::string footer = truncate_text_px(
-      "VOICE CMD: ADD | DELETE | CLEAR",
+      s.memo_footer,
       1,
       std::max(80, right - left));
   memo_text_line(image, left, kPH - 40, footer, 1, 40, r90);

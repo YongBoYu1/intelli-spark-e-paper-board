@@ -2,6 +2,7 @@
 
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <string>
@@ -61,7 +62,8 @@ void draw_inventory_column(
     const int x1,
     const int y0,
     const int y1,
-    const int selected_index) {
+    const int selected_index,
+    const UiStrings& s) {
   const int row_h = 40;
   const int slots = std::max(1, (y1 - y0) / row_h);
   const int start = window_start(static_cast<int>(rows.size()), slots, selected_index);
@@ -92,7 +94,7 @@ void draw_inventory_column(
     y += row_h;
   }
   if (rows.empty()) {
-    draw_text_line(image, x0 + 8, y0 + 10, "NO ITEMS", 1, 12);
+    draw_text_line(image, x0 + 8, y0 + 10, s.list_no_items, 1, 12);
   }
 }
 
@@ -103,7 +105,8 @@ void draw_reminder_column(
     const int x1,
     const int y0,
     const int y1,
-    const int selected_index) {
+    const int selected_index,
+    const UiStrings& s) {
   const int row_h = 40;
   const int slots = std::max(1, (y1 - y0) / row_h);
   const int start = window_start(static_cast<int>(rows.size()), slots, selected_index);
@@ -123,7 +126,7 @@ void draw_reminder_column(
     }
 
     const std::string prefix = rows[static_cast<std::size_t>(row_index)].completed ? "[x] " : "[ ] ";
-    const std::string right_meta = rows[static_cast<std::size_t>(row_index)].completed ? "DONE" : "TODO";
+    const std::string right_meta = rows[static_cast<std::size_t>(row_index)].completed ? s.list_done : s.list_todo;
     const std::string right_fit =
         truncate_text_px(right_meta, 1, std::max(52, ((x1 - x0) * 26) / 100));
     const int right_w = text_width_px(right_fit, 1);
@@ -145,7 +148,7 @@ void draw_reminder_column(
     y += row_h;
   }
   if (rows.empty()) {
-    draw_text_line(image, x0 + 8, y0 + 10, "NO ITEMS", 1, 12);
+    draw_text_line(image, x0 + 8, y0 + 10, s.list_no_items, 1, 12);
   }
 }
 
@@ -156,14 +159,15 @@ std::vector<uint8_t> render_list_landscape_bitmap(const app::AppState& state) {
   using platform::kPanelHeight;
   using platform::kPanelWidth;
 
+  const auto& s = get_ui_strings(state.device_language);
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
   const std::vector<ListRow> inventory = build_inventory_rows(state);
   const std::vector<ListRow> reminders = build_reminder_rows(state);
 
   const int left = 24;
   const int right = kPanelWidth - 24;
-  draw_text_line(image, left, 16, "LIST", 3, 16);
-  const std::string hint = "ROTATE=SELECT  |  CLICK=TOGGLE  |  HOLD=HOME";
+  draw_text_line(image, left, 16, s.list_title, 3, 16);
+  const std::string hint = s.list_hint;
   const std::string hint_fit = truncate_text_px(hint, 1, std::max(80, right - left));
   const int hint_w = text_width_px(hint_fit, 1);
   draw_text_line(image, std::max(left, right - hint_w), 52, hint_fit, 1, 0);
@@ -183,14 +187,14 @@ std::vector<uint8_t> render_list_landscape_bitmap(const app::AppState& state) {
       image,
       left_x0 + 2,
       content_top + 2,
-      truncate_text_px("INVENTORY " + std::to_string(inventory.size()), 1, std::max(60, left_x1 - left_x0 - 8)),
+      truncate_text_px(std::string(s.list_inventory) + " " + std::to_string(inventory.size()), 1, std::max(60, left_x1 - left_x0 - 8)),
       1,
       0);
   draw_text_line(
       image,
       right_x0 + 2,
       content_top + 2,
-      truncate_text_px("REMINDER " + std::to_string(reminders.size()), 1, std::max(60, right_x1 - right_x0 - 8)),
+      truncate_text_px(std::string(s.list_reminder) + " " + std::to_string(reminders.size()), 1, std::max(60, right_x1 - right_x0 - 8)),
       1,
       0);
 
@@ -207,11 +211,11 @@ std::vector<uint8_t> render_list_landscape_bitmap(const app::AppState& state) {
           ? (focused_global - static_cast<int>(inventory.size()))
           : -1;
 
-  draw_inventory_column(image, inventory, left_x0, left_x1, list_top, content_bottom, selected_inventory);
-  draw_reminder_column(image, reminders, right_x0, right_x1, list_top, content_bottom, selected_reminder);
+  draw_inventory_column(image, inventory, left_x0, left_x1, list_top, content_bottom, selected_inventory, s);
+  draw_reminder_column(image, reminders, right_x0, right_x1, list_top, content_bottom, selected_reminder, s);
 
   const std::string footer =
-      truncate_text_px("VOICE CMD: DELETE | ADD | MODIFY", 1, std::max(80, right - left));
+      truncate_text_px(s.list_footer, 1, std::max(80, right - left));
   draw_text_line(image, left, footer_y, footer, 1, 0);
   return image;
 }

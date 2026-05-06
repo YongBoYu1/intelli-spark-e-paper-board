@@ -3,6 +3,7 @@
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
 #include "ui/panel_font_assets_generated.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -191,29 +192,29 @@ int round_minutes_python_style(const int seconds) {
   return (q % 2 == 0) ? q : (q + 1);
 }
 
-std::string timer_done_message(const int done_seconds) {
+std::string timer_done_message(const int done_seconds, const UiStrings& s) {
   const int secs = std::max(1, done_seconds);
   const int mins = std::max(1, round_minutes_python_style(secs));
   if (mins == 1) {
-    return "1 MINUTE COUNTDOWN FINISHED";
+    return s.timer_1min_done;
   }
-  return std::to_string(mins) + " MINUTES COUNTDOWN FINISHED";
+  return std::to_string(mins) + s.timer_mins_done;
 }
 
-std::string timer_status_text(const app::TimerState& timer) {
+std::string timer_status_text(const app::TimerState& timer, const UiStrings& s) {
   if (timer.alert_active && timer.seconds_remaining <= 0) {
     const int done = timer.last_completed_seconds > 0
                          ? timer.last_completed_seconds
                          : timer.target_seconds;
-    return timer_done_message(done);
+    return timer_done_message(done, s);
   }
   if (timer.seconds_remaining <= 0) {
-    return "READY";
+    return s.timer_ready;
   }
   if (timer.running) {
-    return "RUNNING";
+    return s.timer_running;
   }
-  return "PAUSED";
+  return s.timer_paused;
 }
 
 const BitmapFont& pick_time_font(
@@ -279,22 +280,23 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
   using platform::kPanelHeight;
   using platform::kPanelWidth;
 
+  const auto& s = get_ui_strings(state.device_language);
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
   const BitmapFont& title_font = platform::panel_font_assets::kFontInterBold29;
   const BitmapFont& hint_font = platform::panel_font_assets::kFontJetBold13;
   const BitmapFont& button_font = platform::panel_font_assets::kFontInterBold20;
 
-  const std::string hint_raw = "ROTATE=SELECT  |  CLICK=ENTER  |  HOLD=HOME";
+  const std::string hint_raw = s.timer_hint;
   const std::string hint_text = truncate_text_with_font(
       hint_raw,
       hint_font,
       std::max(80, kPanelWidth - 48));
   const std::string time_text = format_timer_value(state.timer.seconds_remaining);
-  const std::string status_text = timer_status_text(state.timer);
+  const std::string status_text = timer_status_text(state.timer, s);
   const BitmapFont& status_font = pick_status_font(status_text, kPanelWidth - 72);
 
-  draw_text_with_font(image, kTitleX, kTitleY, "TIMER", title_font);
+  draw_text_with_font(image, kTitleX, kTitleY, s.timer_title, title_font);
   const int hint_w = text_width_with_font(hint_text, hint_font);
   const int hint_x = std::max(kMarginX, (kPanelWidth - kMarginX) - hint_w);
   draw_text_with_font(image, hint_x, kHintY, hint_text, hint_font);
@@ -353,8 +355,8 @@ std::vector<uint8_t> render_timer_landscape_bitmap(const app::AppState& state) {
   const std::string controls[] = {
       "-1M",
       "+1M",
-      state.timer.running ? "PAUSE" : "START",
-      "RESET",
+      state.timer.running ? s.timer_pause_btn : s.timer_start_btn,
+      s.timer_reset_btn,
   };
   const int focused = ((state.timer.focused_index % 4) + 4) % 4;
   const int button_width = (kPanelWidth - (kMarginX * 2) - (kButtonGap * 3)) / 4;

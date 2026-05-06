@@ -3,6 +3,7 @@
 #include "app/calendar_runtime.hpp"
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <array>
@@ -56,7 +57,8 @@ int start_weekday_sunday0(int year, int month) {
 
 std::vector<AgendaRow> build_agenda_rows(
     const app::AppState& state,
-    const app::calendar_runtime::AgendaSelection& selection) {
+    const app::calendar_runtime::AgendaSelection& selection,
+    const UiStrings& s) {
   std::vector<AgendaRow> rows;
   rows.reserve(selection.event_indices.size() + selection.reminder_indices.size());
 
@@ -69,7 +71,7 @@ std::vector<AgendaRow> build_agenda_rows(
         false,
         false,
         -1,
-        event.when.empty() ? "EVENT" : event.when,
+        event.when.empty() ? s.cal_event : event.when,
         event.title,
     });
   }
@@ -88,7 +90,7 @@ std::vector<AgendaRow> build_agenda_rows(
       right_text = state.dashboard.reminder_meta[static_cast<std::size_t>(reminder_index)].right;
     }
     if (right_text.empty()) {
-      right_text = "REMINDER";
+      right_text = s.cal_reminder;
     }
 
     rows.push_back(AgendaRow{
@@ -111,9 +113,10 @@ void draw_month_grid(
     int x0,
     int y0,
     int x1,
-    int y1) {
-  static constexpr std::array<const char*, 7> kWeek = {
-      "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+    int y1,
+    const UiStrings& s) {
+  const std::array<const char*, 7> kWeek = {
+      s.cal_sun, s.cal_mon, s.cal_tue, s.cal_wed, s.cal_thu, s.cal_fri, s.cal_sat};
 
   const int month_days = days_in_month(cursor.year, cursor.month);
   const int offset = start_weekday_sunday0(cursor.year, cursor.month);
@@ -190,7 +193,8 @@ void draw_agenda_rows(
     int y1,
     const std::vector<AgendaRow>& rows,
     int selected_index,
-    bool agenda_mode) {
+    bool agenda_mode,
+    const UiStrings& s) {
   const int available_h = std::max(1, y1 - y0);
   const int gap = 8;
   const int row_h = 56;
@@ -223,7 +227,7 @@ void draw_agenda_rows(
           image,
           x0 + 10,
           yy + 34,
-          row.reminder ? "CLICK TO TOGGLE" : "EVENT (READ ONLY)",
+          row.reminder ? s.cal_click_toggle : s.cal_event_readonly,
           1,
           28);
     } else {
@@ -233,7 +237,7 @@ void draw_agenda_rows(
           image,
           x0 + 10,
           yy + 34,
-          row.reminder ? "REMINDER" : "EVENT",
+          row.reminder ? s.cal_reminder : s.cal_event,
           1,
           16);
     }
@@ -243,7 +247,7 @@ void draw_agenda_rows(
 
   const int hidden = std::max(0, static_cast<int>(rows.size()) - (start + visible));
   if (hidden > 0) {
-    const std::string more = "+" + std::to_string(hidden) + " MORE";
+    const std::string more = "+" + std::to_string(hidden) + " " + s.cal_more;
     const int more_w = text_width_px(more, 1);
     draw_text_line(image, x1 - more_w - 4, std::max(y0 + 2, y1 - 14), more, 1, 16);
   }
@@ -256,6 +260,7 @@ std::vector<uint8_t> render_calendar_landscape_bitmap(const app::AppState& state
   using platform::kPanelHeight;
   using platform::kPanelWidth;
 
+  const auto& s = get_ui_strings(state.device_language);
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
   const auto base_date = app::calendar_runtime::today_local_date(state);
@@ -264,7 +269,7 @@ std::vector<uint8_t> render_calendar_landscape_bitmap(const app::AppState& state
   const bool agenda_mode = mode == "agenda";
 
   const auto selection = app::calendar_runtime::agenda_selection_for_cursor(state, base_date);
-  const auto rows = build_agenda_rows(state, selection);
+  const auto rows = build_agenda_rows(state, selection, s);
   const int selected_index = std::max(
       0,
       std::min(state.calendar.selected_index, std::max(0, static_cast<int>(rows.size()) - 1)));
@@ -285,7 +290,7 @@ std::vector<uint8_t> render_calendar_landscape_bitmap(const app::AppState& state
   const std::string month_name = app::calendar_runtime::month_name_upper(cursor.month);
   draw_text_line(image, left_x0, 34, month_name, 3, 18);
   draw_text_line(image, left_x0 + 2, 74, std::to_string(cursor.year), 1, 8);
-  draw_text_line(image, left_x0 + 2, 96, "MONTH VIEW", 1, 16);
+  draw_text_line(image, left_x0 + 2, 96, s.cal_month_view, 1, 16);
 
   draw_month_grid(
       image,
@@ -295,14 +300,15 @@ std::vector<uint8_t> render_calendar_landscape_bitmap(const app::AppState& state
       left_x0,
       134,
       left_x1,
-      kPanelHeight - 52);
+      kPanelHeight - 52,
+      s);
 
-  const std::string day_chip = "DAY " + std::to_string(cursor.day);
+  const std::string day_chip = std::string(s.cal_day) + " " + std::to_string(cursor.day);
   const int chip_w = std::max(84, text_width_px(day_chip, 1) + 18);
   fill_black_rect(image, left_x0, kPanelHeight - 42, left_x0 + chip_w, kPanelHeight - 18);
   draw_text_centered_inverted(image, left_x0 + 2, left_x0 + chip_w - 2, kPanelHeight - 34, day_chip, 1, 20);
 
-  draw_text_line(image, right_x0 + 14, 34, "AGENDA", 3, 12);
+  draw_text_line(image, right_x0 + 14, 34, s.cal_agenda, 3, 12);
   const int weekday = app::calendar_runtime::weekday_sunday0(cursor);
   const std::string weekday_label = app::calendar_runtime::weekday_name_upper(weekday);
   draw_text_line(image, right_x0 + 14, 74, weekday_label, 1, 12);
@@ -311,19 +317,19 @@ std::vector<uint8_t> render_calendar_landscape_bitmap(const app::AppState& state
       std::string(app::calendar_runtime::month_name_upper(cursor.month)) + " " + std::to_string(cursor.day);
   draw_text_line(image, right_x0 + 14, 96, date_label, 1, 22);
 
-  const std::string mode_text = agenda_mode ? "MODE: AGENDA" : "MODE: DATE";
+  const std::string mode_text = agenda_mode ? s.cal_mode_agenda : s.cal_mode_date;
   const int mode_w = text_width_px(mode_text, 1);
   draw_text_line(image, right_x1 - mode_w - 2, 34, mode_text, 1, 20);
   fill_black_rect(image, right_x0 + 14, 114, right_x1, 116);
 
   if (rows.empty()) {
-    draw_text_line(image, right_x0 + 14, 154, "NO EVENTS", 2, 14);
+    draw_text_line(image, right_x0 + 14, 154, s.cal_no_events, 2, 14);
     draw_text_wrapped(
         image,
         right_x0 + 14,
         186,
         std::max(80, right_x1 - right_x0 - 20),
-        "Voice can add reminders and memos",
+        s.cal_voice_hint,
         1,
         3);
   } else {
@@ -335,7 +341,8 @@ std::vector<uint8_t> render_calendar_landscape_bitmap(const app::AppState& state
         kPanelHeight - 22,
         rows,
         selected_index,
-        agenda_mode);
+        agenda_mode,
+        s);
   }
 
   return image;

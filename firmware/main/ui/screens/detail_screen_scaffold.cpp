@@ -10,7 +10,8 @@ std::vector<uint8_t> render_detail_scaffold_bitmap(
     const std::string& line_one,
     const std::string& line_two,
     const std::string& line_three,
-    const std::string& orientation_label) {
+    const std::string& orientation_label,
+    const UiStrings& s) {
   using platform::kPanelBufferSize;
   using platform::kPanelWidth;
 
@@ -28,7 +29,7 @@ std::vector<uint8_t> render_detail_scaffold_bitmap(
   fill_black_rect(image, 204, 388, kPanelWidth - 204, 438);
   draw_outline_rect(image, 201, 385, kPanelWidth - 201, 441, 3);
   draw_text_centered_inverted(
-      image, 220, kPanelWidth - 220, 404, "CLICK TO RETURN MENU", 1, 28);
+      image, 220, kPanelWidth - 220, 404, s.scaffold_return_menu, 1, 28);
   return image;
 }
 

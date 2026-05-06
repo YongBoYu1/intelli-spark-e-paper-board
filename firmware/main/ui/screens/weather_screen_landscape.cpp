@@ -5,6 +5,7 @@
 #include "ui/draw.hpp"
 #include "ui/panel_font_assets_generated.hpp"
 #include "ui/primitives.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <array>
@@ -153,11 +154,12 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
   using namespace platform::panel_font_assets;
   using platform::kPanelBufferSize;
 
+  const auto& s = get_ui_strings(state.device_language);
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
   const bool weather_has_data = !state.dashboard.weather_condition.empty();
   const bool weather_syncing = state.home.weather_sync_state == "syncing";
-  const std::string city = wl_upper(state.dashboard.location.empty() ? "UNKNOWN" : state.dashboard.location);
+  const std::string city = wl_upper(state.dashboard.location.empty() ? s.wx_unknown_location : state.dashboard.location);
   const std::string condition = weather_has_data
                                     ? state.dashboard.weather_condition
                                     : std::string("Cloudy");
@@ -177,8 +179,8 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
       (weather_has_data && humidity > 0) ? (std::to_string(humidity) + "%") : "--";
   // No "C" suffix — degree "o" is drawn as a superscript separately.
   const std::string feels_like_str =
-      weather_has_data ? ("FEELS LIKE " + std::to_string(feels_like_c))
-                       : (weather_syncing ? "SYNCING..." : "FEELS LIKE --");
+      weather_has_data ? (std::string(s.wx_feels_like) + " " + std::to_string(feels_like_c))
+                       : (weather_syncing ? s.wx_syncing : s.wx_feels_like_na);
   const std::string range_str =
       weather_has_data
           ? ("H: " + std::to_string(hi_c) + "  L: " + std::to_string(lo_c))
@@ -279,9 +281,9 @@ std::vector<uint8_t> render_weather_landscape_bitmap(const app::AppState& state)
     // smaller font so it doesn't dominate the metric tile visually.
     const std::string wind_num_str = weather_has_data ? std::to_string(wind_kmh) : "--";
     const std::array<Item, 3> items = {{
-      {humidity_str,  "HUMIDITY"},
-      {wind_num_str,  "WIND"},
-      {weather_has_data ? std::to_string(uv_index) : "--", "UV INDEX"},
+      {humidity_str,  s.wx_humidity},
+      {wind_num_str,  s.wx_wind},
+      {weather_has_data ? std::to_string(uv_index) : "--", s.wx_uv_index},
     }};
 
     for (int i = 0; i < 3; ++i) {

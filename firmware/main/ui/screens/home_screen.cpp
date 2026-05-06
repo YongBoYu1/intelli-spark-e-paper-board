@@ -5,8 +5,10 @@
 #include "ui/draw.hpp"
 #include "ui/primitives.hpp"
 #include "ui/panel_font_assets_generated.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <ctime>
 #include <iomanip>
@@ -54,13 +56,6 @@ constexpr int kInventoryVisiblePortraitMax = 4;
 constexpr int kReminderVisiblePortraitMax = 4;
 constexpr int kReminderVisibleMax = 5;
 constexpr int kHomeMenuItemCount = 5;
-constexpr const char* kHomeMenuItems[kHomeMenuItemCount] = {
-    "MEMO",
-    "LIST",
-    "TIMER",
-    "CALENDAR",
-    "SETTINGS",
-};
 
 enum class HomeFocusKind {
   Clock,
@@ -1692,14 +1687,15 @@ void draw_inventory_section(
     const int x0,
     const int x1,
     const int title_y,
-    const app::AppState& state) {
+    const app::AppState& state,
+    const UiStrings& s) {
   const app::DashboardSummary& dashboard = state.dashboard;
   const HomeTypography typography = home_typography_for(state);
   const BitmapFont& title_font = *typography.section_title_font;
   const BitmapFont& badge_font = *typography.badge_font;
   const BitmapFont& item_font = *typography.item_font;
   constexpr int title_spacing = 2;
-  draw_text_with_font_spaced(image, x0, title_y, "INVENTORY", title_font, title_spacing);
+  draw_text_with_font_spaced(image, x0, title_y, s.home_inventory, title_font, title_spacing);
   const std::vector<int> inventory_indices = visible_inventory_indices(state);
   const int visible_count = static_cast<int>(inventory_indices.size());
   const int open_count = open_item_count(
@@ -1728,9 +1724,9 @@ void draw_inventory_section(
         item_index >= 0 &&
         item_index < static_cast<int>(dashboard.inventory_completed.size()) &&
         dashboard.inventory_completed[static_cast<std::size_t>(item_index)];
-    std::string badge = "STOCKED";
+    std::string badge = s.home_stocked;
     if (completed) {
-      badge = "OUT";
+      badge = s.home_out;
     }
     if (item_index >= 0 &&
         item_index < static_cast<int>(dashboard.inventory_badges.size()) &&
@@ -1817,7 +1813,8 @@ void draw_reminders_section(
     const int x0,
     const int x1,
     const app::AppState& state,
-    const HomeLandscapeMetrics& metrics) {
+    const HomeLandscapeMetrics& metrics,
+    const UiStrings& s) {
   const app::DashboardSummary& dashboard = state.dashboard;
   const HomeTypography typography = home_typography_for(state);
   const int shop_rule_y = metrics.family_rule_y;
@@ -1826,7 +1823,7 @@ void draw_reminders_section(
   const BitmapFont& title_font = *typography.section_title_font;
   const BitmapFont& item_font = *typography.item_font;
   constexpr int title_spacing = 1;
-  draw_text_with_font_spaced(image, x0, title_y, "REMINDERS", title_font, title_spacing);
+  draw_text_with_font_spaced(image, x0, title_y, s.home_reminders, title_font, title_spacing);
   const std::vector<int> reminder_indices = visible_reminder_indices(state);
   const int visible_count = static_cast<int>(reminder_indices.size());
   int open_count = 0;
@@ -1887,7 +1884,8 @@ void draw_family_board(
     const int label_y,
     const int rule_y,
     const int bottom_y,
-    const app::AppState& state) {
+    const app::AppState& state,
+    const UiStrings& s) {
   const HomeTypography typography = home_typography_for(state);
   const BitmapFont& label_font = *typography.family_label_font;
   const BitmapFont& family_name_font = *typography.family_name_font;
@@ -1896,13 +1894,13 @@ void draw_family_board(
   const FamilyBoardView view = resolve_family_board_view(state);
 
   constexpr int title_spacing = 3;
-  draw_text_with_font_spaced(image, x0, label_y, "FAMILY BOARD", label_font, title_spacing);
+  draw_text_with_font_spaced(image, x0, label_y, s.memo_title, label_font, title_spacing);
 
   constexpr int family_spacing = 1;
   constexpr int family_gap = 16;
   constexpr int underline_gap = 3;
   constexpr int underline_w = 2;
-  const int title_w = text_width_with_font_spaced("FAMILY BOARD", label_font, title_spacing);
+  const int title_w = text_width_with_font_spaced(s.memo_title, label_font, title_spacing);
   const int max_row_w = std::max(64, x1 - (x0 + title_w + 22));
   std::vector<std::pair<std::string, int>> labels{};
   labels.reserve(view.author_tags.size());
@@ -1986,12 +1984,13 @@ void draw_voice_lane(
     const int x0,
     const int y0,
     const int x1,
-    const app::AppState& state) {
+    const app::AppState& state,
+    const UiStrings& s) {
   const int lane_h = 29;
   const int icon_size = 16;
   const HomeTypography typography = home_typography_for(state);
   const BitmapFont& font = *typography.voice_font;
-  const std::string label = "Hold to talk";
+  const std::string label = s.home_hold_to_talk;
   fill_white_rect(image, x0, y0 - 1, x1, y0 + lane_h + 1);
   const int icon_x = x0 + 2;
   const int icon_y = y0 + ((lane_h - icon_size) / 2) - 1;
@@ -2008,7 +2007,8 @@ void draw_voice_lane(
 
 void draw_home_menu_overlay(
     std::vector<uint8_t>& image,
-    const app::AppState& state) {
+    const app::AppState& state,
+    const UiStrings& s) {
   const HomeLandscapeMetrics metrics = home_landscape_metrics();
   const HomeMenuOverlayLayout layout = home_menu_overlay_layout(metrics.width, metrics.height);
   if (layout.x1 <= layout.x0 || layout.y1 <= layout.y0) {
@@ -2041,7 +2041,9 @@ void draw_home_menu_overlay(
   const BitmapFont& hint_font = *typography.menu_hint_font;
   const BitmapFont* item_font = typography.item_font;
   constexpr int hint_spacing = 0;
-  const std::string hint = "NAVIGATION";
+  const std::string hint = s.home_navigation;
+  const std::array<const char*, kHomeMenuItemCount> kHomeMenuItems = {
+      s.menu_memo, s.menu_list, s.menu_timer, s.menu_calendar, s.menu_settings};
   const int hint_w = text_width_with_font_spaced(hint, hint_font, hint_spacing);
   const int hint_x =
       layout.x0 + std::max(8, ((layout.x1 - layout.x0) - hint_w) / 2);
@@ -2121,6 +2123,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   using platform::kPanelHeight;
   using platform::kPanelWidth;
 
+  const auto& s = get_ui_strings(state.device_language);
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
   const int margin = 18;
@@ -2168,15 +2171,15 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       weather_has_data ? std::to_string(state.dashboard.weather_temperature_c) : "--";
   const std::string weather =
       right_fit_with_font(
-          weather_syncing ? "SYNCING" :
-          (weather_has_data ? state.dashboard.weather_condition : "UNSYNCED"),
+          weather_syncing ? s.home_syncing :
+          (weather_has_data ? state.dashboard.weather_condition : s.home_unsynced),
           weather_meta_font,
           weather_col_w,
           1);
   const std::string humidity = right_fit_with_font(
       weather_has_data
-          ? ("HUM " + std::to_string(state.dashboard.weather_humidity_percent) + "%")
-          : "HUM --",
+          ? (std::string(s.home_hum_prefix) + std::to_string(state.dashboard.weather_humidity_percent) + "%")
+          : s.home_hum_na,
       weather_meta_font,
       weather_col_w,
       1);
@@ -2206,7 +2209,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
   const int weekday_y = time_flow_bottom + 13;
   int weather_bottom = weekday_y;
   int clock_bottom_for_focus =
-      weekday_y + text_height_with_font("UNSYNCED", weather_meta_font) + 8;
+      weekday_y + text_height_with_font(s.home_unsynced, weather_meta_font) + 8;
   if (display_clock.valid) {
     draw_text_with_font_spaced(image, left_x0, weekday_y, weekday, weekday_font, 4);
     const int weekday_h = text_height_with_font("Ag", weekday_font);
@@ -2219,7 +2222,7 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
         image,
         left_x0,
         weekday_y,
-        "UNSYNCED",
+        s.home_unsynced,
         weather_meta_font);
   }
 
@@ -2322,13 +2325,14 @@ std::vector<uint8_t> render_home_bitmap(const app::AppState& state) {
       family_label_y,
       family_rule_y,
       voice_lane_y - 4,
-      state);
-  draw_voice_lane(image, 14, voice_lane_y, 14 + 340, state);
+      state,
+      s);
+  draw_voice_lane(image, 14, voice_lane_y, 14 + 340, state, s);
 
-  draw_inventory_section(image, right_x0, right_x1, render_metrics.inv_y, state);
-  draw_reminders_section(image, right_x0, right_x1, state, render_metrics);
+  draw_inventory_section(image, right_x0, right_x1, render_metrics.inv_y, state, s);
+  draw_reminders_section(image, right_x0, right_x1, state, render_metrics, s);
   if (state.home.menu_overlay_active) {
-    draw_home_menu_overlay(image, state);
+    draw_home_menu_overlay(image, state, s);
   }
 
   return image;
@@ -2521,7 +2525,21 @@ HomeDirtyPlan home_dirty_plan(
       add_reason("home.focus_move_row");
     } else if (prev_kind != HomeFocusKind::Row &&
                curr_kind != HomeFocusKind::Row) {
-      const platform::DirtyRect merged = merge_focus_transition_rects(prev_rect, curr_rect);
+      // When the focus ring is *disappearing* (show_focus: true→false) in
+      // landscape mode, the e-paper partial refresh can leave a ghost of the
+      // bottom horizontal stroke.  Refresh the entire clock-column area
+      // (from the top margin down to just below the family board rule) so
+      // the ghost is fully cleared by the wider partial window.
+      const bool focus_hiding = previous.show_focus && !current.show_focus;
+      platform::DirtyRect merged{};
+      if (focus_hiding && !current.portrait_layout) {
+        const HomeLandscapeMetrics m = home_landscape_metrics();
+        merged = clip_rect(
+            {m.ox0, m.oy0, m.weather_left, m.family_rule_y + 12},
+            m.width, m.height);
+      } else {
+        merged = merge_focus_transition_rects(prev_rect, curr_rect);
+      }
       if (is_valid_rect(merged)) {
         append_rect_if_valid(plan.rects, merged);
       } else {
