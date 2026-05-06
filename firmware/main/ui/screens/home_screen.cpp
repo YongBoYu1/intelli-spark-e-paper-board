@@ -2516,13 +2516,23 @@ HomeDirtyPlan home_dirty_plan(
         focus_rect_for(current, current.focused_index, current.show_focus);
 
     if (prev_kind == HomeFocusKind::Row && curr_kind == HomeFocusKind::Row) {
-      const platform::DirtyRect merged = merge_focus_transition_rects(prev_rect, curr_rect);
-      if (is_valid_rect(merged)) {
-        append_rect_if_valid(plan.rects, merged);
+      const bool focus_hiding = previous.show_focus && !current.show_focus;
+      if (focus_hiding) {
+        // When the focus ring disappears (show_focus: true→false) the partial
+        // refresh can leave ghost pixels of the rounded-rect strokes, especially
+        // the top and bottom horizontal lines.  Refresh the full list panel so
+        // every pixel of the old ring is covered by the wider partial window.
+        append_rect_if_valid(plan.rects, list_rect_for(previous));
+        add_reason("home.focus_hide_row");
       } else {
-        append_rect_if_valid(plan.rects, list_rect_for(current));
+        const platform::DirtyRect merged = merge_focus_transition_rects(prev_rect, curr_rect);
+        if (is_valid_rect(merged)) {
+          append_rect_if_valid(plan.rects, merged);
+        } else {
+          append_rect_if_valid(plan.rects, list_rect_for(current));
+        }
+        add_reason("home.focus_move_row");
       }
-      add_reason("home.focus_move_row");
     } else if (prev_kind != HomeFocusKind::Row &&
                curr_kind != HomeFocusKind::Row) {
       // When the focus ring is *disappearing* (show_focus: true→false) in
