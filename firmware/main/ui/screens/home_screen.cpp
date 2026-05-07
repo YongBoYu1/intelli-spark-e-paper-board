@@ -122,6 +122,10 @@ struct HomeLandscapeMetrics {
   int shop_row_h{0};
   int row_x0{0};
   int row_x1{0};
+  // Rightmost pixel the clock time label can reach across all font-size modes.
+  // Large mode: "00:00" with InterBlack87 = 281 px advance; medium: 272.
+  // Stored so focus-box and dirty-rect always cover the rendered text.
+  int clock_content_x1{0};
 };
 
 struct FocusBox {
@@ -381,6 +385,10 @@ HomeLandscapeMetrics home_landscape_metrics() {
   metrics.row_x1 = std::min(
       metrics.width,
       inner_x1 + metrics.row_focus_pad_x - metrics.row_focus_right_trim);
+  // Worst-case time-label pixel extent, measured from clock_x (= ox0 + 24).
+  // Large-font mode uses InterBlack87 as final fallback; "00:00" advance = 281.
+  // Add 8 px safety margin → ox0 + 24 + 289.
+  metrics.clock_content_x1 = metrics.ox0 + 24 + 289;
   return metrics;
 }
 
@@ -420,9 +428,12 @@ FocusBox home_header_focus_box(
     return {
         metrics.ox0 + 24 - metrics.header_focus_pad_x,
         std::max(metrics.oy0 + 2, metrics.top_y - 28),
-        std::max(
-            metrics.ox0 + 24 - metrics.header_focus_pad_x + 16,
-            metrics.weather_left - 7),
+        // x1: cover the full time-label pixel extent.
+        // Some time strings ("00:00", "20:00") with the Large-mode fallback
+        // font (InterBlack87, advance 281 px) exceed weather_left-7 = 301,
+        // leaving stale pixels outside the dirty rect.  Use clock_content_x1
+        // (ox0+24+289 = 331) which covers all font-size modes.
+        metrics.clock_content_x1,
         // The clock focus ring bottom is derived from the actual rendered
         // clock_bottom_for_focus = top_y + time_flow_bounds.bottom(84) + 13
         //   + weekday_h(14) + 11 + date_h(18) + 8 = top_y + 147.
