@@ -423,7 +423,11 @@ FocusBox home_header_focus_box(
         std::max(
             metrics.ox0 + 24 - metrics.header_focus_pad_x + 16,
             metrics.weather_left - 7),
-        std::min(metrics.oy1, metrics.top_y + 142),
+        // The clock focus ring bottom is derived from the actual rendered
+        // clock_bottom_for_focus = top_y + time_flow_bounds.bottom(84) + 13
+        //   + weekday_h(14) + 11 + date_h(18) + 8 = top_y + 147.
+        // Use top_y + 160 to leave a safe margin above that.
+        std::min(metrics.oy1, metrics.top_y + 160),
         true,
     };
   }
