@@ -2536,16 +2536,20 @@ HomeDirtyPlan home_dirty_plan(
     } else if (prev_kind != HomeFocusKind::Row &&
                curr_kind != HomeFocusKind::Row) {
       // When the focus ring is *disappearing* (show_focus: true→false) in
-      // landscape mode, the e-paper partial refresh can leave a ghost of the
-      // bottom horizontal stroke.  Refresh the entire clock-column area
-      // (from the top margin down to just below the family board rule) so
-      // the ghost is fully cleared by the wider partial window.
+      // landscape mode, use a dirty rect that covers the ENTIRE left panel
+      // (clock + weather columns together).  The previous rect used
+      // m.weather_left as x1, which only covers the clock sub-column; the
+      // Weather focus ring extends to weather_right + header_focus_pad_x
+      // (~x=456), leaving the right ~¾ of that ring un-refreshed and visibly
+      // stuck on screen.
       const bool focus_hiding = previous.show_focus && !current.show_focus;
       platform::DirtyRect merged{};
       if (focus_hiding && !current.portrait_layout) {
         const HomeLandscapeMetrics m = home_landscape_metrics();
         merged = clip_rect(
-            {m.ox0, m.oy0, m.weather_left, m.family_rule_y + 12},
+            {m.ox0, m.oy0,
+             m.weather_right + m.header_focus_pad_x,
+             m.family_rule_y + 12},
             m.width, m.height);
       } else {
         merged = merge_focus_transition_rects(prev_rect, curr_rect);
