@@ -13,7 +13,7 @@ struct PersistentState {
   bool        setup_completed{false};
   std::string wifi_ssid{};
   std::string timezone{};
-  std::size_t language_index{0};   // 0=en-US, 1=zh-CN, 2=fr-FR
+  std::size_t language_index{0};   // 0=en-US, 1=zh-CN, 2=…
 };
 
 // Load from NVS.  Returns all-defaults if NVS is empty or has never been
