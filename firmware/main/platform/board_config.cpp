@@ -25,6 +25,13 @@ const BoardConfig kDefaultBoardConfig{
             .ws  = 6,   // I2S LRCLK
             .sd  = 7,   // I2S Data In
         },
+    .encoder_pin_map_ready = true,
+    .encoder_pins =
+        {
+            .s1  = 13,  // CLK / rotary A
+            .s2  = 15,  // DT  / rotary B
+            .key = 16,  // push-button SW
+        },
 };
 
 }  // namespace
@@ -48,6 +55,13 @@ bool has_ready_mic_pin_map(const BoardConfig& config) {
          config.mic_pins.sck >= 0 &&
          config.mic_pins.ws  >= 0 &&
          config.mic_pins.sd  >= 0;
+}
+
+bool has_ready_encoder_pin_map(const BoardConfig& config) {
+  return config.encoder_pin_map_ready &&
+         config.encoder_pins.s1  >= 0 &&
+         config.encoder_pins.s2  >= 0 &&
+         config.encoder_pins.key >= 0;
 }
 
 }  // namespace fridge_ink::platform
