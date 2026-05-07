@@ -4,6 +4,7 @@
 #include "esp_log.h"
 
 #include <cinttypes>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -81,7 +82,71 @@ static std::size_t jarray_start(const std::string& body, const char* key,
   return pos + 1;  // position right after '['
 }
 
-// ── Weather code mapping ──────────────────────────────────────────────────────
+// Extract bare (unquoted) number: "key": 22.5 or "key":3
+// Used for Open-Meteo / ip-api.com responses that don't quote numbers.
+static std::string jbare(const std::string& body, const char* key,
+                          std::size_t from = 0) {
+  const std::string pat = std::string("\"") + key + "\":";
+  auto pos = body.find(pat, from);
+  if (pos == std::string::npos) return {};
+  pos += pat.size();
+  while (pos < body.size() &&
+         (body[pos] == ' ' || body[pos] == '\t' ||
+          body[pos] == '\r' || body[pos] == '\n')) {
+    ++pos;
+  }
+  const auto start = pos;
+  while (pos < body.size() &&
+         (body[pos] == '-' || body[pos] == '.' ||
+          (body[pos] >= '0' && body[pos] <= '9'))) {
+    ++pos;
+  }
+  return body.substr(start, pos - start);
+}
+
+static int jbare_int(const std::string& body, const char* key,
+                     std::size_t from = 0) {
+  const std::string s = jbare(body, key, from);
+  if (s.empty()) return 0;
+  try {
+    return static_cast<int>(std::lround(std::stof(s)));
+  } catch (...) {
+    return 0;
+  }
+}
+
+// Nth element (0-based) of a bare-number JSON array: "key":[1.5, 2, 3]
+static int jarray_nth_int(const std::string& body, const char* key, int n,
+                           std::size_t from = 0) {
+  const std::size_t arr = jarray_start(body, key, from);
+  if (arr == std::string::npos) return 0;
+  std::size_t pos = arr;
+  for (int i = 0; i < n; ++i) {
+    const auto comma = body.find(',', pos);
+    if (comma == std::string::npos) return 0;
+    pos = comma + 1;
+  }
+  while (pos < body.size() &&
+         (body[pos] == ' ' || body[pos] == '\t' ||
+          body[pos] == '\r' || body[pos] == '\n')) {
+    ++pos;
+  }
+  const auto start = pos;
+  while (pos < body.size() &&
+         (body[pos] == '-' || body[pos] == '.' ||
+          (body[pos] >= '0' && body[pos] <= '9'))) {
+    ++pos;
+  }
+  const std::string s = body.substr(start, pos - start);
+  if (s.empty()) return 0;
+  try {
+    return static_cast<int>(std::lround(std::stof(s)));
+  } catch (...) {
+    return 0;
+  }
+}
+
+// ── Weather code mapping — wttr.in ───────────────────────────────────────────
 //
 // draw_icon() does a case-insensitive substring search on the icon_key field:
 //   "partly"             → partly-sunny icon
@@ -103,7 +168,7 @@ struct CodeEntry {
 };
 
 // clang-format off
-static constexpr CodeEntry kCodeTable[] = {
+static constexpr CodeEntry kWttrCodeTable[] = {
   {113, "Sunny",               "sunny"},
   {116, "Partly Cloudy",       "partly_cloudy"},
   {119, "Cloudy",              "cloudy"},
@@ -153,10 +218,49 @@ static constexpr CodeEntry kCodeTable[] = {
   {392, "Thundery Snow",       "thunderstorm"},
   {395, "Heavy Thundery Snow", "thunderstorm"},
 };
+
+// ── Weather code mapping — Open-Meteo (standard WMO codes) ──────────────────
+static constexpr CodeEntry kOpenMeteoCodeTable[] = {
+  {0,  "Sunny",                    "sunny"},
+  {1,  "Mainly Sunny",             "sunny"},
+  {2,  "Partly Cloudy",            "partly_cloudy"},
+  {3,  "Overcast",                 "cloudy"},
+  {45, "Fog",                      "fog"},
+  {48, "Freezing Fog",             "fog"},
+  {51, "Light Drizzle",            "drizzle"},
+  {53, "Drizzle",                  "drizzle"},
+  {55, "Heavy Drizzle",            "drizzle"},
+  {56, "Freezing Drizzle",         "drizzle"},
+  {57, "Heavy Freezing Drizzle",   "drizzle"},
+  {61, "Light Rain",               "rain"},
+  {63, "Rain",                     "rain"},
+  {65, "Heavy Rain",               "rain"},
+  {66, "Freezing Rain",            "rain"},
+  {67, "Heavy Freezing Rain",      "rain"},
+  {71, "Light Snow",               "snow"},
+  {73, "Snow",                     "snow"},
+  {75, "Heavy Snow",               "snow"},
+  {77, "Snow Grains",              "snow"},
+  {80, "Rain Shower",              "rain"},
+  {81, "Rain Shower",              "rain"},
+  {82, "Heavy Rain Shower",        "rain"},
+  {85, "Snow Shower",              "snow"},
+  {86, "Heavy Snow Shower",        "snow"},
+  {95, "Thunderstorm",             "thunderstorm"},
+  {96, "Thunderstorm w/ Hail",     "thunderstorm"},
+  {99, "Heavy Thunderstorm",       "thunderstorm"},
+};
 // clang-format on
 
-static const CodeEntry* lookup_code(int code) {
-  for (const auto& e : kCodeTable) {
+static const CodeEntry* lookup_wttr_code(int code) {
+  for (const auto& e : kWttrCodeTable) {
+    if (e.code == code) return &e;
+  }
+  return nullptr;
+}
+
+static const CodeEntry* lookup_openmeteo_code(int code) {
+  for (const auto& e : kOpenMeteoCodeTable) {
     if (e.code == code) return &e;
   }
   return nullptr;
@@ -172,7 +276,7 @@ static std::string day_name(int offset_days) {
   return kDow[(tm->tm_wday + offset_days) % 7];
 }
 
-// ── Forecast day parser ───────────────────────────────────────────────────────
+// ── Forecast day parser (wttr.in) ─────────────────────────────────────────────
 // Each day block in "weather":[ looks like:
 //   { "date":"...", "maxtempC":"20", "mintempC":"10", "hourly":[...], ... }
 // We find the Nth occurrence of "maxtempC" to locate day N.
@@ -188,45 +292,45 @@ static std::size_t find_nth(const std::string& body, const char* pat,
   return pos;
 }
 
-}  // namespace
+// ── Simple HTTP GET helper ────────────────────────────────────────────────────
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
-WeatherResult weather_fetch(uint32_t timeout_ms) {
-  WeatherResult result;
+static bool http_get(const char* url, uint32_t timeout_ms) {
   g_body.clear();
-  g_body.reserve(8192);  // wttr.in j1 responses are typically 6–8 KB
-
   esp_http_client_config_t cfg{};
-  cfg.url           = "http://wttr.in?format=j1";
+  cfg.url           = url;
   cfg.event_handler = on_data;
   cfg.timeout_ms    = static_cast<int>(timeout_ms);
-
   auto* client = esp_http_client_init(&cfg);
-  if (!client) {
-    result.error = "http_init failed";
-    ESP_LOGE(kTag, "%s", result.error.c_str());
-    return result;
-  }
-
+  if (!client) return false;
   const esp_err_t err    = esp_http_client_perform(client);
   const int       status = esp_http_client_get_status_code(client);
   esp_http_client_cleanup(client);
-
   if (err != ESP_OK) {
-    result.error = std::string("http error: ") + esp_err_to_name(err);
-    ESP_LOGW(kTag, "%s", result.error.c_str());
-    return result;
+    ESP_LOGW(kTag, "http_get %s: %s", url, esp_err_to_name(err));
+    return false;
   }
   if (status != 200) {
-    result.error = std::string("http status ") + std::to_string(status);
-    ESP_LOGW(kTag, "%s", result.error.c_str());
+    ESP_LOGW(kTag, "http_get %s: status %d", url, status);
+    return false;
+  }
+  return true;
+}
+
+// ── Primary: wttr.in ─────────────────────────────────────────────────────────
+
+static WeatherResult weather_fetch_wttr(uint32_t timeout_ms) {
+  WeatherResult result;
+  g_body.reserve(8192);  // wttr.in j1 responses are typically 6–8 KB
+
+  if (!http_get("http://wttr.in?format=j1", timeout_ms)) {
+    result.error = "http_" + std::to_string(0);  // replaced below
+    // Re-derive the error string from the last status (already logged above).
+    // We just mark it failed so the caller can try the fallback.
+    result.error = "wttr: request failed";
     return result;
   }
 
-  ESP_LOGI(kTag, "Response %zu bytes (status %d)", g_body.size(), status);
-
-  // ── Current conditions ────────────────────────────────────────────────────
+  // ── Current conditions ──────────────────────────────────────────────────
   const int code = jint(g_body, "weatherCode");
   result.temperature_c    = jint(g_body, "temp_C");
   result.feels_like_c     = jint(g_body, "FeelsLikeC");
@@ -234,13 +338,11 @@ WeatherResult weather_fetch(uint32_t timeout_ms) {
   result.wind_kmh         = jint(g_body, "windspeedKmph");
   result.uv_index         = jint(g_body, "uvIndex");
 
-  const auto* entry = lookup_code(code);
+  const auto* entry = lookup_wttr_code(code);
   result.condition = entry ? entry->label   : "Cloudy";
   result.icon_key  = entry ? entry->icon_key : "cloudy";
 
-  // ── Location ─────────────────────────────────────────────────────────────
-  // The first "value" in the body is weatherDesc, not the city name.
-  // Find "areaName" first, then extract the "value" nested inside it.
+  // ── Location ────────────────────────────────────────────────────────────
   {
     const std::size_t area_pos = g_body.find("\"areaName\"");
     if (area_pos != std::string::npos) {
@@ -249,16 +351,15 @@ WeatherResult weather_fetch(uint32_t timeout_ms) {
     if (result.location.empty()) result.location = "Unknown";
   }
 
-  // ── Today hi/lo — first "maxtempC" / "mintempC" in weather[] ─────────────
+  // ── Today hi/lo ─────────────────────────────────────────────────────────
   const std::size_t weather_arr = jarray_start(g_body, "weather");
   if (weather_arr != std::string::npos) {
     result.hi_c = jint(g_body, "maxtempC", weather_arr);
     result.lo_c = jint(g_body, "mintempC", weather_arr);
   }
 
-  // ── 3-day forecast ────────────────────────────────────────────────────────
+  // ── 3-day forecast ───────────────────────────────────────────────────────
   for (int day = 0; day < 3; ++day) {
-    // Find position of the Nth "maxtempC" in the body (1-indexed).
     const std::size_t pos =
         find_nth(g_body, "\"maxtempC\"", weather_arr == std::string::npos
                                              ? 0
@@ -271,21 +372,121 @@ WeatherResult weather_fetch(uint32_t timeout_ms) {
     fd.hi_c = jint(g_body, "maxtempC", pos);
     fd.lo_c = jint(g_body, "mintempC", pos);
 
-    // Use first weatherCode in this day's hourly section for the icon.
     const std::size_t hourly_pos = jarray_start(g_body, "hourly", pos);
     const int day_code = hourly_pos != std::string::npos
                              ? jint(g_body, "weatherCode", hourly_pos)
                              : 0;
-    const auto* de = lookup_code(day_code);
+    const auto* de = lookup_wttr_code(day_code);
     fd.condition = de ? de->label   : "Cloudy";
     fd.icon_key  = de ? de->icon_key : "cloudy";
   }
 
   result.ok = true;
-  ESP_LOGI(kTag, "OK: %s  %s  %d°C  humidity=%d%%  wind=%d km/h  UV=%d",
+  ESP_LOGI(kTag, "OK (wttr): %s  %s  %d°C  humidity=%d%%  wind=%d km/h  UV=%d",
            result.location.c_str(), result.condition.c_str(),
            result.temperature_c, result.humidity_percent,
            result.wind_kmh, result.uv_index);
+  return result;
+}
+
+// ── Fallback: ip-api.com geolocation + Open-Meteo weather ────────────────────
+
+static WeatherResult weather_fetch_openmeteo(uint32_t timeout_ms) {
+  WeatherResult result;
+
+  // Step 1: IP geolocation — returns lat, lon, city (no API key needed)
+  g_body.reserve(512);
+  if (!http_get("http://ip-api.com/json/?fields=status,lat,lon,city", timeout_ms / 2)) {
+    result.error = "openmeteo: geolocation failed";
+    return result;
+  }
+
+  const std::string geo = g_body;  // save before next request overwrites g_body
+
+  if (jstr(geo, "status") != "success") {
+    result.error = "openmeteo: geo status != success";
+    ESP_LOGW(kTag, "%s", result.error.c_str());
+    return result;
+  }
+
+  const std::string lat_s = jbare(geo, "lat");
+  const std::string lon_s = jbare(geo, "lon");
+  result.location = jstr(geo, "city");
+  if (result.location.empty()) result.location = "Unknown";
+
+  if (lat_s.empty() || lon_s.empty()) {
+    result.error = "openmeteo: no lat/lon in geo response";
+    ESP_LOGW(kTag, "%s", result.error.c_str());
+    return result;
+  }
+  ESP_LOGI(kTag, "Geolocation: %s (lat=%s lon=%s)",
+           result.location.c_str(), lat_s.c_str(), lon_s.c_str());
+
+  // Step 2: Weather from Open-Meteo (free, no API key, uses standard WMO codes)
+  const std::string wx_url =
+      std::string("http://api.open-meteo.com/v1/forecast") +
+      "?latitude=" + lat_s +
+      "&longitude=" + lon_s +
+      "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code" +
+      "&daily=weather_code,temperature_2m_max,temperature_2m_min" +
+      "&forecast_days=3&wind_speed_unit=kmh&timezone=auto";
+
+  g_body.clear();
+  g_body.reserve(4096);
+  if (!http_get(wx_url.c_str(), timeout_ms)) {
+    result.error = "openmeteo: weather request failed";
+    return result;
+  }
+
+  // ── Current conditions ──────────────────────────────────────────────────
+  const std::size_t curr_pos = g_body.find("\"current\"");
+  result.temperature_c    = jbare_int(g_body, "temperature_2m",        curr_pos);
+  result.feels_like_c     = result.temperature_c;  // not in free tier
+  result.humidity_percent = jbare_int(g_body, "relative_humidity_2m",  curr_pos);
+  result.wind_kmh         = jbare_int(g_body, "wind_speed_10m",        curr_pos);
+  result.uv_index         = 0;  // not in free tier current endpoint
+  const int curr_code     = jbare_int(g_body, "weather_code",          curr_pos);
+
+  const auto* entry = lookup_openmeteo_code(curr_code);
+  result.condition = entry ? entry->label    : "Cloudy";
+  result.icon_key  = entry ? entry->icon_key : "cloudy";
+
+  // ── Daily hi/lo and 3-day forecast ──────────────────────────────────────
+  const std::size_t daily_pos = g_body.find("\"daily\"");
+  if (daily_pos != std::string::npos) {
+    result.hi_c = jarray_nth_int(g_body, "temperature_2m_max", 0, daily_pos);
+    result.lo_c = jarray_nth_int(g_body, "temperature_2m_min", 0, daily_pos);
+
+    for (int day = 0; day < 3; ++day) {
+      auto& fd    = result.forecast[static_cast<std::size_t>(day)];
+      fd.dow      = day_name(day);
+      fd.hi_c     = jarray_nth_int(g_body, "temperature_2m_max", day, daily_pos);
+      fd.lo_c     = jarray_nth_int(g_body, "temperature_2m_min", day, daily_pos);
+      const int day_code = jarray_nth_int(g_body, "weather_code", day, daily_pos);
+      const auto* de = lookup_openmeteo_code(day_code);
+      fd.condition = de ? de->label    : "Cloudy";
+      fd.icon_key  = de ? de->icon_key : "cloudy";
+    }
+  }
+
+  result.ok = true;
+  ESP_LOGI(kTag, "OK (openmeteo): %s  %s  %d°C  humidity=%d%%  wind=%d km/h",
+           result.location.c_str(), result.condition.c_str(),
+           result.temperature_c, result.humidity_percent, result.wind_kmh);
+  return result;
+}
+
+}  // namespace
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+WeatherResult weather_fetch(uint32_t timeout_ms) {
+  WeatherResult result = weather_fetch_wttr(timeout_ms);
+  if (!result.ok) {
+    ESP_LOGW(kTag, "wttr.in failed (%s), trying Open-Meteo fallback...",
+             result.error.c_str());
+    result = weather_fetch_openmeteo(timeout_ms);
+  }
   return result;
 }
 
