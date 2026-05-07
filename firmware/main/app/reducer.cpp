@@ -21,7 +21,7 @@ namespace {
 constexpr const char* kTag = "reducer";
 
 constexpr int kMenuItemCount = 5;
-constexpr int kSettingsItemCount = 9;
+constexpr int kSettingsItemCount = 10;
 constexpr int kHomeInventoryVisibleLandscapeMax = 3;
 constexpr int kHomeInventoryVisiblePortraitMax = 4;
 constexpr int kHomeReminderVisiblePortraitMax = 4;
@@ -52,11 +52,12 @@ enum class SettingsItem {
   PartialRefresh = 1,
   FullRefresh = 2,
   Rotation = 3,
-  Connectivity = 4,
-  AutoSync = 5,
-  SyncNow = 6,
-  ChangeWifi = 7,
-  ResetAndWipe = 8,
+  Language = 4,
+  Connectivity = 5,
+  AutoSync = 6,
+  SyncNow = 7,
+  ChangeWifi = 8,
+  ResetAndWipe = 9,
 };
 
 enum class HomeFocusTargetKind {
@@ -342,6 +343,7 @@ void adjust_timer_seconds(
 
 // Forward declaration — defined later in this file.
 void enter_onboarding_wifi_select(AppState& state);
+void set_language(AppState& state, Language language);
 
 void handle_settings_click(AppState& state, const Event& event) {
   switch (settings_item_for_focus(state)) {
@@ -367,6 +369,18 @@ void handle_settings_click(AppState& state, const Event& event) {
           (normalize_rotation_deg(state.settings.rotation_deg) + 90) % 360;
       ESP_LOGI(kTag, "[settings] rotation_deg=%d", state.settings.rotation_deg);
       return;
+    case SettingsItem::Language: {
+      const Language next_language =
+          language_from_index(language_index(state.device_language) + 1U);
+      set_language(state, next_language);
+      set_settings_notice(
+          state,
+          std::string("LANGUAGE: ") + language_label(state.device_language),
+          event.now_ms,
+          2500);
+      ESP_LOGI(kTag, "[settings] language=%s", language_code(state.device_language));
+      return;
+    }
     case SettingsItem::Connectivity: {
       const bool next_on = !(state.settings.wifi_enabled && state.settings.bluetooth_enabled);
       state.settings.wifi_enabled = next_on;
