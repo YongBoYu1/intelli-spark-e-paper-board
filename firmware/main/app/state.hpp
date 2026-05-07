@@ -39,6 +39,27 @@ struct MemoItem {
   bool is_new{false};
 };
 
+// A recurring alarm that fires every day at a fixed HH:MM.
+// Created via voice command, e.g. "Remind me every day at 2pm to take medicine".
+struct ScheduledReminder {
+  std::string id{};                    // unique ID, e.g. "sr_0"
+  std::string title{};                 // e.g. "Take medicine"
+  int hour{0};                         // 0–23 (local time)
+  int minute{0};                       // 0–59
+  bool enabled{true};
+  std::uint64_t last_fired_bucket{0};  // minute-bucket when last fired; prevents re-trigger
+};
+
+// State for the modal alarm popup shown when a ScheduledReminder fires.
+struct ScheduledAlarmState {
+  bool active{false};
+  std::string id{};         // which ScheduledReminder triggered this
+  std::string title{};      // reminder title (copy for display)
+  int hour{0};
+  int minute{0};
+  int focused_index{0};     // 0 = Confirm ("done"), 1 = Cancel ("skip")
+};
+
 struct ReminderMetaItem {
   std::string rid{};
   std::string right{};
@@ -231,6 +252,10 @@ struct AppState {
   InventoryState inventory{};
   SettingsState settings{};
   DashboardSummary dashboard{};
+  // Daily scheduled reminders (persistent, voice-created).
+  std::vector<ScheduledReminder> scheduled_reminders{};
+  // Currently active alarm popup (at most one at a time).
+  ScheduledAlarmState scheduled_alarm{};
 };
 
 const char* screen_name(Screen screen);

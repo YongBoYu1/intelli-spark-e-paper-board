@@ -10,6 +10,7 @@
 #include <array>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -24,7 +25,8 @@ constexpr int kPW = 480;
 constexpr int kPH = 800;
 
 struct AgendaRow {
-  bool reminder{false};
+  bool reminder{false};    // true = reminder item (toggleable)
+  bool scheduled{false};   // true = scheduled daily alarm (read-only)
   bool completed{false};
   std::string when{};
   std::string title{};
@@ -322,7 +324,9 @@ std::vector<AgendaRow> build_agenda_rows(
     const app::calendar_runtime::AgendaSelection& selection,
     const UiStrings& s) {
   std::vector<AgendaRow> rows;
-  rows.reserve(selection.event_indices.size() + selection.reminder_indices.size());
+  rows.reserve(selection.event_indices.size() +
+               selection.reminder_indices.size() +
+               selection.scheduled_indices.size());
 
   for (const int event_index : selection.event_indices) {
     if (event_index < 0 || event_index >= static_cast<int>(state.dashboard.calendar_events.size())) {
@@ -330,8 +334,7 @@ std::vector<AgendaRow> build_agenda_rows(
     }
     const auto& event = state.dashboard.calendar_events[static_cast<std::size_t>(event_index)];
     rows.push_back(AgendaRow{
-        false,
-        false,
+        false, false, false,
         event.when.empty() ? s.cal_event : event.when,
         normalized_row_title(event.title),
     });
@@ -350,10 +353,25 @@ std::vector<AgendaRow> build_agenda_rows(
       right_text = state.dashboard.reminder_meta[static_cast<std::size_t>(reminder_index)].right;
     }
     rows.push_back(AgendaRow{
-        true,
-        completed,
+        true, false, completed,
         right_text,
         normalized_row_title(state.dashboard.reminder_items[static_cast<std::size_t>(reminder_index)]),
+    });
+  }
+
+  // Daily scheduled reminders: read-only recurring entries.
+  for (const int sched_index : selection.scheduled_indices) {
+    if (sched_index < 0 ||
+        sched_index >= static_cast<int>(state.scheduled_reminders.size())) {
+      continue;
+    }
+    const auto& sr = state.scheduled_reminders[static_cast<std::size_t>(sched_index)];
+    char time_buf[12];
+    snprintf(time_buf, sizeof(time_buf), "%02d:%02d", sr.hour, sr.minute);
+    rows.push_back(AgendaRow{
+        false, true, false,
+        std::string(time_buf) + " DAILY",
+        normalized_row_title(sr.title),
     });
   }
 
@@ -452,8 +470,8 @@ void draw_month_grid(
 
     const auto date = app::calendar_runtime::DateValue{cursor.year, cursor.month, day};
     const auto items = app::calendar_runtime::agenda_selection_for_date(state, date, base_date);
-    const bool has_event = !items.event_indices.empty();
-    const bool has_reminder = !items.reminder_indices.empty();
+    const bool has_event    = !items.event_indices.empty();
+    const bool has_reminder = !items.reminder_indices.empty() || !items.scheduled_indices.empty();
     if (!has_event && !has_reminder) {
       continue;
     }
@@ -568,7 +586,10 @@ std::vector<uint8_t> render_calendar_portrait_bitmap(const app::AppState& state)
         cp_outline(image, list_x0, y, list_x1, y + row_h, 1, r90);
       }
 
-      const std::string when_base = row.when.empty() ? (row.reminder ? s.cal_reminder : s.cal_event) : row.when;
+      const std::string when_base =
+          row.when.empty()
+              ? (row.reminder ? s.cal_reminder : (row.scheduled ? "DAILY" : s.cal_event))
+              : row.when;
       const std::string when_text = cp_truncate(upper_copy(when_base), 1, std::max(44, (list_x1 - list_x0) / 3));
       const int when_width = cp_text_width(when_text, cp_font_for_scale_normal(1));
       const int when_x = list_x1 - 10 - when_width;
@@ -584,6 +605,9 @@ std::vector<uint8_t> render_calendar_portrait_bitmap(const app::AppState& state)
       if (row.reminder) {
         title_prefix = row.completed ? "[x] " : "[ ] ";
         detail_line = reminder_meta_label(row, s);
+      } else if (row.scheduled) {
+        title_prefix = "[R] ";
+        detail_line = "DAILY REMINDER";
       } else {
         detail_line = s.cal_event;
       }

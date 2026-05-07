@@ -4,7 +4,6 @@
 #include "esp_log.h"
 
 #include <cinttypes>
-#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -104,15 +103,37 @@ static std::string jbare(const std::string& body, const char* key,
   return body.substr(start, pos - start);
 }
 
+// Parse a decimal string (possibly with fractional part) into int via lround.
+// No exceptions: all parsing is manual.
+static int parse_decimal_int(const std::string& s) {
+  if (s.empty()) return 0;
+  std::size_t i = 0;
+  bool negative = false;
+  if (s[i] == '-') { negative = true; ++i; }
+
+  long long int_part = 0;
+  while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+    int_part = int_part * 10 + (s[i] - '0');
+    ++i;
+  }
+  // Fractional part: round at first decimal digit.
+  int frac_first = 0;
+  if (i < s.size() && s[i] == '.') {
+    ++i;
+    if (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+      frac_first = s[i] - '0';
+    }
+  }
+  long long rounded = int_part;
+  if (frac_first >= 5) ++rounded;
+  return static_cast<int>(negative ? -rounded : rounded);
+}
+
 static int jbare_int(const std::string& body, const char* key,
                      std::size_t from = 0) {
   const std::string s = jbare(body, key, from);
   if (s.empty()) return 0;
-  try {
-    return static_cast<int>(std::lround(std::stof(s)));
-  } catch (...) {
-    return 0;
-  }
+  return parse_decimal_int(s);
 }
 
 // Nth element (0-based) of a bare-number JSON array: "key":[1.5, 2, 3]
@@ -137,13 +158,7 @@ static int jarray_nth_int(const std::string& body, const char* key, int n,
           (body[pos] >= '0' && body[pos] <= '9'))) {
     ++pos;
   }
-  const std::string s = body.substr(start, pos - start);
-  if (s.empty()) return 0;
-  try {
-    return static_cast<int>(std::lround(std::stof(s)));
-  } catch (...) {
-    return 0;
-  }
+  return parse_decimal_int(body.substr(start, pos - start));
 }
 
 // ── Weather code mapping — wttr.in ───────────────────────────────────────────

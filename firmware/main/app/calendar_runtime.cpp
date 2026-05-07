@@ -469,6 +469,13 @@ AgendaSelection agenda_selection_for_date(
         unresolved_reminders.end());
   }
 
+  // Daily scheduled reminders appear on every date.
+  for (int i = 0; i < static_cast<int>(state.scheduled_reminders.size()); ++i) {
+    if (state.scheduled_reminders[static_cast<std::size_t>(i)].enabled) {
+      out.scheduled_indices.push_back(i);
+    }
+  }
+
   return out;
 }
 

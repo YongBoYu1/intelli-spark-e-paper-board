@@ -1156,6 +1156,31 @@ void handle_tick(AppState& state, const Event& event) {
     state.settings.reset_pending = false;
   }
 
+  // ── Scheduled alarm check ─────────────────────────────────────────────────
+  // Only fire when no alarm is already showing and wall time is valid.
+  if (!state.scheduled_alarm.active && platform::wall_time_is_valid()) {
+    const std::time_t wall = platform::wall_time_seconds();
+    const std::uint64_t current_bucket = static_cast<std::uint64_t>(wall / 60);
+    std::tm local_tm{};
+    localtime_r(&wall, &local_tm);
+    for (auto& sr : state.scheduled_reminders) {
+      if (!sr.enabled) continue;
+      if (sr.last_fired_bucket == current_bucket) continue;  // already fired this minute
+      if (local_tm.tm_hour == sr.hour && local_tm.tm_min == sr.minute) {
+        sr.last_fired_bucket = current_bucket;
+        state.scheduled_alarm.active = true;
+        state.scheduled_alarm.id = sr.id;
+        state.scheduled_alarm.title = sr.title;
+        state.scheduled_alarm.hour = sr.hour;
+        state.scheduled_alarm.minute = sr.minute;
+        state.scheduled_alarm.focused_index = 0;
+        ESP_LOGI(kTag, "[alarm] fired id=%s title=%s time=%02d:%02d",
+                 sr.id.c_str(), sr.title.c_str(), sr.hour, sr.minute);
+        break;  // show one alarm at a time; next fires on the next tick
+      }
+    }
+  }
+
   // Auto-hide the home focus ring after 10 s of inactivity.
   constexpr std::uint64_t kHomeFocusTimeoutMs = 10000ULL;
   if (state.screen == Screen::Home &&
@@ -1169,6 +1194,11 @@ void handle_tick(AppState& state, const Event& event) {
 void handle_rotate(AppState& state, const Event& event) {
   if (event.now_ms > 0) {
     state.home.last_interaction_ms = event.now_ms;
+  }
+  // Alarm overlay intercepts all input.
+  if (state.scheduled_alarm.active) {
+    state.scheduled_alarm.focused_index = (state.scheduled_alarm.focused_index == 0) ? 1 : 0;
+    return;
   }
   if (state.screen == Screen::Landing) {
     const auto next_index =
@@ -1307,6 +1337,15 @@ void handle_rotate(AppState& state, const Event& event) {
 void handle_click(AppState& state, const Event& event) {
   if (event.now_ms > 0) {
     state.home.last_interaction_ms = event.now_ms;
+  }
+  // Alarm overlay intercepts all input.
+  if (state.scheduled_alarm.active) {
+    const bool confirmed = (state.scheduled_alarm.focused_index == 0);
+    ESP_LOGI(kTag, "[alarm] %s id=%s",
+             confirmed ? "confirmed" : "cancelled",
+             state.scheduled_alarm.id.c_str());
+    state.scheduled_alarm.active = false;
+    return;
   }
   if (state.screen == Screen::Landing) {
     if (state.setup_completed) {
@@ -1733,6 +1772,12 @@ void handle_long_press(AppState& state, const Event& event) {
   if (event.now_ms > 0) {
     state.home.last_interaction_ms = event.now_ms;
   }
+  // Alarm overlay intercepts all input (long-press dismisses = cancel).
+  if (state.scheduled_alarm.active) {
+    ESP_LOGI(kTag, "[alarm] dismissed (long press) id=%s", state.scheduled_alarm.id.c_str());
+    state.scheduled_alarm.active = false;
+    return;
+  }
 
   // Onboarding voice guide: long-press starts the voice test recording.
   // main.cpp also calls trigger_voice_recording() for the actual capture.
@@ -1762,6 +1807,12 @@ void handle_long_press(AppState& state, const Event& event) {
 void handle_back(AppState& state, const Event& event) {
   if (event.now_ms > 0) {
     state.home.last_interaction_ms = event.now_ms;
+  }
+  // Alarm overlay intercepts all input (back = dismiss / cancel).
+  if (state.scheduled_alarm.active) {
+    ESP_LOGI(kTag, "[alarm] dismissed (back) id=%s", state.scheduled_alarm.id.c_str());
+    state.scheduled_alarm.active = false;
+    return;
   }
   // Python parity:
   // - HOME back closes overlay if open, otherwise opens overlay.
@@ -2234,6 +2285,67 @@ static void va_inventory_log_event(AppState& state, const std::string& args) {
   }
 }
 
+static void va_reminder_schedule(AppState& state, const std::string& args) {
+  std::string title = va_extract_string(args, "title");
+  if (title.empty()) title = va_extract_string(args, "text");
+  if (title.empty()) title = va_extract_string(args, "reminder");
+  if (title.empty()) {
+    ESP_LOGW(kTag, "[voice] reminder_schedule: missing title");
+    return;
+  }
+  const int hour = va_extract_int(args, "hour");
+  const int minute = va_extract_int(args, "minute");
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    ESP_LOGW(kTag, "[voice] reminder_schedule: invalid time %d:%02d", hour, minute);
+    return;
+  }
+  // Skip exact duplicates (same title + same time).
+  for (const auto& sr : state.scheduled_reminders) {
+    if (!sr.enabled) continue;
+    std::string a = sr.title, b = title;
+    std::transform(a.begin(), a.end(), a.begin(), ::tolower);
+    std::transform(b.begin(), b.end(), b.begin(), ::tolower);
+    if (a == b && sr.hour == hour && sr.minute == minute) {
+      ESP_LOGI(kTag, "[voice] reminder_schedule: duplicate skipped (%s %02d:%02d)",
+               title.c_str(), hour, minute);
+      return;
+    }
+  }
+  ScheduledReminder sr;
+  sr.id = std::string("sr_") + std::to_string(state.scheduled_reminders.size());
+  sr.title = title;
+  sr.hour = hour;
+  sr.minute = minute;
+  sr.enabled = true;
+  sr.last_fired_bucket = 0;
+  state.scheduled_reminders.push_back(sr);
+  ESP_LOGI(kTag, "[voice] reminder_schedule: added id=%s title=%s time=%02d:%02d",
+           sr.id.c_str(), sr.title.c_str(), sr.hour, sr.minute);
+}
+
+static void va_reminder_schedule_cancel(AppState& state, const std::string& args) {
+  const std::string id    = va_extract_string(args, "id");
+  const std::string title = va_extract_string(args, "title");
+  for (auto& sr : state.scheduled_reminders) {
+    bool match_id    = !id.empty() && (sr.id == id);
+    bool match_title = false;
+    if (!title.empty()) {
+      std::string a = sr.title, b = title;
+      std::transform(a.begin(), a.end(), a.begin(), ::tolower);
+      std::transform(b.begin(), b.end(), b.begin(), ::tolower);
+      match_title = (a.find(b) != std::string::npos);
+    }
+    if (match_id || match_title) {
+      sr.enabled = false;
+      ESP_LOGI(kTag, "[voice] reminder_schedule_cancel: disabled id=%s title=%s",
+               sr.id.c_str(), sr.title.c_str());
+      return;
+    }
+  }
+  ESP_LOGW(kTag, "[voice] reminder_schedule_cancel: not found id=%s title=%s",
+           id.c_str(), title.c_str());
+}
+
 // ── Undo / redo snapshot ─────────────────────────────────────────────────────
 
 struct VoiceSnapshot {
@@ -2316,7 +2428,9 @@ static bool is_undo_excluded_tool(const std::string& tool) {
   return tool == "no_action" ||
          tool == "open_app"  ||
          tool == "undo_last_action_group" ||
-         tool == "redo_last_action_group";
+         tool == "redo_last_action_group" ||
+         tool == "reminder_schedule"        ||
+         tool == "reminder_schedule_cancel";
 }
 
 // Keep history small: each VoiceSnapshot deep-copies several string vectors.
@@ -2383,6 +2497,10 @@ void apply_voice_actions(AppState& state,
       va_memo_update(state, a.args_json);
     } else if (a.tool == "inventory_log_event") {
       va_inventory_log_event(state, a.args_json);
+    } else if (a.tool == "reminder_schedule") {
+      va_reminder_schedule(state, a.args_json);
+    } else if (a.tool == "reminder_schedule_cancel") {
+      va_reminder_schedule_cancel(state, a.args_json);
     } else if (a.tool == "undo_last_action_group") {
       if (g_done_stack.empty()) {
         ESP_LOGW(kTag, "[voice] undo: nothing to undo");

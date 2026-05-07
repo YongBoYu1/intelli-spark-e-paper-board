@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -15,7 +16,8 @@ namespace fridge_ink::ui {
 namespace {
 
 struct AgendaRow {
-  bool reminder{false};
+  bool reminder{false};    // true = reminder item (toggleable)
+  bool scheduled{false};   // true = scheduled daily alarm (read-only)
   bool completed{false};
   int reminder_index{-1};
   std::string when{};
@@ -60,7 +62,9 @@ std::vector<AgendaRow> build_agenda_rows(
     const app::calendar_runtime::AgendaSelection& selection,
     const UiStrings& s) {
   std::vector<AgendaRow> rows;
-  rows.reserve(selection.event_indices.size() + selection.reminder_indices.size());
+  rows.reserve(selection.event_indices.size() +
+               selection.reminder_indices.size() +
+               selection.scheduled_indices.size());
 
   for (const int event_index : selection.event_indices) {
     if (event_index < 0 || event_index >= static_cast<int>(state.dashboard.calendar_events.size())) {
@@ -68,9 +72,7 @@ std::vector<AgendaRow> build_agenda_rows(
     }
     const auto& event = state.dashboard.calendar_events[static_cast<std::size_t>(event_index)];
     rows.push_back(AgendaRow{
-        false,
-        false,
-        -1,
+        false, false, false, -1,
         event.when.empty() ? s.cal_event : event.when,
         event.title,
     });
@@ -94,11 +96,25 @@ std::vector<AgendaRow> build_agenda_rows(
     }
 
     rows.push_back(AgendaRow{
-        true,
-        completed,
-        reminder_index,
+        true, false, completed, reminder_index,
         right_text,
         state.dashboard.reminder_items[static_cast<std::size_t>(reminder_index)],
+    });
+  }
+
+  // Daily scheduled reminders: shown as read-only recurring events with clock time.
+  for (const int sched_index : selection.scheduled_indices) {
+    if (sched_index < 0 ||
+        sched_index >= static_cast<int>(state.scheduled_reminders.size())) {
+      continue;
+    }
+    const auto& sr = state.scheduled_reminders[static_cast<std::size_t>(sched_index)];
+    char time_buf[12];
+    snprintf(time_buf, sizeof(time_buf), "%02d:%02d", sr.hour, sr.minute);
+    rows.push_back(AgendaRow{
+        false, true, false, -1,
+        std::string(time_buf) + " DAILY",
+        sr.title,
     });
   }
 
@@ -150,7 +166,9 @@ void draw_month_grid(
     const auto date = app::calendar_runtime::DateValue{cursor.year, cursor.month, day};
     const auto day_items = app::calendar_runtime::agenda_selection_for_date(state, date, base_date);
     const bool has_items =
-        !day_items.event_indices.empty() || !day_items.reminder_indices.empty();
+        !day_items.event_indices.empty() ||
+        !day_items.reminder_indices.empty() ||
+        !day_items.scheduled_indices.empty();
 
     if (selected) {
       fill_black_rect(image, cx0 + 1, cy0 + 1, cx1 - 1, cy1 - 1);
@@ -215,31 +233,26 @@ void draw_agenda_rows(
       fill_black_rect(image, x0 + 1, yy + 1, x1 - 1, yy + row_h - 1);
     }
 
-    const std::string type_prefix = row.reminder ? (row.completed ? "[x] " : "[ ] ") : "[E] ";
+    const char* type_prefix =
+        row.reminder  ? (row.completed ? "[x] " : "[ ] ")
+        : row.scheduled ? "[R] "
+        : "[E] ";
     const std::string title = truncate_text_px(type_prefix + upper_copy(row.title), 1, std::max(80, x1 - x0 - 24));
     const std::string when_text = truncate_text_px(upper_copy(row.when), 1, std::max(40, (x1 - x0) / 3));
+    const char* hint_text =
+        row.reminder  ? (selected ? s.cal_click_toggle : s.cal_reminder)
+        : row.scheduled ? "DAILY REMINDER"
+        : (selected ? s.cal_event_readonly : s.cal_event);
 
     const int when_w = text_width_px(when_text, 1);
     if (selected) {
       draw_text_line_inverted(image, x0 + 10, yy + 10, title, 1, 42);
       draw_text_line_inverted(image, x1 - 10 - when_w, yy + 10, when_text, 1, 20);
-      draw_text_line_inverted(
-          image,
-          x0 + 10,
-          yy + 34,
-          row.reminder ? s.cal_click_toggle : s.cal_event_readonly,
-          1,
-          28);
+      draw_text_line_inverted(image, x0 + 10, yy + 34, hint_text, 1, 28);
     } else {
       draw_text_line(image, x0 + 10, yy + 10, title, 1, 42);
       draw_text_line(image, x1 - 10 - when_w, yy + 10, when_text, 1, 20);
-      draw_text_line(
-          image,
-          x0 + 10,
-          yy + 34,
-          row.reminder ? s.cal_reminder : s.cal_event,
-          1,
-          16);
+      draw_text_line(image, x0 + 10, yy + 34, hint_text, 1, 16);
     }
 
     yy += row_h + gap;
