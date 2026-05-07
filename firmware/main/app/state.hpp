@@ -23,7 +23,7 @@ enum class Screen {
 
 enum class Language {
   EnUs,
-  EsEs,
+  ZhCn,
   FrFr,
 };
 

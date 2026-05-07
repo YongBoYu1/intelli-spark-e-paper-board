@@ -88,8 +88,8 @@ std::vector<uint8_t> render_landing_bitmap(const app::AppState& state) {
   const int chip_gap_x = 10;
   const int chip_w = (content_w - (2 * chip_gap_x)) / 3;
   const int chip_h = 40;
-  constexpr std::array<const char*, 3> chip_codes = {"en-US", "es-ES", "fr-FR"};
-  constexpr std::array<const char*, 3> chip_labels = {"ENGLISH", "SPANISH", "FRENCH"};
+  constexpr std::array<const char*, 3> chip_codes = {"en-US", "zh-CN", "fr-FR"};
+  constexpr std::array<const char*, 3> chip_labels = {"ENGLISH", "CHINESE", "FRENCH"};
   for (int i = 0; i < 3; ++i) {
     const int x0 = content_x0 + i * (chip_w + chip_gap_x);
     const int x1 = x0 + chip_w;

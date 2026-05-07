@@ -32,8 +32,8 @@ const char* language_code(Language language) {
   switch (language) {
     case Language::EnUs:
       return "en-US";
-    case Language::EsEs:
-      return "es-ES";
+    case Language::ZhCn:
+      return "zh-CN";
     case Language::FrFr:
       return "fr-FR";
   }
@@ -44,8 +44,8 @@ const char* language_label(Language language) {
   switch (language) {
     case Language::EnUs:
       return "English";
-    case Language::EsEs:
-      return "Spanish";
+    case Language::ZhCn:
+      return "Chinese";
     case Language::FrFr:
       return "French";
   }
@@ -57,7 +57,7 @@ Language language_from_index(std::size_t index) {
     case 0:
       return Language::EnUs;
     case 1:
-      return Language::EsEs;
+      return Language::ZhCn;
     case 2:
       return Language::FrFr;
   }
@@ -68,7 +68,7 @@ std::size_t language_index(Language language) {
   switch (language) {
     case Language::EnUs:
       return 0;
-    case Language::EsEs:
+    case Language::ZhCn:
       return 1;
     case Language::FrFr:
       return 2;
