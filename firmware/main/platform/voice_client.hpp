@@ -8,7 +8,7 @@
 //
 // Expected backend: backend/voice_api/app.py  (POST /voice/interpret)
 // Request  JSON: { request_id, request_time, timezone, locale, audio_base64 }
-// Response JSON: { request_id, actions: [{tool, args}] }
+// Response JSON: { action: {tool, args}, plan, transcript }
 
 #include <cstdint>
 #include <string>
