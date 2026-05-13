@@ -3,6 +3,7 @@
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
 #include "ui/panel_font_assets_generated.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -202,13 +203,13 @@ std::string uppercase_ascii(std::string text) {
   return text;
 }
 
-std::string reminder_right_meta(const ListRow& row) {
+std::string reminder_right_meta(const ListRow& row, const UiStrings& s) {
   if (row.completed) {
-    return "DONE";
+    return s.list_done;
   }
   const std::string right = trim_copy(row.right);
   if (right.empty()) {
-    return "TODO";
+    return s.list_todo;
   }
   return uppercase_ascii(right);
 }
@@ -259,7 +260,8 @@ void draw_rows(
     const int y1,
     const int selected_index,
     const bool show_meta,
-    const bool r90) {
+    const bool r90,
+    const UiStrings& s) {
   const int row_h = 40;
   const int slots = std::max(1, (y1 - y0) / row_h);
   const int start = window_start(static_cast<int>(rows.size()), slots, selected_index);
@@ -281,7 +283,7 @@ void draw_rows(
 
     const std::string prefix = row.completed ? "[x] " : "[ ] ";
     if (show_meta) {
-      const std::string right_meta = reminder_right_meta(row);
+      const std::string right_meta = reminder_right_meta(row, s);
       const std::string right_fit =
           truncate_text_px(right_meta, 1, std::max(52, ((x1 - x0) * 26) / 100));
       const int right_w = text_width_px(right_fit, 1);
@@ -310,7 +312,7 @@ void draw_rows(
     y += row_h;
   }
   if (rows.empty()) {
-    lp_text_line(image, x0 + 8, y0 + 10, "NO ITEMS", 1, 12, r90);
+    lp_text_line(image, x0 + 8, y0 + 10, s.list_no_items, 1, 12, r90);
   }
 }
 
@@ -319,6 +321,7 @@ void draw_rows(
 std::vector<uint8_t> render_list_portrait_bitmap(const app::AppState& state) {
   using platform::kPanelBufferSize;
 
+  const auto& s = get_ui_strings(state.device_language);
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
   const bool r90 = use_r90_map(state);
 
@@ -327,9 +330,9 @@ std::vector<uint8_t> render_list_portrait_bitmap(const app::AppState& state) {
 
   const int left = 24;
   const int right = kPW - 24;
-  lp_text_line(image, left, 16, "LIST", 3, 16, r90);
+  lp_text_line(image, left, 16, s.list_title, 3, 16, r90);
   const std::string hint_fit =
-      truncate_text_px("ROTATE=SELECT  |  CLICK=TOGGLE  |  HOLD=HOME", 1, std::max(80, right - left));
+      truncate_text_px(s.list_hint, 1, std::max(80, right - left));
   const int hint_w = text_width_px(hint_fit, 1);
   lp_text_line(image, std::max(left, right - hint_w), 52, hint_fit, 1, 0, r90);
   lp_fill(image, left, 68, right, 70, r90);
@@ -345,7 +348,7 @@ std::vector<uint8_t> render_list_portrait_bitmap(const app::AppState& state) {
       image,
       left + 2,
       content_top + 2,
-      truncate_text_px("INVENTORY " + std::to_string(inventory.size()), 1, std::max(60, right - left - 8)),
+      truncate_text_px(std::string(s.list_inventory) + " " + std::to_string(inventory.size()), 1, std::max(60, right - left - 8)),
       1,
       0,
       r90);
@@ -353,7 +356,7 @@ std::vector<uint8_t> render_list_portrait_bitmap(const app::AppState& state) {
       image,
       left + 2,
       split_y + 2,
-      truncate_text_px("REMINDER " + std::to_string(reminders.size()), 1, std::max(60, right - left - 8)),
+      truncate_text_px(std::string(s.list_reminder) + " " + std::to_string(reminders.size()), 1, std::max(60, right - left - 8)),
       1,
       0,
       r90);
@@ -375,11 +378,11 @@ std::vector<uint8_t> render_list_portrait_bitmap(const app::AppState& state) {
           ? (focused_global - static_cast<int>(inventory.size()))
           : -1;
 
-  draw_rows(image, inventory, left, right, inv_list_top, inv_list_bottom, selected_inventory, false, r90);
-  draw_rows(image, reminders, left, right, rem_list_top, rem_list_bottom, selected_reminder, true, r90);
+  draw_rows(image, inventory, left, right, inv_list_top, inv_list_bottom, selected_inventory, false, r90, s);
+  draw_rows(image, reminders, left, right, rem_list_top, rem_list_bottom, selected_reminder, true, r90, s);
 
   const std::string footer =
-      truncate_text_px("VOICE CMD: DELETE | ADD | MODIFY", 1, std::max(80, right - left));
+      truncate_text_px(s.list_footer, 1, std::max(80, right - left));
   lp_text_line(image, left, footer_y, footer, 1, 0, r90);
   return image;
 }

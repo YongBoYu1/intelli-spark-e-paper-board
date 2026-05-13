@@ -1,5 +1,6 @@
 #include "app/defaults.hpp"
 
+#include "app/build_mode.hpp"
 #include "platform/clock.hpp"
 
 #include <ctime>
@@ -82,86 +83,110 @@ std::uint64_t current_minute_bucket(bool* is_real) {
 
 ProductDefaults make_factory_defaults() {
   ProductDefaults defaults;
-  // #52 is validating the post-setup Home flow before persistence lands in #53.
-  defaults.setup_completed = true;
+  defaults.setup_completed = false;
   defaults.device_language = Language::EnUs;
   defaults.voice_locale = Language::EnUs;
-  defaults.dashboard.location = "Toronto";
+
+  // ── Fields that are identical in every build ────────────────────────────
   defaults.dashboard.battery_percent = 84;
-  defaults.dashboard.reminder_count = 7;
-  defaults.dashboard.weather_condition = "Rainy";
-  defaults.dashboard.weather_temperature_c = 17;
-  defaults.dashboard.weather_humidity_percent = 100;
-  defaults.dashboard.inventory_items = {
-      "Fresh Milk",
-      "Leftover Pizza",
-      "Marinated Chicken",
-  };
-  defaults.dashboard.inventory_badges = {
-      "EXP 3D",
-      "ADD YDAY",
-      "USE TNITE",
-  };
-  defaults.dashboard.inventory_completed = {
-      false,
-      false,
-      false,
-  };
-  defaults.dashboard.reminder_items = {
-      "Doctor Appointment",
-      "Yoghurt Expires",
-      "Morning Yoga",
-      "Buy Milk",
-      "Trash Day",
-      "Pay Rent",
-      "Call Mom",
-  };
-  defaults.dashboard.reminder_completed = {
-      false,
-      false,
-      false,
-      false,
-      false,
-      false,
-      false,
-  };
-  defaults.dashboard.reminder_meta = {
-      {"r_doctor", "Tomorrow 09:00", "2026-04-07"},
-      {"r_yogurt", "Friday", ""},
-      {"r_yoga", "Mon 07:00", ""},
-      {"r_milk", "Apr 09", ""},
-      {"r_trash", "Tue", ""},
-      {"r_rent", "May 01", "2026-05-01"},
-      {"r_mom", "Tonight", ""},
-  };
-  defaults.dashboard.calendar_events = {
-      {"e_team", "Team standup", "09:30", "2026-04-06"},
-      {"e_clinic", "Dental clinic", "14:00", "2026-04-07"},
-      {"e_school", "Parent meeting", "18:30", "2026-04-09"},
-  };
-  defaults.dashboard.memos = {
-      {
-          "Please wipe the fridge shelf after dinner. Leftovers on top rack.",
-          "Mom",
-          "2H AGO",
-          true,
-      },
-      {
-          "Trash pickup is tomorrow morning. Move the blue bin outside before bed.",
-          "Dad",
-          "YESTERDAY",
-          false,
-      },
-      {
-          "Guest coming on Sunday. Buy fruit and sparkling water.",
-          "Family",
-          "MAR 31",
-          false,
-      },
-  };
-  defaults.dashboard.family_memo_text = defaults.dashboard.memos.front().text;
-  defaults.dashboard.family_memo_author = defaults.dashboard.memos.front().author;
-  defaults.dashboard.family_memo_posted = defaults.dashboard.memos.front().posted;
+  defaults.dashboard.weather_condition.clear();
+  defaults.dashboard.weather_icon = "cloud";
+  defaults.dashboard.weather_temperature_c = 0;
+  defaults.dashboard.weather_humidity_percent = 0;
+  defaults.dashboard.weather_feels_like_c = 0;
+  defaults.dashboard.weather_hi_c = 0;
+  defaults.dashboard.weather_lo_c = 0;
+  defaults.dashboard.weather_wind_kmh = 0;
+  defaults.dashboard.weather_uv_index = 0;
+  defaults.dashboard.weather_forecast_days = {{
+      {"--", "", "cloud", 0, 0},
+      {"--", "", "cloud", 0, 0},
+      {"--", "", "cloud", 0, 0},
+  }};
+
+  if constexpr (kDeveloperMode) {
+    // ── Developer / demo build: pre-populate realistic sample data ─────────
+    // Lets every screen be exercised without WiFi or a live sync.
+    defaults.dashboard.location = "Toronto";
+    defaults.dashboard.reminder_count = 7;
+
+    defaults.dashboard.inventory_items = {
+        "Fresh Milk",
+        "Leftover Pizza",
+        "Marinated Chicken",
+    };
+    defaults.dashboard.inventory_badges = {
+        "EXP 3D",
+        "ADD YDAY",
+        "USE TNITE",
+    };
+    defaults.dashboard.inventory_completed = {false, false, false};
+
+    defaults.dashboard.reminder_items = {
+        "Doctor Appointment",
+        "Yoghurt Expires",
+        "Morning Yoga",
+        "Buy Milk",
+        "Trash Day",
+        "Pay Rent",
+        "Call Mom",
+    };
+    defaults.dashboard.reminder_completed = {
+        false, false, false, false, false, false, false,
+    };
+    defaults.dashboard.reminder_meta = {
+        {"r_doctor", "Tomorrow 09:00", "2026-04-07"},
+        {"r_yogurt", "Friday",         ""},
+        {"r_yoga",   "Mon 07:00",      ""},
+        {"r_milk",   "Apr 09",         ""},
+        {"r_trash",  "Tue",            ""},
+        {"r_rent",   "May 01",         "2026-05-01"},
+        {"r_mom",    "Tonight",        ""},
+    };
+    defaults.dashboard.calendar_events = {
+        {"e_team",   "Team standup",   "09:30", "2026-04-06"},
+        {"e_clinic", "Dental clinic",  "14:00", "2026-04-07"},
+        {"e_school", "Parent meeting", "18:30", "2026-04-09"},
+    };
+    defaults.dashboard.memos = {
+        {
+            "Please wipe the fridge shelf after dinner. Leftovers on top rack.",
+            "Mom", "2H AGO", true,
+        },
+        {
+            "Trash pickup is tomorrow morning. Move the blue bin outside before bed.",
+            "Dad", "YESTERDAY", false,
+        },
+        {
+            "Guest coming on Sunday. Buy fruit and sparkling water.",
+            "Family", "MAR 31", false,
+        },
+    };
+    defaults.dashboard.family_memo_text   = defaults.dashboard.memos.front().text;
+    defaults.dashboard.family_memo_author = defaults.dashboard.memos.front().author;
+    defaults.dashboard.family_memo_posted = defaults.dashboard.memos.front().posted;
+  } else {
+    // ── Retail / production build: blank slate ─────────────────────────────
+    // All user content is populated after setup + cloud sync.
+    defaults.dashboard.location = "Home";
+    defaults.dashboard.reminder_count = 0;
+
+    defaults.dashboard.inventory_items.clear();
+    defaults.dashboard.inventory_badges.clear();
+    defaults.dashboard.inventory_completed.clear();
+
+    defaults.dashboard.reminder_items.clear();
+    defaults.dashboard.reminder_completed.clear();
+    defaults.dashboard.reminder_meta.clear();
+
+    defaults.dashboard.calendar_events.clear();
+
+    defaults.dashboard.memos.clear();
+    defaults.dashboard.family_memo_text.clear();
+    defaults.dashboard.family_memo_author.clear();
+    defaults.dashboard.family_memo_posted.clear();
+  }
+
   return defaults;
 }
 
@@ -184,20 +209,31 @@ AppState make_state_from_defaults(
   state.landing.status = state.screen == Screen::Landing
                              ? "Rotate to choose language."
                              : "Opening Home from built-in defaults.";
-  state.onboarding.step_index = 0;
+  state.onboarding.step_index        = 0;
   state.onboarding.start_focus_index = 0;
-  state.onboarding.qr_focus_index = 0;
+  state.onboarding.wifi_sub_step     = 0;
+  state.onboarding.wifi_networks.clear();
+  state.onboarding.wifi_list_focus   = 0;
+  state.onboarding.wifi_list_scroll  = 0;
+  state.onboarding.wifi_scanning     = false;
+  state.onboarding.wifi_connecting   = false;
+  state.onboarding.wifi_password = "";
+  state.onboarding.kbd_focus     = 0;
+  state.onboarding.kbd_shift     = false;
+  state.onboarding.wifi_connect_error = "";
   state.onboarding.prefs_focus_index = 0;
-  state.onboarding.pair_token = "A1B2-C3D4";
-  state.onboarding.wifi_ssid = "";
-  state.onboarding.timezone = kDefaultTimezone;
+  state.onboarding.wifi_ssid         = "";
+  state.onboarding.timezone          = kDefaultTimezone;
   state.onboarding.auto_sync_enabled = true;
-  state.onboarding.status = "";
+  state.onboarding.status            = "";
+  state.onboarding.voice_recording   = false;
+  state.onboarding.voice_last_result = "";
+  state.onboarding.wifi_from_settings = false;
   state.home.focused_index = 0;
   state.home.clock_minute_bucket = current_minute_bucket(&state.home.clock_is_real);
   state.home.clock_seed_monotonic_ms = now_ms;
   state.home.clock_sync_state = state.home.clock_is_real ? "real_synced" : "fallback_unsynced";
-  state.home.weather_sync_state = "ok";
+  state.home.weather_sync_state = "syncing";
   state.home.show_focus = true;
   state.home.menu_overlay_active = false;
   state.home.pending_reorder = false;
@@ -222,9 +258,10 @@ AppState make_state_from_defaults(
   state.calendar.selected_index = 0;
   state.calendar.day_of_month = 26;
   state.calendar.month_label = "March 2026";
-  state.weather.temperature_c = 4;
-  state.weather.condition = "Cloudy";
-  state.inventory.total_items = 5;
+  state.weather.temperature_c = 0;
+  state.weather.condition.clear();
+  state.inventory.total_items =
+      static_cast<int>(defaults.dashboard.inventory_items.size());
   state.inventory.reminder_count = defaults.dashboard.reminder_count;
   state.inventory.focused_index = 0;
   state.settings.focused_index = 0;
@@ -242,6 +279,7 @@ AppState make_state_from_defaults(
   state.settings.rotation_deg = 0;
   state.settings.notice.clear();
   state.settings.notice_due_ms = 0;
+  state.settings.reset_pending = false;
   state.dashboard = defaults.dashboard;
   return state;
 }

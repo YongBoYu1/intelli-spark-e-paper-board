@@ -4,8 +4,11 @@
 #include "platform/board_config.hpp"
 #include "platform/clock.hpp"
 #include "platform/display.hpp"
+#include "platform/encoder_driver.hpp"
+#include "platform/live_data_provider.hpp"
 #include "platform/mic_driver.hpp"
 #include "platform/voice_client.hpp"
+#include "platform/ntp_sync.hpp"
 #include "platform/wifi_driver.hpp"
 
 #include "driver/usb_serial_jtag.h"
@@ -20,6 +23,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include <memory>
 
 namespace {
 
@@ -66,6 +70,8 @@ static constexpr uint64_t kRecordCooldownMs = 2000;
 
 // Runtime pointer set in app_main().
 static fridge_ink::app::Runtime* g_runtime{nullptr};
+static std::unique_ptr<fridge_ink::platform::Display> g_display{};
+static std::unique_ptr<fridge_ink::app::Runtime> g_runtime_owner{};
 
 // Pending voice actions queue — written by voice_record_task, consumed by main loop.
 // Protected by g_voice_mutex so cross-task access is safe.
@@ -334,22 +340,31 @@ extern "C" void app_main(void) {
     return;
   }
 
-  auto display = fridge_ink::platform::make_default_display();
-  fridge_ink::app::Runtime runtime(*display);
-  g_runtime = &runtime;
-  runtime.boot();
+  g_display = fridge_ink::platform::make_default_display();
+  g_runtime_owner = std::make_unique<fridge_ink::app::Runtime>(*g_display);
+  g_runtime = g_runtime_owner.get();
+  g_runtime->boot();
 
-  // Connect to WiFi (credentials set via sdkconfig / menuconfig).
-  // Non-fatal: voice HTTP POST will simply fail if not connected.
+  // Connect to WiFi then sync time + detect timezone via IP geolocation.
+  // Both steps are non-fatal: the device runs offline if they fail.
   {
     constexpr const char* kSsid     = CONFIG_WIFI_SSID;
     constexpr const char* kPassword = CONFIG_WIFI_PASSWORD;
     if (kSsid[0] != '\0') {
-      fridge_ink::platform::wifi_connect(kSsid, kPassword, 15000);
+      const bool wifi_ok =
+          fridge_ink::platform::wifi_connect(kSsid, kPassword, 15000);
+      if (wifi_ok) {
+        // NTP time sync + IP-based timezone detection (20 s combined budget).
+        fridge_ink::platform::ntp_sync(20000);
+      }
     } else {
-      ESP_LOGW(kTag, "CONFIG_WIFI_SSID not set — WiFi skipped");
+      ESP_LOGW(kTag, "CONFIG_WIFI_SSID not set — WiFi / NTP skipped");
     }
   }
+
+  fridge_ink::platform::live_data_bootstrap(
+      fridge_ink::platform::active_timezone_name().c_str(),
+      g_runtime->state().dashboard.location.c_str());
 
   // Initialise I2S microphone driver (non-fatal if it fails).
   const auto& board = fridge_ink::platform::default_board_config();
@@ -360,6 +375,16 @@ extern "C" void app_main(void) {
     }
   } else {
     ESP_LOGW(kTag, "Mic pins not configured — voice recording disabled");
+  }
+
+  // Initialise rotary encoder driver (non-fatal if it fails).
+  if (fridge_ink::platform::has_ready_encoder_pin_map(board)) {
+    const bool enc_ok = fridge_ink::platform::encoder_init(board.encoder_pins);
+    if (!enc_ok) {
+      ESP_LOGW(kTag, "Encoder init failed — physical knob disabled");
+    }
+  } else {
+    ESP_LOGW(kTag, "Encoder pins not configured — physical knob disabled");
   }
 
   const bool serial_input_ok = setup_serial_input();
@@ -377,8 +402,59 @@ extern "C" void app_main(void) {
   std::uint64_t last_tick_ms = fridge_ink::platform::monotonic_ms();
 
   while (true) {
+    // ── Physical encoder ─────────────────────────────────────────────────
+    // dispatch() is synchronous: it calls flush_pending() which blocks until
+    // the e-paper display finishes refreshing (up to 2-3 s).  During that
+    // blocking time the encoder task keeps running and may queue more events.
+    //
+    // Strategy:
+    //   1. Pre-drain  — collect everything queued so far into a coalesced
+    //                   delta (many detents → one Rotate(±1) dispatch).
+    //   2. Dispatch   — at most one Rotate + one Click per loop tick.
+    //                   dispatch() may block here for up to 2-3 s.
+    //   3. Post-drain — discard ALL events that accumulated while we were
+    //                   blocked.  This kills the "train effect": the user
+    //                   waits for the screen to update, then rotates again
+    //                   for the next step (correct e-paper interaction model).
+    {
+      fridge_ink::platform::EncoderEvent enc_ev;
+      int  rotate_delta  = 0;
+      bool do_click      = false;
+      bool do_voice      = false;
+
+      // Step 1: pre-drain & coalesce.
+      while (fridge_ink::platform::encoder_poll(&enc_ev)) {
+        switch (enc_ev) {
+          case fridge_ink::platform::EncoderEvent::RotateCW:    rotate_delta++;  break;
+          case fridge_ink::platform::EncoderEvent::RotateCCW:   rotate_delta--;  break;
+          case fridge_ink::platform::EncoderEvent::Click:        do_click = true; break;
+          case fridge_ink::platform::EncoderEvent::VoiceTrigger: do_voice = true; break;
+        }
+      }
+
+      // Step 2: dispatch (may block for the full display refresh duration).
+      const std::uint64_t now_ms = fridge_ink::platform::monotonic_ms();
+      if (rotate_delta != 0) {
+        const int step = (rotate_delta > 0) ? 1 : -1;
+        g_runtime->dispatch(fridge_ink::app::Event::Rotate(step, now_ms));
+      }
+      if (do_click) {
+        g_runtime->dispatch(fridge_ink::app::Event::Click(now_ms));
+      }
+      if (do_voice) {
+        ESP_LOGI(kTag, ">>> Voice recording triggered (encoder long press)");
+        trigger_voice_recording();
+      }
+
+      // Step 3: post-drain — discard everything queued during the blocking
+      // display refresh so the next loop iteration starts with a clean slate.
+      if (rotate_delta != 0 || do_click || do_voice) {
+        while (fridge_ink::platform::encoder_poll(&enc_ev)) {}
+      }
+    }
+
     if (serial_input_ok) {
-      poll_serial_input(runtime, *display);
+      poll_serial_input(*g_runtime, *g_display);
     }
 
     // Drain pending voice actions (enqueued from voice_record_task).
@@ -387,16 +463,17 @@ extern "C" void app_main(void) {
         std::vector<fridge_ink::platform::VoiceAction> actions;
         actions.swap(g_pending_voice_actions);
         xSemaphoreGive(g_voice_mutex);
-        runtime.dispatch_voice_actions(actions);
+        g_runtime->dispatch_voice_actions(actions);
       } else {
         xSemaphoreGive(g_voice_mutex);
       }
     }
 
     const std::uint64_t now_ms = fridge_ink::platform::monotonic_ms();
-    runtime.flush_deferred(now_ms);
+
+    g_runtime->flush_deferred(now_ms);
     if ((now_ms - last_tick_ms) >= kRuntimeTickMs) {
-      runtime.dispatch(fridge_ink::app::Event::Tick(now_ms));
+      g_runtime->dispatch(fridge_ink::app::Event::Tick(now_ms));
       last_tick_ms = now_ms;
     }
     vTaskDelay(kLoopDelay);

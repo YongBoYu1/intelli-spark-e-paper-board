@@ -17,6 +17,7 @@ struct DateValue {
 struct AgendaSelection {
   std::vector<int> event_indices{};
   std::vector<int> reminder_indices{};
+  std::vector<int> scheduled_indices{};  // indices into state.scheduled_reminders (daily)
 };
 
 DateValue today_local_date(const AppState& state);

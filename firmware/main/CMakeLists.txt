@@ -10,6 +10,7 @@ idf_component_register(
         "ui/draw.cpp"
         "ui/primitives.cpp"
         "ui/render_app.cpp"
+        "ui/strings.cpp"
         "ui/screens/landing_screen.cpp"
         "ui/screens/onboarding_screen.cpp"
         "ui/screens/home_screen.cpp"
@@ -39,10 +40,14 @@ idf_component_register(
         "platform/display.cpp"
         "platform/clock.cpp"
         "platform/live_data_provider.cpp"
+        "platform/persistent_store.cpp"
         # Voice / microphone / WiFi
+        "platform/encoder_driver.cpp"
         "platform/mic_driver.cpp"
         "platform/voice_client.cpp"
         "platform/wifi_driver.cpp"
+        "platform/ntp_sync.cpp"
+        "platform/weather_client.cpp"
     INCLUDE_DIRS "."
     EMBED_FILES
         "assets/landing_en.raw"
@@ -53,7 +58,7 @@ idf_component_register(
         driver
         # HTTP client for voice backend
         esp_http_client
-        # Base64 encoding (mbedtls)
+        # Base64 encoding + TLS certificate bundle (HTTPS for voice backend)
         mbedtls
         # Real-time clock for request timestamps
         esp_timer
@@ -62,6 +67,8 @@ idf_component_register(
         esp_netif
         esp_event
         nvs_flash
+        # SNTP for NTP time sync
+        lwip
 )
 
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_17)

@@ -20,6 +20,14 @@ struct MicPins {
   int sd{-1};   // I2S Data In (serial data)
 };
 
+// Rotary encoder (EC11 / KY-040 style) pin mapping.
+// Hardware wiring: S1→GPIO13, S2→GPIO15, KEY→GPIO16, PWR→3.3V, GND→GND.
+struct EncoderPins {
+  int s1{-1};   // CLK / rotary A signal
+  int s2{-1};   // DT  / rotary B signal
+  int key{-1};  // push-button SW
+};
+
 struct BoardConfig {
   const char* board_name{"ESP32-S3 (pending exact dev board variant)"};
   const char* target{"esp32s3"};
@@ -28,10 +36,13 @@ struct BoardConfig {
   DisplayPins display_pins{};
   bool mic_pin_map_ready{false};
   MicPins mic_pins{};
+  bool encoder_pin_map_ready{false};
+  EncoderPins encoder_pins{};
 };
 
 const BoardConfig& default_board_config();
 bool has_ready_display_pin_map(const BoardConfig& config);
 bool has_ready_mic_pin_map(const BoardConfig& config);
+bool has_ready_encoder_pin_map(const BoardConfig& config);
 
 }  // namespace fridge_ink::platform

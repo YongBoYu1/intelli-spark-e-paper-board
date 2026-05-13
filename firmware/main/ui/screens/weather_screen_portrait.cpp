@@ -6,6 +6,7 @@
 #include "ui/draw.hpp"
 #include "ui/panel_font_assets_generated.hpp"
 #include "ui/primitives.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <array>
@@ -87,7 +88,8 @@ void wp_line(
 
 std::size_t wp_gi(const char ch) {
   const unsigned char c = static_cast<unsigned char>(ch);
-  if (c < 32 || c > 126) return static_cast<std::size_t>('?' - 32);
+  if (c == 0xB0u) return 95u;  // U+00B0 DEGREE SIGN — appended at index 95
+  if (c < 32u || c > 126u) return static_cast<std::size_t>('?' - 32);
   return static_cast<std::size_t>(c - 32);
 }
 
@@ -261,40 +263,47 @@ float wp_forecast_h_scale(const std::string& icon_name) {
   return 1.0f;
 }
 
-std::array<std::string, 3> wp_day_labels(const app::AppState& state) {
-  std::array<std::string, 3> out = {"TMR", "--", "--"};
-  const auto today = app::calendar_runtime::today_local_date(state);
-  for (int i = 1; i < 3; ++i) {
-    const auto d = app::calendar_runtime::add_days(today, i + 1);
-    const int wd = app::calendar_runtime::weekday_sunday0(d);
-    const char* name = app::calendar_runtime::weekday_name_upper_short(wd);
-    out[static_cast<std::size_t>(i)] = name == nullptr ? "--" : std::string(name);
-  }
-  return out;
-}
-
 }  // namespace
 
 std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) {
   using namespace platform::panel_font_assets;
+  const auto& s = get_ui_strings(state.device_language);
   using platform::kPanelBufferSize;
 
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
   const bool r90 = use_r90_map(state);
 
-  const std::string city = state.dashboard.location.empty() ? "Unknown" : state.dashboard.location;
-  const std::string condition = state.dashboard.weather_condition.empty()
-                                    ? std::string("Cloud")
-                                    : state.dashboard.weather_condition;
+  const bool weather_has_data = !state.dashboard.weather_condition.empty();
+  const bool weather_syncing = state.home.weather_sync_state == "syncing";
+  const std::string city = state.dashboard.location.empty() ? s.wx_unknown_location : state.dashboard.location;
+  const std::string condition = weather_has_data
+                                    ? (state.dashboard.weather_condition.empty()
+                                           ? std::string("Cloudy")
+                                           : state.dashboard.weather_condition)
+                                    : std::string("Cloudy");
+  const std::string icon_id = weather_has_data
+                                  ? state.dashboard.weather_icon
+                                  : std::string("cloud");
   const int temp_c = state.dashboard.weather_temperature_c;
   const int humidity = state.dashboard.weather_humidity_percent;
+  const int feels_like_c = state.dashboard.weather_feels_like_c;
+  const int hi_c = state.dashboard.weather_hi_c;
+  const int lo_c = state.dashboard.weather_lo_c;
+  const int wind_kmh = state.dashboard.weather_wind_kmh;
+  const int uv_index = state.dashboard.weather_uv_index;
 
-  const std::string feels = "Feels Like " + std::to_string(temp_c) + "C";
-  const std::string temp = std::to_string(temp_c) + "C";
-  const std::string range = "H: " + std::to_string(temp_c) + "  L: " + std::to_string(temp_c);
-  const std::string humidity_v = std::to_string(humidity) + "%";
-
-  const std::array<std::string, 3> day_labels = wp_day_labels(state);
+  // "C" suffix removed — degree "o" is drawn as a superscript separately.
+  const std::string feels = weather_has_data
+                                ? (std::string(s.wx_feels_like_lc) + " " + std::to_string(feels_like_c))
+                                : (weather_syncing ? std::string(s.wx_syncing_lc)
+                                                   : std::string(s.wx_no_weather_data));
+  const std::string temp = weather_has_data ? std::to_string(temp_c) : std::string("--");
+  const std::string range = weather_has_data
+                                ? ("H: " + std::to_string(hi_c) + "  L: " + std::to_string(lo_c))
+                                : (weather_syncing ? std::string(s.wx_waiting_sync)
+                                                   : std::string(s.wx_waiting_wifi));
+  const std::string humidity_v =
+      (weather_has_data && humidity > 0) ? (std::to_string(humidity) + "%") : "--";
 
   // Python parity: full-screen weather detail uses only content padding,
   // no outer rounded panel/card border.
@@ -324,14 +333,18 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
 
   // Hero.
   const WpFit city_fit = wp_fit(city, content_w - 20, {&kFontInterBold29, &kFontInterBold22, &kFontInterBold20, &kFontInterBold18}, true);
-  const WpFit feels_fit = wp_fit(feels, content_w - 24, {&kFontInterMedium18, &kFontInterBold17, &kFontInterMedium13}, true);
-  const WpFit temp_fit = wp_fit(temp, content_w - 24, {&kFontInterBlack87, &kFontInterBlack66, &kFontInterBlack36}, false);
-  const WpFit range_fit = wp_fit(range, content_w - 24, {&kFontInterMedium18, &kFontInterBold17, &kFontInterMedium13}, true);
+  const WpFit feels_fit = wp_fit(feels, content_w - 24, {&kFontInterBold29, &kFontInterBold22, &kFontInterMedium18, &kFontInterBold17}, true);
+  const WpFit temp_fit = wp_fit(temp, content_w - 24, {&kFontInterBlack109, &kFontInterBlack87, &kFontInterBlack66, &kFontInterBlack36}, false);
+  const WpFit range_fit = wp_fit(range, content_w - 24, {&kFontInterBold29, &kFontInterBold22, &kFontInterMedium18, &kFontInterBold17}, true);
 
-  const BitmapFont& city_font = *city_fit.font;
+  // °C is written as "\xB0" "C" — 0xB0 maps to glyph index 95 (U+00B0 DEGREE SIGN).
+  static constexpr const char* kDegC = "\xB0" "C";
+
+  const BitmapFont& city_font  = *city_fit.font;
   const BitmapFont& feels_font = *feels_fit.font;
-  const BitmapFont& temp_font = *temp_fit.font;
+  const BitmapFont& temp_font  = *temp_fit.font;
   const BitmapFont& range_font = *range_fit.font;
+  const BitmapFont& deg_font   = kFontInterBold29;  // °C superscript next to main temp
 
   const int city_y = wp_y_for_top(hero_y0 + 2, city_fit.text, city_font);
   wp_centered(image, cx0, cx1, city_y, city_fit.text, city_font, r90);
@@ -339,31 +352,61 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
   const int icon_box = std::max(58, std::min(96, std::min((content_w * 26) / 100, (hero_h * 30) / 100)));
   const int icon_x = cx0 + ((content_w - icon_box) / 2);
   const int icon_y = city_y + 44;
-  wp_icon(image, icon_x, icon_y, icon_box, icon_box, condition, r90);
+  wp_icon(image, icon_x, icon_y, icon_box, icon_box, icon_id, r90);
 
+  // "Feels Like --°C" drawn as a centred pair.
   const int feels_y = wp_y_for_top(icon_y + icon_box + 8, feels_fit.text, feels_font);
-  wp_centered(image, cx0, cx1, feels_y, feels_fit.text, feels_font, r90);
+  {
+    const int fl_w     = wp_text_width(feels_fit.text, feels_font);
+    const int fl_deg_w = weather_has_data ? wp_text_width(kDegC, feels_font) : 0;
+    const int fl_x     = cx0 + ((cx1 - cx0 - fl_w - fl_deg_w) / 2);
+    wp_text(image, fl_x, feels_y, feels_fit.text, feels_font, r90);
+    if (weather_has_data) {
+      wp_text(image, fl_x + fl_w, feels_y, kDegC, feels_font, r90);
+    }
+  }
 
   const int range_y_top = hero_y1 - 24;
   const int range_y = wp_y_for_top(range_y_top, range_fit.text, range_font);
   wp_centered(image, cx0, cx1, range_y, range_fit.text, range_font, r90);
 
-  const int temp_zone_top = feels_y + 26;
-  const int temp_zone_h = std::max(42, range_y_top - temp_zone_top - 4);
+  const int temp_zone_top = feels_y + 56;
+  const int temp_zone_h = std::max(42, range_y_top - temp_zone_top - 28);
   const int temp_y = wp_y_center(temp_zone_top, temp_zone_h, temp_fit.text, temp_font);
-  wp_centered(image, cx0, cx1, temp_y, temp_fit.text, temp_font, r90);
+  // Temperature + °C at upper-right; align °C's visual top with the digit top.
+  {
+    const WpVB tmp_vb = wp_vbounds(temp_fit.text, temp_font);
+    const WpVB deg_vb = wp_vbounds(kDegC,         deg_font);
+    // deg_y: shift °C up so its visual top aligns with the temperature digit top.
+    const int deg_y = (tmp_vb.ok && deg_vb.ok)
+                          ? temp_y + tmp_vb.top - deg_vb.top
+                          : temp_y;
+
+    const int tmp_w  = wp_text_width(temp_fit.text, temp_font);
+    const int deg_w  = weather_has_data ? (wp_text_width(kDegC, deg_font) + 2) : 0;
+    const int pair_w = tmp_w + deg_w;
+    const int tmp_x  = cx0 + ((cx1 - cx0 - pair_w) / 2);
+    wp_text(image, tmp_x, temp_y, temp_fit.text, temp_font, r90);
+    if (weather_has_data) {
+      wp_text(image, tmp_x + tmp_w + 2, deg_y, kDegC, deg_font, r90);
+    }
+  }
 
   // Metrics.
   struct MetricRow { std::string value; std::string label; };
+  // WIND value stores the number only; "km/h" unit is rendered separately in a
+  // smaller font so it doesn't dominate the metric tile.
+  const std::string wind_num = weather_has_data ? std::to_string(wind_kmh) : "--";
   const std::array<MetricRow, 3> metrics = {{
-      {humidity_v, "Humidity"},
-      {"-- km/h", "Wind"},
-      {"--", "UV Index"},
+      {humidity_v, s.wx_humidity_lc},
+      {wind_num,   s.wx_wind_lc},
+      {weather_has_data ? std::to_string(uv_index) : "--", s.wx_uv_index_lc},
   }};
 
   for (int i = 0; i < 3; ++i) {
     const int x0 = cx0 + i * col_w;
     const int x1 = (i == 2) ? cx1 : (x0 + col_w);
+    const bool is_wind = (i == 1);
 
     const WpFit val_fit = wp_fit(metrics[static_cast<std::size_t>(i)].value, x1 - x0 - 12,
                                  {&kFontInterBlack29, &kFontInterBold29, &kFontInterBold22, &kFontInterBold18}, true);
@@ -375,7 +418,18 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
 
     const int vy = wp_y_for_top(metric_y0 + 26, val_fit.text, vf);
     const int ly = wp_y_for_top(metric_y0 + 62, lbl_fit.text, lf);
-    wp_centered(image, x0, x1, vy, val_fit.text, vf, r90);
+
+    if (is_wind && weather_has_data) {
+      // Number in vf + " km/h" in kFontInterMedium13, drawn as a centred pair.
+      const std::string unit   = " km/h";
+      const int num_w  = wp_text_width(val_fit.text, vf);
+      const int unit_w = wp_text_width(unit, kFontInterMedium13);
+      const int pair_x = x0 + ((x1 - x0 - num_w - unit_w) / 2);
+      wp_text(image, pair_x,          vy, val_fit.text, vf,                  r90);
+      wp_text(image, pair_x + num_w,  vy, unit,         kFontInterMedium13,  r90);
+    } else {
+      wp_centered(image, x0, x1, vy, val_fit.text, vf, r90);
+    }
     wp_centered(image, x0, x1, ly, lbl_fit.text, lf, r90);
   }
 
@@ -388,10 +442,16 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
   for (int i = 0; i < 3; ++i) {
     const int x0 = cx0 + i * col_w;
     const int x1 = (i == 2) ? cx1 : (x0 + col_w);
-    const std::string day = day_labels[static_cast<std::size_t>(i)];
+    const auto& forecast = state.dashboard.weather_forecast_days[static_cast<std::size_t>(i)];
+    const std::string day =
+        weather_has_data && !forecast.dow.empty() ? forecast.dow : "--";
 
     const WpFit day_fit = wp_fit(day, x1 - x0 - 8, {&kFontInterBold29, &kFontInterBold22, &kFontInterBold20}, false);
-    const WpFit rng_fit = wp_fit("--/--", x1 - x0 - 8, {&kFontInterBold22, &kFontInterBold20, &kFontInterBold18}, false);
+    const std::string forecast_range =
+        weather_has_data
+            ? (std::to_string(forecast.hi_c) + "/" + std::to_string(forecast.lo_c))
+            : "--/--";
+    const WpFit rng_fit = wp_fit(forecast_range, x1 - x0 - 8, {&kFontInterBold22, &kFontInterBold20, &kFontInterBold18}, false);
 
     const BitmapFont& df = *day_fit.font;
     const BitmapFont& rf = *rng_fit.font;
@@ -409,7 +469,14 @@ std::vector<uint8_t> render_weather_portrait_bitmap(const app::AppState& state) 
     const int icon_h = std::max(34, static_cast<int>(static_cast<float>(icon_box) * h_scale));
     const int icon_x = x0 + ((x1 - x0 - icon_w) / 2);
     const int icon_y = day_y + 66;
-    wp_icon(image, icon_x, icon_y, icon_w, icon_h, condition, r90);
+    wp_icon(
+        image,
+        icon_x,
+        icon_y,
+        icon_w,
+        icon_h,
+        weather_has_data && !forecast.icon.empty() ? forecast.icon : icon_id,
+        r90);
   }
 
   return image;

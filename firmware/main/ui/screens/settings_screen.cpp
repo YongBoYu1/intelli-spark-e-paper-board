@@ -3,6 +3,7 @@
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
 #include "ui/panel_font_assets_generated.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <array>
@@ -22,20 +23,24 @@ enum class SettingsItem {
   PartialRefresh = 1,
   FullRefresh = 2,
   Rotation = 3,
-  Connectivity = 4,
-  AutoSync = 5,
-  SyncNow = 6,
-  ResetAndWipe = 7,
+  Language = 4,
+  Connectivity = 5,
+  AutoSync = 6,
+  SyncNow = 7,
+  ChangeWifi = 8,
+  ResetAndWipe = 9,
 };
 
-constexpr std::array<SettingsItem, 8> kSettingsOrder = {
+constexpr std::array<SettingsItem, 10> kSettingsOrder = {
     SettingsItem::FontSize,
     SettingsItem::PartialRefresh,
     SettingsItem::FullRefresh,
     SettingsItem::Rotation,
+    SettingsItem::Language,
     SettingsItem::Connectivity,
     SettingsItem::AutoSync,
     SettingsItem::SyncNow,
+    SettingsItem::ChangeWifi,
     SettingsItem::ResetAndWipe,
 };
 
@@ -278,30 +283,30 @@ std::string lower_copy(const std::string& text) {
   return out;
 }
 
-std::string bool_text(const bool value) {
-  return value ? "ON" : "OFF";
+std::string bool_text(const bool value, const UiStrings& s) {
+  return value ? s.on : s.off;
 }
 
-std::string font_size_text(const std::string& raw) {
+std::string font_size_text(const std::string& raw, const UiStrings& s) {
   const std::string value = lower_copy(raw);
   if (value == "small") {
-    return "SMALL";
+    return s.settings_small;
   }
   if (value == "large") {
-    return "LARGE";
+    return s.settings_large;
   }
-  return "MEDIUM";
+  return s.settings_medium;
 }
 
-std::string partial_refresh_text(const std::string& raw) {
+std::string partial_refresh_text(const std::string& raw, const UiStrings& s) {
   const std::string value = lower_copy(raw);
   if (value == "slow") {
-    return "SLOW";
+    return s.settings_slow;
   }
   if (value == "fast") {
-    return "FAST";
+    return s.settings_fast;
   }
-  return "BALANCED";
+  return s.settings_balanced;
 }
 
 FontSizeMode font_size_mode(const app::AppState& state) {
@@ -378,59 +383,67 @@ int text_visual_height(const std::string& text, const BitmapFont& f) {
   return bounds.bottom - bounds.top;
 }
 
-std::string last_sync_text(const app::AppState& state) {
+std::string last_sync_text(const app::AppState& state, const UiStrings& s) {
   if (state.settings.last_sync_ms <= 0) {
-    return "NEVER";
+    return s.settings_never;
   }
   const std::time_t ts = static_cast<std::time_t>(state.settings.last_sync_ms / 1000ULL);
   if (ts <= 0) {
-    return "NEVER";
+    return s.settings_never;
   }
   std::tm local_tm{};
   if (localtime_r(&ts, &local_tm) == nullptr) {
-    return "INVALID TIME";
+    return s.settings_invalid_time;
   }
   char buf[20] = {0};
   if (std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &local_tm) == 0) {
-    return "INVALID TIME";
+    return s.settings_invalid_time;
   }
   return std::string(buf);
 }
 
-std::string setting_label(const SettingsItem item) {
+std::string setting_label(const SettingsItem item, const UiStrings& s) {
   switch (item) {
-    case SettingsItem::FontSize:       return "FONT SIZE";
-    case SettingsItem::PartialRefresh: return "PARTIAL REFRESH";
-    case SettingsItem::FullRefresh:    return "FULL REFRESH";
-    case SettingsItem::Rotation:       return "ROTATION";
-    case SettingsItem::Connectivity:   return "WIFI + BT";
-    case SettingsItem::AutoSync:       return "AUTO SYNC";
-    case SettingsItem::SyncNow:        return "SYNC NOW";
-    case SettingsItem::ResetAndWipe:   return "RESET / WEB DATA";
+    case SettingsItem::FontSize:       return s.settings_font_size;
+    case SettingsItem::PartialRefresh: return s.settings_partial_refresh;
+    case SettingsItem::FullRefresh:    return s.settings_full_refresh;
+    case SettingsItem::Rotation:       return s.settings_rotation;
+    case SettingsItem::Language:       return s.settings_language;
+    case SettingsItem::Connectivity:   return s.settings_connectivity;
+    case SettingsItem::AutoSync:       return s.settings_auto_sync;
+    case SettingsItem::SyncNow:        return s.settings_sync_now;
+    case SettingsItem::ChangeWifi:     return s.settings_change_wifi;
+    case SettingsItem::ResetAndWipe:   return s.settings_reset;
   }
   return {};
 }
 
-std::string setting_value(const app::AppState& state, const SettingsItem item) {
+std::string setting_value(const app::AppState& state, const SettingsItem item, const UiStrings& s) {
   switch (item) {
     case SettingsItem::FontSize:
-      return font_size_text(state.settings.font_size);
+      return font_size_text(state.settings.font_size, s);
     case SettingsItem::PartialRefresh:
-      return partial_refresh_text(state.settings.partial_refresh_mode);
+      return partial_refresh_text(state.settings.partial_refresh_mode, s);
     case SettingsItem::FullRefresh:
-      return "EVERY " + std::to_string(std::max(1, state.settings.full_refresh_every)) +
-             " PARTIALS";
+      return std::string(s.settings_every) + " " +
+             std::to_string(std::max(1, state.settings.full_refresh_every)) +
+             " " + s.settings_partials;
     case SettingsItem::Rotation:
       return std::to_string(normalize_rotation_deg(state.settings.rotation_deg));
+    case SettingsItem::Language:
+      return upper_copy(app::language_label(state.device_language));
     case SettingsItem::Connectivity:
-      return "WIFI " + bool_text(state.settings.wifi_enabled) +
-             " / BT " + bool_text(state.settings.bluetooth_enabled);
+      return std::string("WIFI ") + bool_text(state.settings.wifi_enabled, s) +
+             " / BT " + bool_text(state.settings.bluetooth_enabled, s);
     case SettingsItem::AutoSync:
-      return bool_text(state.settings.auto_sync_enabled);
+      return bool_text(state.settings.auto_sync_enabled, s);
     case SettingsItem::SyncNow:
-      return "PRESS ENTER";
+      return s.settings_press_enter;
+    case SettingsItem::ChangeWifi:
+      return state.onboarding.wifi_ssid.empty() ? s.settings_not_set
+                                                : state.onboarding.wifi_ssid;
     case SettingsItem::ResetAndWipe:
-      return "PLACEHOLDER";
+      return s.settings_press_enter;
   }
   return {};
 }
@@ -438,6 +451,7 @@ std::string setting_value(const app::AppState& state, const SettingsItem item) {
 void render_settings_source(
     RotatedCanvas& canvas,
     const app::AppState& state) {
+  const auto& s = get_ui_strings(state.device_language);
   const FontSizeMode fs_mode = font_size_mode(state);
   const double fs_scale = font_scale(fs_mode);
   const SettingsTypography typography = settings_typography_for(fs_mode);
@@ -455,12 +469,12 @@ void render_settings_source(
   draw_canvas_text(
       canvas,
       left,
-      y_for_visual_top(16, "SETTINGS", title_font),
-      "SETTINGS",
+      y_for_visual_top(16, s.settings_title, title_font),
+      s.settings_title,
       title_font);
 
   {
-    const std::string raw = "ROTATE TO SELECT  -  CLICK TO ENTER  -  LONG PRESS TO HOME";
+    const std::string raw = s.settings_hint_landscape;
     const std::string hint = truncate_text(raw, hint_font, std::max(80, right - left));
     const int hint_w = text_width(hint, hint_font);
     const int hint_x = std::max(left, right - hint_w);
@@ -491,9 +505,9 @@ void render_settings_source(
   const int min_group_h = std::max(14, group_text_h + 4);
 
   auto content_h = [&]() -> int {
-    return group_h + (5 * row_h) + (4 * row_gap) + group_gap +
-           group_h + (2 * row_h) + row_gap + group_gap +
-           group_h + row_h;
+    return group_h + (6 * row_h) + (5 * row_gap) + group_gap +
+           group_h + (3 * row_h) + (2 * row_gap) +
+           row_h;
   };
 
   const int avail = std::max(0, content_bottom - content_top);
@@ -528,13 +542,15 @@ void render_settings_source(
 
   int y = content_top;
   auto draw_group = [&](const char* name, const int first, const int count) {
-    draw_canvas_text(
-        canvas,
-        left + 2,
-        y_for_centered_text(y, group_h, name, group_font),
-        name,
-        group_font);
-    y += group_h;
+    if (name != nullptr && name[0] != '\0') {
+      draw_canvas_text(
+          canvas,
+          left + 2,
+          y_for_centered_text(y, group_h, name, group_font),
+          name,
+          group_font);
+      y += group_h;
+    }
 
     for (int i = 0; i < count; ++i) {
       const int idx = first + i;
@@ -544,7 +560,7 @@ void render_settings_source(
       const int y0 = y;
 
       const std::string value = truncate_text(
-          setting_value(state, item),
+          setting_value(state, item, s),
           value_font,
           std::max(120, ((right - left) * 50) / 100));
       const int value_w = text_width(value, value_font);
@@ -555,7 +571,7 @@ void render_settings_source(
       const int marker_x = left + 2;
       const int label_x = marker_x + marker_w + 8;
       const int label_max = std::max(100, value_x - label_x - 12);
-      const std::string label = truncate_text(setting_label(item), row_font, label_max);
+      const std::string label = truncate_text(setting_label(item, s), row_font, label_max);
 
       draw_canvas_text(
           canvas,
@@ -585,13 +601,14 @@ void render_settings_source(
     y += group_gap;
   };
 
-  draw_group("DISPLAY", 0, 5);
-  draw_group("SYNC", 5, 2);
-  draw_group("OTHER", 7, 1);
+  draw_group(s.settings_group_display, 0, 6);
+  draw_group(s.settings_group_sync, 6, 3);
+  y = std::max(content_top, y - group_gap);
+  draw_group("", 9, 1);
 
   canvas_fill_black_rect(canvas, left, footer_top - 1, right, footer_top);
 
-  const std::string sync_raw = "LAST SYNC " + upper_copy(last_sync_text(state));
+  const std::string sync_raw = std::string(s.settings_last_sync_prefix) + " " + upper_copy(last_sync_text(state, s));
   const std::string sync = truncate_text(sync_raw, footer_font, std::max(80, right - left - 40));
   const int sync_w = text_width(sync, footer_font);
   const int sync_x = std::max(left, right - sync_w);

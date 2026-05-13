@@ -2,6 +2,7 @@
 
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
+#include "ui/strings.hpp"
 
 #include <array>
 #include <string>
@@ -13,19 +14,21 @@ std::vector<uint8_t> render_menu_bitmap(const app::AppState& state) {
   using platform::kPanelBufferSize;
   using platform::kPanelWidth;
 
-  constexpr std::array<const char*, 5> kMenuItems = {
-      "MEMO",
-      "LIST",
-      "TIMER",
-      "CALENDAR",
-      "SETTINGS",
+  const auto& s = get_ui_strings(state.device_language);
+
+  const std::array<const char*, 5> kMenuItems = {
+      s.menu_memo,
+      s.menu_list,
+      s.menu_timer,
+      s.menu_calendar,
+      s.menu_settings,
   };
 
   const std::size_t focus = state.menu.focused_index % kMenuItems.size();
 
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
   draw_outline_rect(image, 12, 12, kPanelWidth - 12, 468, 3);
-  draw_text_line(image, 40, 28, "MENU", 3, 14);
+  draw_text_line(image, 40, 28, s.menu_title, 3, 14);
   draw_text_line(image, 40, 64, "Issue #52 placeholder navigation hub", 1, 48);
 
   const int item_x0 = 54;
@@ -49,7 +52,7 @@ std::vector<uint8_t> render_menu_bitmap(const app::AppState& state) {
   draw_outline_rect(image, 40, 418, kPanelWidth - 40, 456, 2);
   draw_text_centered(
       image, 56, kPanelWidth - 56, 430,
-      "Rotate to browse. Click to open the selected screen.", 1, 54);
+      s.menu_hint, 1, 54);
   return image;
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -38,6 +39,27 @@ struct MemoItem {
   bool is_new{false};
 };
 
+// A recurring alarm that fires every day at a fixed HH:MM.
+// Created via voice command, e.g. "Remind me every day at 2pm to take medicine".
+struct ScheduledReminder {
+  std::string id{};                    // unique ID, e.g. "sr_0"
+  std::string title{};                 // e.g. "Take medicine"
+  int hour{0};                         // 0–23 (local time)
+  int minute{0};                       // 0–59
+  bool enabled{true};
+  std::uint64_t last_fired_bucket{0};  // minute-bucket when last fired; prevents re-trigger
+};
+
+// State for the modal alarm popup shown when a ScheduledReminder fires.
+struct ScheduledAlarmState {
+  bool active{false};
+  std::string id{};         // which ScheduledReminder triggered this
+  std::string title{};      // reminder title (copy for display)
+  int hour{0};
+  int minute{0};
+  int focused_index{0};     // 0 = Confirm ("done"), 1 = Cancel ("skip")
+};
+
 struct ReminderMetaItem {
   std::string rid{};
   std::string right{};
@@ -51,13 +73,28 @@ struct CalendarEventItem {
   std::string date_iso{};
 };
 
+struct WeatherForecastDay {
+  std::string dow{"--"};
+  std::string condition{};
+  std::string icon{};
+  int hi_c{0};
+  int lo_c{0};
+};
+
 struct DashboardSummary {
   std::string location{"Kitchen"};
   int battery_percent{84};
   int reminder_count{3};
   std::string weather_condition{"Cloudy"};
+  std::string weather_icon{"cloud"};
   int weather_temperature_c{4};
   int weather_humidity_percent{62};
+  int weather_feels_like_c{4};
+  int weather_hi_c{4};
+  int weather_lo_c{2};
+  int weather_wind_kmh{0};
+  int weather_uv_index{0};
+  std::array<WeatherForecastDay, 3> weather_forecast_days{};
   std::vector<std::string> inventory_items{};
   std::vector<std::string> inventory_badges{};
   std::vector<bool> inventory_completed{};
@@ -154,19 +191,48 @@ struct SettingsState {
   int rotation_deg{0};
   std::string notice{};
   std::uint64_t notice_due_ms{0};
+  bool reset_pending{false};  // true after first click on ResetAndWipe; second click confirms
+};
+
+struct WifiScanEntry {
+  std::string ssid{};
+  int rssi{0};
 };
 
 struct OnboardingState {
   std::size_t step_index{0};
   std::size_t start_focus_index{0};
-  std::size_t qr_focus_index{0};
+
+  // ── Step 1: WiFi selection (sub_step 0) + password entry (sub_step 1) ──
+  std::size_t wifi_sub_step{0};
+  std::vector<WifiScanEntry> wifi_networks;
+  std::size_t wifi_list_focus{0};
+  std::size_t wifi_list_scroll{0};
+  bool wifi_scanning{false};
+  bool wifi_connecting{false};
+  std::string wifi_connect_error{};
+  std::string wifi_password{};
+  std::size_t kbd_focus{0};   // 0-43, linear QWERTY key index
+  bool        kbd_shift{false};
+
+  // ── Step 2: Preferences ────────────────────────────────────────────────
   std::size_t prefs_focus_index{0};
-  std::string pair_token{"A1B2-C3D4"};
   std::string wifi_ssid{};
   std::string timezone{"America/Toronto"};
   bool auto_sync_enabled{true};
   std::string status{};
+
+  // ── Step 3: Voice guide ────────────────────────────────────────────────
+  bool voice_recording{false};   // true while mic_record_task is running
+  std::string voice_last_result{};  // summary from last voice response
+
+  // ── Settings → Change Wi-Fi ────────────────────────────────────────────
+  bool wifi_from_settings{false};  // true when wifi flow was launched from Settings
 };
+
+// Total on-screen keyboard keys: row0(10)+row1(10)+row2(9)+row3(7)+row4(8)=44
+// Row 4 special indices: 36=SHIFT 37='-' 38='_' 39='.' 40='@' 41=SPACE 42=DEL 43=OK
+static constexpr std::size_t kOnboardingKbdKeyCount = 44u;
 
 struct AppState {
   Screen screen{Screen::Landing};
@@ -186,6 +252,10 @@ struct AppState {
   InventoryState inventory{};
   SettingsState settings{};
   DashboardSummary dashboard{};
+  // Daily scheduled reminders (persistent, voice-created).
+  std::vector<ScheduledReminder> scheduled_reminders{};
+  // Currently active alarm popup (at most one at a time).
+  ScheduledAlarmState scheduled_alarm{};
 };
 
 const char* screen_name(Screen screen);

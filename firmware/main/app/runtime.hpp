@@ -4,6 +4,7 @@
 #include "app/refresh_policy.hpp"
 #include "app/state.hpp"
 #include "platform/voice_client.hpp"
+#include "platform/weather_client.hpp"
 #include "ui/render_app.hpp"
 #include "ui/screens/home_screen.hpp"
 
@@ -29,6 +30,7 @@ class Runtime {
   void flush_deferred(std::uint64_t now_ms);
   void dispatch_voice_actions(
       const std::vector<fridge_ink::platform::VoiceAction>& actions);
+  void apply_weather_result(const fridge_ink::platform::WeatherResult& result);
 
   const AppState& state() const { return state_; }
 

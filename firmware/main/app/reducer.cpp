@@ -1,7 +1,10 @@
 #include "app/reducer.hpp"
 #include "app/calendar_runtime.hpp"
+#include "app/defaults.hpp"
 #include "platform/clock.hpp"
+#include "platform/live_data_provider.hpp"
 #include "platform/voice_client.hpp"
+#include "platform/wifi_driver.hpp"
 #include "esp_log.h"
 
 #include <algorithm>
@@ -18,7 +21,7 @@ namespace {
 constexpr const char* kTag = "reducer";
 
 constexpr int kMenuItemCount = 5;
-constexpr int kSettingsItemCount = 8;
+constexpr int kSettingsItemCount = 10;
 constexpr int kHomeInventoryVisibleLandscapeMax = 3;
 constexpr int kHomeInventoryVisiblePortraitMax = 4;
 constexpr int kHomeReminderVisiblePortraitMax = 4;
@@ -49,10 +52,12 @@ enum class SettingsItem {
   PartialRefresh = 1,
   FullRefresh = 2,
   Rotation = 3,
-  Connectivity = 4,
-  AutoSync = 5,
-  SyncNow = 6,
-  ResetAndWipe = 7,
+  Language = 4,
+  Connectivity = 5,
+  AutoSync = 6,
+  SyncNow = 7,
+  ChangeWifi = 8,
+  ResetAndWipe = 9,
 };
 
 enum class HomeFocusTargetKind {
@@ -336,6 +341,10 @@ void adjust_timer_seconds(
   }
 }
 
+// Forward declaration — defined later in this file.
+void enter_onboarding_wifi_select(AppState& state);
+void set_language(AppState& state, Language language);
+
 void handle_settings_click(AppState& state, const Event& event) {
   switch (settings_item_for_focus(state)) {
     case SettingsItem::FontSize:
@@ -360,6 +369,18 @@ void handle_settings_click(AppState& state, const Event& event) {
           (normalize_rotation_deg(state.settings.rotation_deg) + 90) % 360;
       ESP_LOGI(kTag, "[settings] rotation_deg=%d", state.settings.rotation_deg);
       return;
+    case SettingsItem::Language: {
+      const Language next_language =
+          language_from_index(language_index(state.device_language) + 1U);
+      set_language(state, next_language);
+      set_settings_notice(
+          state,
+          std::string("LANGUAGE: ") + language_label(state.device_language),
+          event.now_ms,
+          2500);
+      ESP_LOGI(kTag, "[settings] language=%s", language_code(state.device_language));
+      return;
+    }
     case SettingsItem::Connectivity: {
       const bool next_on = !(state.settings.wifi_enabled && state.settings.bluetooth_enabled);
       state.settings.wifi_enabled = next_on;
@@ -375,21 +396,59 @@ void handle_settings_click(AppState& state, const Event& event) {
       state.settings.auto_sync_enabled = !state.settings.auto_sync_enabled;
       ESP_LOGI(kTag, "[settings] auto_sync=%d", static_cast<int>(state.settings.auto_sync_enabled));
       return;
-    case SettingsItem::SyncNow:
-      state.settings.last_sync_ms =
-          static_cast<std::uint64_t>(std::max<std::time_t>(0, platform::wall_time_seconds())) *
-          1000ULL;
-      state.settings.sync_state = "ok";
-      set_settings_notice(state, "FAKE SYNC COMPLETE", event.now_ms);
-      ESP_LOGI(
-          kTag,
-          "[settings] sync_now=ok at_epoch_ms=%llu wall_valid=%d",
-          static_cast<unsigned long long>(state.settings.last_sync_ms),
-          static_cast<int>(platform::wall_time_is_valid()));
+    case SettingsItem::SyncNow: {
+      // If provider was never bootstrapped (WiFi not connected at boot),
+      // try to bootstrap now using current WiFi connection.
+      if (!platform::live_data_request_sync_now()) {
+        if (platform::wifi_is_connected()) {
+          ESP_LOGI(kTag, "[settings] sync_now: bootstrapping live_data first");
+          platform::live_data_bootstrap(
+              state.onboarding.timezone.c_str(),
+              state.dashboard.location.c_str());
+          platform::live_data_request_sync_now();
+        }
+      }
+      if (platform::live_data_weather_sync_in_progress() ||
+          state.settings.sync_state == "syncing") {
+        // A sync is already running (possibly just triggered above).
+        state.settings.sync_state = "syncing";
+        state.home.weather_sync_state = "syncing";
+        set_settings_notice(state, "SYNC REQUESTED", event.now_ms, 3000);
+        ESP_LOGI(kTag, "[settings] sync_now=requested");
+      } else if (!platform::wifi_is_connected()) {
+        state.settings.sync_state = "error";
+        set_settings_notice(state, "NO WI-FI — CONNECT FIRST", event.now_ms, 4000);
+        ESP_LOGW(kTag, "[settings] sync_now=no_wifi");
+      } else {
+        // force_sync was set; task will pick it up on next poll.
+        state.settings.sync_state = "syncing";
+        state.home.weather_sync_state = "syncing";
+        set_settings_notice(state, "SYNC REQUESTED", event.now_ms, 3000);
+        ESP_LOGI(kTag, "[settings] sync_now=force_sync_set");
+      }
+      return;
+    }
+    case SettingsItem::ChangeWifi:
+      enter_onboarding_wifi_select(state);
+      state.onboarding.wifi_from_settings = true;
+      ESP_LOGI(kTag, "[settings] change_wifi=entering wifi select");
       return;
     case SettingsItem::ResetAndWipe:
-      set_settings_notice(state, "NOT IMPLEMENTED", event.now_ms);
-      ESP_LOGI(kTag, "[settings] reset_and_wipe=not_implemented");
+      if (state.settings.reset_pending) {
+        // Second click — confirmed.
+        // Full in-memory factory reset: reconstruct entire AppState from defaults,
+        // which sets screen=Landing and setup_completed=false.
+        ESP_LOGI(kTag, "[settings] reset_and_wipe=confirmed — full state reset");
+        const std::uint64_t now_ms =
+            event.now_ms > 0 ? event.now_ms : state.last_tick_ms;
+        state = make_state_from_defaults(make_factory_defaults(), now_ms);
+        // (state.screen is now Screen::Landing; user will go through setup again)
+      } else {
+        // First click — request confirmation (expires after 5 s).
+        state.settings.reset_pending = true;
+        set_settings_notice(state, "CLICK AGAIN TO WIPE ALL DATA", event.now_ms, 5000);
+        ESP_LOGI(kTag, "[settings] reset_and_wipe=awaiting_confirm");
+      }
       return;
   }
 }
@@ -786,10 +845,30 @@ void enter_onboarding_start(AppState& state) {
   state.onboarding.status.clear();
 }
 
-void enter_onboarding_pair_qr(AppState& state) {
+void enter_onboarding_wifi_select(AppState& state) {
   state.screen = Screen::Onboarding;
-  state.onboarding.step_index = 1;
-  state.onboarding.status = "Waiting for phone callback...";
+  state.onboarding.step_index    = 1;
+  state.onboarding.wifi_sub_step = 0;
+  state.onboarding.wifi_list_focus  = 0;
+  state.onboarding.wifi_list_scroll = 0;
+  state.onboarding.wifi_networks.clear();
+  state.onboarding.status = "Scanning for networks...";
+
+  // Scan synchronously — blocks ~2-4 s; fine for a one-time setup step.
+  const auto aps = platform::wifi_scan_networks(4000);
+  state.onboarding.wifi_scanning = false;
+  if (aps.empty()) {
+    state.onboarding.status = "No networks found. Rotate to retry or press SKIP.";
+  } else {
+    state.onboarding.wifi_networks.reserve(aps.size());
+    for (const auto& ap : aps) {
+      app::WifiScanEntry e;
+      e.ssid = ap.ssid;
+      e.rssi = ap.rssi;
+      state.onboarding.wifi_networks.push_back(std::move(e));
+    }
+    state.onboarding.status = "Rotate to select network, press to confirm.";
+  }
 }
 
 void enter_onboarding_prefs(AppState& state, const bool wifi_connected) {
@@ -913,7 +992,10 @@ void refresh_onboarding_status(AppState& state) {
   }
   if (step == 1) {
     if (state.onboarding.status.empty()) {
-      state.onboarding.status = "Waiting for phone callback...";
+      if (state.onboarding.wifi_sub_step == 0)
+        state.onboarding.status = "Rotate to select network, press to confirm.";
+      else
+        state.onboarding.status = "Rotate to select character, press to confirm.";
     }
     return;
   }
@@ -925,6 +1007,66 @@ void refresh_onboarding_status(AppState& state) {
 }
 
 void handle_tick(AppState& state, const Event& event) {
+  if (platform::live_data_weather_sync_in_progress()) {
+    state.home.weather_sync_state = "syncing";
+    state.settings.sync_state = "syncing";
+  }
+
+  platform::WeatherSyncSample weather_sample{};
+  if (platform::live_data_poll_weather(&weather_sample) && weather_sample.valid) {
+    if (weather_sample.synced) {
+      if (!weather_sample.location.empty()) {
+        state.dashboard.location = weather_sample.location;
+      }
+      if (!weather_sample.condition.empty()) {
+        state.dashboard.weather_condition = weather_sample.condition;
+      }
+      if (!weather_sample.icon.empty()) {
+        state.dashboard.weather_icon = weather_sample.icon;
+      }
+      state.dashboard.weather_temperature_c = weather_sample.temperature_c;
+      state.dashboard.weather_humidity_percent = weather_sample.humidity_percent;
+      state.dashboard.weather_feels_like_c = weather_sample.feels_like_c;
+      state.dashboard.weather_hi_c = weather_sample.hi_c;
+      state.dashboard.weather_lo_c = weather_sample.lo_c;
+      state.dashboard.weather_wind_kmh = weather_sample.wind_kmh;
+      state.dashboard.weather_uv_index = weather_sample.uv_index;
+      for (std::size_t i = 0; i < state.dashboard.weather_forecast_days.size(); ++i) {
+        state.dashboard.weather_forecast_days[i].dow = weather_sample.forecast_days[i].dow;
+        state.dashboard.weather_forecast_days[i].condition = weather_sample.forecast_days[i].condition;
+        state.dashboard.weather_forecast_days[i].icon = weather_sample.forecast_days[i].icon;
+        state.dashboard.weather_forecast_days[i].hi_c = weather_sample.forecast_days[i].hi_c;
+        state.dashboard.weather_forecast_days[i].lo_c = weather_sample.forecast_days[i].lo_c;
+      }
+      state.home.weather_sync_state = "ok";
+      state.settings.sync_state = "ok";
+      state.settings.last_sync_ms =
+          static_cast<std::uint64_t>(
+              std::max<std::time_t>(0, weather_sample.observed_unix_seconds)) *
+          1000ULL;
+      ESP_LOGI(
+          kTag,
+          "[weather] sync_ok source=%s location=%s temp=%dC humidity=%d%% condition=%s",
+          weather_sample.source.empty() ? "unknown" : weather_sample.source.c_str(),
+          weather_sample.location.empty() ? "Unknown" : weather_sample.location.c_str(),
+          weather_sample.temperature_c,
+          weather_sample.humidity_percent,
+          weather_sample.condition.c_str());
+    } else {
+      if (!state.dashboard.weather_condition.empty()) {
+        state.home.weather_sync_state = "ok";
+      } else {
+        state.home.weather_sync_state = "unsynced";
+      }
+      state.settings.sync_state =
+          state.home.weather_sync_state == "ok" ? "ok" : "error";
+      ESP_LOGW(
+          kTag,
+          "[weather] sync_failed error=%s",
+          weather_sample.error.empty() ? "unknown" : weather_sample.error.c_str());
+    }
+  }
+
   const std::time_t wall = platform::wall_time_seconds();
   if (platform::wall_time_is_valid()) {
     state.home.clock_minute_bucket = static_cast<std::uint64_t>(wall / 60);
@@ -1010,12 +1152,53 @@ void handle_tick(AppState& state, const Event& event) {
       event.now_ms >= state.settings.notice_due_ms) {
     state.settings.notice.clear();
     state.settings.notice_due_ms = 0;
+    // If the reset confirmation notice expired, cancel the pending reset.
+    state.settings.reset_pending = false;
+  }
+
+  // ── Scheduled alarm check ─────────────────────────────────────────────────
+  // Only fire when no alarm is already showing and wall time is valid.
+  if (!state.scheduled_alarm.active && platform::wall_time_is_valid()) {
+    const std::time_t wall = platform::wall_time_seconds();
+    const std::uint64_t current_bucket = static_cast<std::uint64_t>(wall / 60);
+    std::tm local_tm{};
+    localtime_r(&wall, &local_tm);
+    for (auto& sr : state.scheduled_reminders) {
+      if (!sr.enabled) continue;
+      if (sr.last_fired_bucket == current_bucket) continue;  // already fired this minute
+      if (local_tm.tm_hour == sr.hour && local_tm.tm_min == sr.minute) {
+        sr.last_fired_bucket = current_bucket;
+        state.scheduled_alarm.active = true;
+        state.scheduled_alarm.id = sr.id;
+        state.scheduled_alarm.title = sr.title;
+        state.scheduled_alarm.hour = sr.hour;
+        state.scheduled_alarm.minute = sr.minute;
+        state.scheduled_alarm.focused_index = 0;
+        ESP_LOGI(kTag, "[alarm] fired id=%s title=%s time=%02d:%02d",
+                 sr.id.c_str(), sr.title.c_str(), sr.hour, sr.minute);
+        break;  // show one alarm at a time; next fires on the next tick
+      }
+    }
+  }
+
+  // Auto-hide the home focus ring after 10 s of inactivity.
+  constexpr std::uint64_t kHomeFocusTimeoutMs = 10000ULL;
+  if (state.screen == Screen::Home &&
+      state.home.show_focus &&
+      state.home.last_interaction_ms > 0 &&
+      event.now_ms >= state.home.last_interaction_ms + kHomeFocusTimeoutMs) {
+    state.home.show_focus = false;
   }
 }
 
 void handle_rotate(AppState& state, const Event& event) {
   if (event.now_ms > 0) {
     state.home.last_interaction_ms = event.now_ms;
+  }
+  // Alarm overlay intercepts all input.
+  if (state.scheduled_alarm.active) {
+    state.scheduled_alarm.focused_index = (state.scheduled_alarm.focused_index == 0) ? 1 : 0;
+    return;
   }
   if (state.screen == Screen::Landing) {
     const auto next_index =
@@ -1036,8 +1219,28 @@ void handle_rotate(AppState& state, const Event& event) {
       return;
     }
     if (state.onboarding.step_index == 1) {
-      const int next = static_cast<int>(state.onboarding.qr_focus_index) + delta;
-      state.onboarding.qr_focus_index = static_cast<std::size_t>(next < 0 ? 0 : (next > 2 ? 2 : next));
+      if (state.onboarding.wifi_sub_step == 0) {
+        // Scroll through WiFi list.
+        const int n = static_cast<int>(state.onboarding.wifi_networks.size());
+        if (n > 0) {
+          const int next = static_cast<int>(state.onboarding.wifi_list_focus) + delta;
+          state.onboarding.wifi_list_focus =
+              static_cast<std::size_t>(next < 0 ? 0 : (next >= n ? n - 1 : next));
+          // Keep focused item inside the 5-row visible window.
+          constexpr int kVisible = 5;
+          const int focus = static_cast<int>(state.onboarding.wifi_list_focus);
+          const int scroll = static_cast<int>(state.onboarding.wifi_list_scroll);
+          if (focus < scroll)
+            state.onboarding.wifi_list_scroll = static_cast<std::size_t>(focus);
+          else if (focus >= scroll + kVisible)
+            state.onboarding.wifi_list_scroll = static_cast<std::size_t>(focus - kVisible + 1);
+        }
+      } else {
+        // Move keyboard focus (wraps around all 44 keys).
+        const int n    = static_cast<int>(kOnboardingKbdKeyCount);
+        const int next = (static_cast<int>(state.onboarding.kbd_focus) + delta + n) % n;
+        state.onboarding.kbd_focus = static_cast<std::size_t>(next);
+      }
       return;
     }
     if (state.onboarding.step_index == 2) {
@@ -1135,6 +1338,15 @@ void handle_click(AppState& state, const Event& event) {
   if (event.now_ms > 0) {
     state.home.last_interaction_ms = event.now_ms;
   }
+  // Alarm overlay intercepts all input.
+  if (state.scheduled_alarm.active) {
+    const bool confirmed = (state.scheduled_alarm.focused_index == 0);
+    ESP_LOGI(kTag, "[alarm] %s id=%s",
+             confirmed ? "confirmed" : "cancelled",
+             state.scheduled_alarm.id.c_str());
+    state.scheduled_alarm.active = false;
+    return;
+  }
   if (state.screen == Screen::Landing) {
     if (state.setup_completed) {
       enter_home(state);
@@ -1152,20 +1364,106 @@ void handle_click(AppState& state, const Event& event) {
   if (state.screen == Screen::Onboarding) {
     if (state.onboarding.step_index == 0) {
       if (state.onboarding.start_focus_index == 0) {
-        enter_onboarding_pair_qr(state);
+        enter_onboarding_wifi_select(state);
       } else {
         enter_onboarding_prefs(state, false);
       }
       return;
     }
     if (state.onboarding.step_index == 1) {
-      if (state.onboarding.qr_focus_index == 0) {
-        state.onboarding.pair_token = "E5F6-G7H8";
-        state.onboarding.status = "QR refreshed.";
-      } else if (state.onboarding.qr_focus_index == 1) {
-        enter_onboarding_prefs(state, true);
+      if (state.onboarding.wifi_sub_step == 0) {
+        // ── Select SSID ──────────────────────────────────────────────────
+        if (state.onboarding.wifi_networks.empty()) {
+          // No networks — re-scan.
+          enter_onboarding_wifi_select(state);
+        } else {
+          const auto& ap =
+              state.onboarding.wifi_networks[state.onboarding.wifi_list_focus];
+          state.onboarding.wifi_ssid     = ap.ssid;
+          state.onboarding.wifi_sub_step = 1;
+          state.onboarding.wifi_password.clear();
+          state.onboarding.kbd_focus = 0;
+          state.onboarding.kbd_shift = false;
+          state.onboarding.wifi_connect_error.clear();
+          state.onboarding.status =
+              "Rotate to select character, press to type.";
+        }
       } else {
-        enter_onboarding_prefs(state, false);
+        // ── QWERTY keyboard ──────────────────────────────────────────────
+        // Key index layout (44 total):
+        //   0-9  : row0 "1234567890" (shift: "!@#$%^&*()")
+        //   10-19: row1 "qwertyuiop" (shift: uppercase)
+        //   20-28: row2 "asdfghjkl"  (shift: uppercase)
+        //   29-35: row3 "zxcvbnm"    (shift: uppercase)
+        //   36: SHIFT  37: '-'  38: '_'  39: '.'  40: '@'
+        //   41: SPACE  42: DEL  43: OK
+        static constexpr const char* kRow0N = "1234567890";
+        static constexpr const char* kRow0S = "!@#$%^&*()";
+        static constexpr const char* kRow1  = "qwertyuiop";
+        static constexpr const char* kRow2  = "asdfghjkl";
+        static constexpr const char* kRow3  = "zxcvbnm";
+
+        const std::size_t k = state.onboarding.kbd_focus;
+        const bool shift    = state.onboarding.kbd_shift;
+
+        char typed = '\0';
+        if (k < 10) {
+          typed = shift ? kRow0S[k] : kRow0N[k];
+        } else if (k < 20) {
+          const char base = kRow1[k - 10];
+          typed = shift ? static_cast<char>(base - 32) : base;
+        } else if (k < 29) {
+          const char base = kRow2[k - 20];
+          typed = shift ? static_cast<char>(base - 32) : base;
+        } else if (k < 36) {
+          const char base = kRow3[k - 29];
+          typed = shift ? static_cast<char>(base - 32) : base;
+        } else if (k == 36) {
+          state.onboarding.kbd_shift = !shift;  // toggle SHIFT
+        } else if (k == 37) { typed = '-';
+        } else if (k == 38) { typed = '_';
+        } else if (k == 39) { typed = '.';
+        } else if (k == 40) { typed = '@';
+        } else if (k == 41) { typed = ' ';
+        } else if (k == 42) {
+          // DEL
+          if (!state.onboarding.wifi_password.empty())
+            state.onboarding.wifi_password.pop_back();
+        } else if (k == 43) {
+          // OK — attempt connection
+          state.onboarding.wifi_connecting = true;
+          state.onboarding.wifi_connect_error.clear();
+          state.onboarding.status = "Connecting...";
+          const bool ok = platform::wifi_connect_to(
+              state.onboarding.wifi_ssid.c_str(),
+              state.onboarding.wifi_password.c_str(),
+              15000);
+          state.onboarding.wifi_connecting = false;
+          if (ok) {
+            if (state.onboarding.wifi_from_settings) {
+              // Return to Settings with a confirmation notice.
+              state.screen = Screen::Settings;
+              state.onboarding.wifi_from_settings = false;
+              set_settings_notice(state,
+                  "WI-FI: " + state.onboarding.wifi_ssid, event.now_ms);
+              ESP_LOGI(kTag, "[settings] wifi updated to \"%s\"",
+                       state.onboarding.wifi_ssid.c_str());
+            } else {
+              enter_onboarding_prefs(state, /*wifi_connected=*/true);
+            }
+          } else {
+            state.onboarding.wifi_connect_error =
+                "Connection failed. Check password and try again.";
+            state.onboarding.status = state.onboarding.wifi_connect_error;
+          }
+        }
+
+        // Append typed character and auto-clear shift after a letter.
+        if (typed != '\0') {
+          state.onboarding.wifi_password += typed;
+          if (shift && k >= 10 && k <= 35)
+            state.onboarding.kbd_shift = false;  // auto-release shift after letter
+        }
       }
       return;
     }
@@ -1177,6 +1475,7 @@ void handle_click(AppState& state, const Event& event) {
       } else if (state.onboarding.prefs_focus_index == 2) {
         state.onboarding.auto_sync_enabled = !state.onboarding.auto_sync_enabled;
       } else {
+        // prefs_focus_index == 3 → "VOICE GUIDE >" button.
         enter_onboarding_voice_guide(state);
       }
       refresh_onboarding_status(state);
@@ -1473,6 +1772,24 @@ void handle_long_press(AppState& state, const Event& event) {
   if (event.now_ms > 0) {
     state.home.last_interaction_ms = event.now_ms;
   }
+  // Alarm overlay intercepts all input (long-press dismisses = cancel).
+  if (state.scheduled_alarm.active) {
+    ESP_LOGI(kTag, "[alarm] dismissed (long press) id=%s", state.scheduled_alarm.id.c_str());
+    state.scheduled_alarm.active = false;
+    return;
+  }
+
+  // Onboarding voice guide: long-press starts the voice test recording.
+  // main.cpp also calls trigger_voice_recording() for the actual capture.
+  if (state.screen == Screen::Onboarding && state.onboarding.step_index == 3) {
+    if (!state.onboarding.voice_recording) {
+      state.onboarding.voice_recording = true;
+      state.onboarding.voice_last_result.clear();
+      state.onboarding.status = "Recording...";
+    }
+    return;
+  }
+
   // Python parity:
   // - HOME long press toggles the menu overlay.
   // - Non-HOME long press returns to HOME.
@@ -1490,6 +1807,12 @@ void handle_long_press(AppState& state, const Event& event) {
 void handle_back(AppState& state, const Event& event) {
   if (event.now_ms > 0) {
     state.home.last_interaction_ms = event.now_ms;
+  }
+  // Alarm overlay intercepts all input (back = dismiss / cancel).
+  if (state.scheduled_alarm.active) {
+    ESP_LOGI(kTag, "[alarm] dismissed (back) id=%s", state.scheduled_alarm.id.c_str());
+    state.scheduled_alarm.active = false;
+    return;
   }
   // Python parity:
   // - HOME back closes overlay if open, otherwise opens overlay.
@@ -1512,6 +1835,27 @@ void handle_back(AppState& state, const Event& event) {
       return;
     }
     state.home.menu_overlay_active = true;
+    return;
+  }
+
+  // Onboarding: back navigates within the wizard, never exits to Home.
+  if (state.screen == Screen::Onboarding) {
+    if (state.onboarding.step_index == 1 && state.onboarding.wifi_sub_step == 1) {
+      // Password entry → back to WiFi list.
+      state.onboarding.wifi_sub_step = 0;
+      state.onboarding.wifi_password.clear();
+      state.onboarding.wifi_connect_error.clear();
+      state.onboarding.kbd_focus = 0;
+      state.onboarding.kbd_shift = false;
+    } else if (state.onboarding.wifi_from_settings) {
+      // Launched from Settings → return there instead of going to step 0.
+      state.screen = Screen::Settings;
+      state.onboarding.wifi_from_settings = false;
+    } else if (state.onboarding.step_index > 0) {
+      state.onboarding.step_index -= 1;
+      state.onboarding.wifi_sub_step = 0;
+    }
+    // step 0 (start): ignore back — nowhere to go
     return;
   }
 
@@ -1921,12 +2265,85 @@ static void va_inventory_log_event(AppState& state, const std::string& args) {
       }
     }
   } else {
-    // "added" or unknown — add to inventory list.
+    // "added" / "bought" / unknown — add to inventory list.
     state.dashboard.inventory_items.push_back(item);
     state.dashboard.inventory_completed.push_back(false);
     ESP_LOGI(kTag, "[voice] inventory_log_event: added \"%s\" to inventory (event=%s)",
              item.c_str(), event.c_str());
+
+    // Auto-complete: if there is a matching reminder (e.g. "Buy Milk"),
+    // hide it so the user doesn't have to dismiss it manually.
+    const int rem_idx = find_item_index(state.dashboard.reminder_items,
+                                        state.home.hidden_reminder_indices, item);
+    if (rem_idx >= 0) {
+      if (!contains_index(state.home.hidden_reminder_indices, rem_idx)) {
+        state.home.hidden_reminder_indices.push_back(rem_idx);
+      }
+      ESP_LOGI(kTag, "[voice] inventory_log_event: auto-completed reminder[%d] for \"%s\"",
+               rem_idx, item.c_str());
+    }
   }
+}
+
+static void va_reminder_schedule(AppState& state, const std::string& args) {
+  std::string title = va_extract_string(args, "title");
+  if (title.empty()) title = va_extract_string(args, "text");
+  if (title.empty()) title = va_extract_string(args, "reminder");
+  if (title.empty()) {
+    ESP_LOGW(kTag, "[voice] reminder_schedule: missing title");
+    return;
+  }
+  const int hour = va_extract_int(args, "hour");
+  const int minute = va_extract_int(args, "minute");
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    ESP_LOGW(kTag, "[voice] reminder_schedule: invalid time %d:%02d", hour, minute);
+    return;
+  }
+  // Skip exact duplicates (same title + same time).
+  for (const auto& sr : state.scheduled_reminders) {
+    if (!sr.enabled) continue;
+    std::string a = sr.title, b = title;
+    std::transform(a.begin(), a.end(), a.begin(), ::tolower);
+    std::transform(b.begin(), b.end(), b.begin(), ::tolower);
+    if (a == b && sr.hour == hour && sr.minute == minute) {
+      ESP_LOGI(kTag, "[voice] reminder_schedule: duplicate skipped (%s %02d:%02d)",
+               title.c_str(), hour, minute);
+      return;
+    }
+  }
+  ScheduledReminder sr;
+  sr.id = std::string("sr_") + std::to_string(state.scheduled_reminders.size());
+  sr.title = title;
+  sr.hour = hour;
+  sr.minute = minute;
+  sr.enabled = true;
+  sr.last_fired_bucket = 0;
+  state.scheduled_reminders.push_back(sr);
+  ESP_LOGI(kTag, "[voice] reminder_schedule: added id=%s title=%s time=%02d:%02d",
+           sr.id.c_str(), sr.title.c_str(), sr.hour, sr.minute);
+}
+
+static void va_reminder_schedule_cancel(AppState& state, const std::string& args) {
+  const std::string id    = va_extract_string(args, "id");
+  const std::string title = va_extract_string(args, "title");
+  for (auto& sr : state.scheduled_reminders) {
+    bool match_id    = !id.empty() && (sr.id == id);
+    bool match_title = false;
+    if (!title.empty()) {
+      std::string a = sr.title, b = title;
+      std::transform(a.begin(), a.end(), a.begin(), ::tolower);
+      std::transform(b.begin(), b.end(), b.begin(), ::tolower);
+      match_title = (a.find(b) != std::string::npos);
+    }
+    if (match_id || match_title) {
+      sr.enabled = false;
+      ESP_LOGI(kTag, "[voice] reminder_schedule_cancel: disabled id=%s title=%s",
+               sr.id.c_str(), sr.title.c_str());
+      return;
+    }
+  }
+  ESP_LOGW(kTag, "[voice] reminder_schedule_cancel: not found id=%s title=%s",
+           id.c_str(), title.c_str());
 }
 
 // ── Undo / redo snapshot ─────────────────────────────────────────────────────
@@ -2011,7 +2428,9 @@ static bool is_undo_excluded_tool(const std::string& tool) {
   return tool == "no_action" ||
          tool == "open_app"  ||
          tool == "undo_last_action_group" ||
-         tool == "redo_last_action_group";
+         tool == "redo_last_action_group" ||
+         tool == "reminder_schedule"        ||
+         tool == "reminder_schedule_cancel";
 }
 
 // Keep history small: each VoiceSnapshot deep-copies several string vectors.
@@ -2078,6 +2497,10 @@ void apply_voice_actions(AppState& state,
       va_memo_update(state, a.args_json);
     } else if (a.tool == "inventory_log_event") {
       va_inventory_log_event(state, a.args_json);
+    } else if (a.tool == "reminder_schedule") {
+      va_reminder_schedule(state, a.args_json);
+    } else if (a.tool == "reminder_schedule_cancel") {
+      va_reminder_schedule_cancel(state, a.args_json);
     } else if (a.tool == "undo_last_action_group") {
       if (g_done_stack.empty()) {
         ESP_LOGW(kTag, "[voice] undo: nothing to undo");
@@ -2115,6 +2538,29 @@ void apply_voice_actions(AppState& state,
     g_done_stack.push_back(std::move(before_snap));
     g_redo_stack.clear();  // New action invalidates redo history.
     ESP_LOGI(kTag, "[voice] snapshot saved (done=%zu)", g_done_stack.size());
+  }
+
+  // If we're on the onboarding voice guide step, update the UI status/result.
+  if (state.screen == Screen::Onboarding && state.onboarding.step_index == 3) {
+    state.onboarding.voice_recording = false;
+    if (actions.empty()) {
+      state.onboarding.status = "No command detected — try again.";
+      state.onboarding.voice_last_result.clear();
+    } else {
+      // Build a human-readable summary from tool names.
+      std::string summary;
+      for (const auto& a : actions) {
+        if (!summary.empty()) summary += "  +  ";
+        // Convert "shopping_add_item" → "SHOPPING ADD ITEM" for readability.
+        std::string label = a.tool;
+        for (char& c : label) {
+          c = (c == '_') ? ' ' : static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        summary += label;
+      }
+      state.onboarding.voice_last_result = summary;
+      state.onboarding.status = "Done: " + summary;
+    }
   }
 }
 

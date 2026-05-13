@@ -5,8 +5,10 @@
 #include "ui/draw.hpp"
 #include "ui/panel_font_assets_generated.hpp"
 #include "ui/primitives.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <ctime>
 #include <iomanip>
@@ -33,13 +35,6 @@ using platform::kPanelWidthBytes;
 constexpr int kPW = 480;  // portrait canvas width
 constexpr int kPH = 800;  // portrait canvas height
 constexpr int kHomeMenuItemCount = 5;
-constexpr const char* kHomeMenuItems[kHomeMenuItemCount] = {
-    "MEMO",
-    "LIST",
-    "TIMER",
-    "CALENDAR",
-    "SETTINGS",
-};
 
 // ── Low-level portrait pixel ops ─────────────────────────────────────────────
 
@@ -818,7 +813,8 @@ void hp_draw_menu_overlay(
     const app::AppState& state,
     const BitmapFont& item_font_fallback,
     const BitmapFont& hint_font,
-    const bool r90) {
+    const bool r90,
+    const UiStrings& s) {
   const HpMenuOverlayLayout layout = hp_menu_overlay_layout(kPW, kPH);
   const int overlay_radius = layout.compact ? 10 : 12;
   const int border_w = layout.compact ? 1 : 2;
@@ -841,7 +837,9 @@ void hp_draw_menu_overlay(
       border_w,
       overlay_radius);
 
-  const std::string hint = "NAVIGATION";
+  const std::string hint = s.home_navigation;
+  const std::array<const char*, kHomeMenuItemCount> kHomeMenuItems = {
+      s.menu_memo, s.menu_list, s.menu_timer, s.menu_calendar, s.menu_settings};
   const int hint_x = layout.x0 + std::max(8, ((layout.x1 - layout.x0) - hp_tw(hint, hint_font)) / 2);
   const int hint_y = layout.y0 + (layout.compact ? 6 : 8);
   hp_text(image, hint_x, hp_ytop(hint_y, hint, hint_font), hint, hint_font, r90);
@@ -918,6 +916,7 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
   using namespace platform::panel_font_assets;
   using platform::kPanelBufferSize;
 
+  const auto& s = get_ui_strings(state.device_language);
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
   const int deg = normalize_rotation_deg(state.settings.rotation_deg);
@@ -1000,7 +999,7 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
   hp_text(image, clk_left, tvb.ok ? time_vy - tvb.top : time_vy, tstr, tf, r90);
   const int time_vbot =
       time_vy + (tvb.ok ? tvb.bot - tvb.top : static_cast<int>(tf.line_height));
-  int clock_bottom_for_focus = time_vbot + hp_vis_h("UNSYNCED", meta_font) + 8;
+  int clock_bottom_for_focus = time_vbot + hp_vis_h(s.home_unsynced, meta_font) + 8;
 
   if (clk.valid) {
     const int wday_vy = time_vbot + 4;
@@ -1013,12 +1012,13 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
     clock_bottom_for_focus = date_vy + hp_vis_h(dstr, date_font) + 8;
   } else {
     hp_text(image, clk_left,
-            hp_ytop(time_vbot + 4, "UNSYNCED", meta_font),
-            "UNSYNCED", meta_font, r90);
+            hp_ytop(time_vbot + 4, s.home_unsynced, meta_font),
+            s.home_unsynced, meta_font, r90);
   }
 
   // ── Weather (right column) ────────────────────────────────────────────────
-  const bool wx_ok    = (state.home.weather_sync_state == "ok");
+  const bool wx_ok = !state.dashboard.weather_condition.empty();
+  const bool wx_syncing = (state.home.weather_sync_state == "syncing");
   const int  wx_top   = std::max(4, time_vy - 4);
   int weather_bottom_for_focus = wx_top + hp_vis_h("--", temp_font);
 
@@ -1034,12 +1034,15 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
     const int icon_vy  = wx_top + temp_h + 13;    // bp_weather_temp_icon_gap=13
     constexpr int kIconSz = 34;
     hp_icon(image, wx_right - kIconSz, icon_vy,
-            state.dashboard.weather_condition, kIconSz, r90);
+            state.dashboard.weather_icon, kIconSz, r90);
 
     const int desc_vy = icon_vy + kIconSz + 11;
     const std::string cond_str =
-        hp_upper(state.dashboard.weather_condition.empty()
-                 ? "SUNNY" : state.dashboard.weather_condition);
+        hp_upper(wx_syncing
+                 ? s.home_syncing
+                 : (state.dashboard.weather_condition.empty()
+                        ? "SUNNY"
+                        : state.dashboard.weather_condition));
     const std::string desc = hp_trunc(cond_str, meta_font, kWxColW);
     hp_text(image, wx_right - hp_tw(desc, meta_font),
             hp_ytop(desc_vy, desc, meta_font),
@@ -1053,7 +1056,7 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
     if (state.dashboard.weather_humidity_percent > 0) {
       const int hum_vy = desc_vy + hp_vis_h(desc, meta_font) + 8;
       const std::string hum = hp_trunc(
-          "HUM " + std::to_string(state.dashboard.weather_humidity_percent) + "%",
+          std::string(s.home_hum_prefix) + std::to_string(state.dashboard.weather_humidity_percent) + "%",
           meta_font, kWxColW);
       hp_text(image, wx_right - hp_tw(hum, meta_font),
               hp_ytop(hum_vy, hum, meta_font),
@@ -1065,7 +1068,7 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
     hp_text(image, wx_right - hp_tw(no_t, temp_font),
             hp_ytop(wx_top, no_t, temp_font),
             no_t, temp_font, r90);
-    const std::string no_d = "NO DATA";
+    const std::string no_d = wx_syncing ? s.home_syncing : s.wx_no_weather_data;
     hp_text(image, wx_right - hp_tw(no_d, meta_font),
             hp_ytop(wx_top + 60, no_d, meta_font),
             no_d, meta_font, r90);
@@ -1100,14 +1103,14 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
     hp_text_spaced(
         image,
         lx,
-        hp_ytop(title_vy, "FAMILY BOARD", family_title_font),
-        "FAMILY BOARD",
+        hp_ytop(title_vy, s.memo_title, family_title_font),
+        s.memo_title,
         family_title_font,
         r90,
         kFamilyTitleSpacing);
 
     const std::vector<std::string> author_tags = hp_family_author_tags(state);
-    const int title_w = hp_tw_spaced("FAMILY BOARD", family_title_font, kFamilyTitleSpacing);
+    const int title_w = hp_tw_spaced(s.memo_title, family_title_font, kFamilyTitleSpacing);
     const int max_row_w = std::max(64, rx - (lx + title_w + 22));
     std::vector<std::pair<std::string, int>> labels{};
     labels.reserve(author_tags.size());
@@ -1151,7 +1154,7 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
       cx += label.second + kFamilyGap;
     }
 
-    const int title_h = hp_vis_h("FAMILY BOARD", family_title_font);
+    const int title_h = hp_vis_h(s.memo_title, family_title_font);
     const int rule_y = std::max(
         memo_y0 + title_h,
         row_y + name_h + kUnderlineGap + kUnderlineW) + 6;
@@ -1175,10 +1178,10 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
   for (std::size_t i = 0; i < inv_done.size() && i < inv_items.size(); ++i)
     if (inv_done[i]) ++inv_comp;
 
-  const int inv_title_half = hp_vis_h("INVENTORY", section_font) / 2 + 2;
+  const int inv_title_half = hp_vis_h(s.home_inventory, section_font) / 2 + 2;
   const int inv_rule_y     = ly0 + std::max(8, inv_title_half);   // ~398
   hp_section_rule(image, lx, rx, inv_rule_y,
-                  "INVENTORY", hp_progress(inv_total, inv_comp),
+                  s.home_inventory, hp_progress(inv_total, inv_comp),
                   section_font, r90);
 
   constexpr int kInvRowH   = 36;
@@ -1204,7 +1207,7 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
          item_index < static_cast<int>(inv_badges.size()) &&
          !inv_badges[static_cast<std::size_t>(item_index)].empty())
         ? hp_compact_badge(inv_badges[static_cast<std::size_t>(item_index)])
-        : (done ? "OUT" : "STOCKED");
+        : (done ? s.home_out : s.home_stocked);
     const std::string badge    = hp_trunc(raw_badge, badge_font, kBadgeMaxW);
     const int badge_w          = hp_tw(badge, badge_font);
     const int badge_vis_h      = hp_vis_h(badge, badge_font);
@@ -1246,7 +1249,7 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
                                       ly0 + std::max(96, list_h * 48 / 100));
   const int rem_rule_y     = std::max(inv_zone_bot, ry + 8);
   hp_section_rule(image, lx, rx, rem_rule_y,
-                  "REMINDERS", hp_progress(rem_total, rem_comp),
+                  s.home_reminders, hp_progress(rem_total, rem_comp),
                   section_font, r90);
 
   constexpr int kRemRowH   = 36;
@@ -1325,7 +1328,8 @@ std::vector<uint8_t> render_home_portrait_bitmap(const app::AppState& state) {
         state,
         *typography.menu_item_font,
         *typography.menu_hint_font,
-        r90);
+        r90,
+        s);
   }
 
   return image;

@@ -3,6 +3,7 @@
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
 #include "ui/panel_font_assets_generated.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -249,22 +250,22 @@ int pt_round_minutes(const int seconds) {
   return (q % 2 == 0) ? q : (q + 1);  // bankers rounding for .5 ties
 }
 
-std::string pt_timer_done_message(const int done_seconds) {
+std::string pt_timer_done_message(const int done_seconds, const UiStrings& s) {
   const int mins = std::max(1, pt_round_minutes(std::max(1, done_seconds)));
-  if (mins == 1) return "1 MINUTE COUNTDOWN FINISHED";
-  return std::to_string(mins) + " MINUTES COUNTDOWN FINISHED";
+  if (mins == 1) return s.timer_1min_done;
+  return std::to_string(mins) + s.timer_mins_done;
 }
 
-std::string pt_timer_status_text(const app::TimerState& timer) {
+std::string pt_timer_status_text(const app::TimerState& timer, const UiStrings& s) {
   if (timer.alert_active && timer.seconds_remaining <= 0) {
     const int done = timer.last_completed_seconds > 0
                          ? timer.last_completed_seconds
                          : timer.target_seconds;
-    return pt_timer_done_message(done);
+    return pt_timer_done_message(done, s);
   }
-  if (timer.seconds_remaining <= 0) return "READY";
-  if (timer.running) return "RUNNING";
-  return "PAUSED";
+  if (timer.seconds_remaining <= 0) return s.timer_ready;
+  if (timer.running) return s.timer_running;
+  return s.timer_paused;
 }
 
 const BitmapFont& pt_pick_time_font(
@@ -313,20 +314,21 @@ void pt_draw_control_pill(
 
 std::vector<uint8_t> render_timer_portrait_bitmap(const app::AppState& state) {
   const bool r90 = use_r90_map(state);
+  const auto& s = get_ui_strings(state.device_language);
   std::vector<uint8_t> image(platform::kPanelBufferSize, 0xFF);
 
   const BitmapFont& title_font  = platform::panel_font_assets::kFontInterBold29;
   const BitmapFont& hint_font   = platform::panel_font_assets::kFontJetBold13;
   const BitmapFont& button_font = platform::panel_font_assets::kFontInterBold20;
 
-  const std::string hint_raw  = "ROTATE=SELECT  |  CLICK=ENTER  |  HOLD=HOME";
+  const std::string hint_raw  = s.timer_hint;
   const std::string hint_text = pt_truncate_text(hint_raw, hint_font, std::max(80, kPW - 48));
   const std::string time_text = pt_format_timer_value(state.timer.seconds_remaining);
-  const std::string status_text = pt_timer_status_text(state.timer);
+  const std::string status_text = pt_timer_status_text(state.timer, s);
   const BitmapFont& status_font = pt_pick_status_font(status_text, kPW - 72);
 
   // Title
-  mp_draw_text(image, kTitleX, kTitleY, "TIMER", title_font, true, r90);
+  mp_draw_text(image, kTitleX, kTitleY, s.timer_title, title_font, true, r90);
 
   // Hint (right-aligned)
   const int hint_w = pt_text_width(hint_text, hint_font);
@@ -395,8 +397,8 @@ std::vector<uint8_t> render_timer_portrait_bitmap(const app::AppState& state) {
   const std::string controls[] = {
       "-1M",
       "+1M",
-      state.timer.running ? "PAUSE" : "START",
-      "RESET",
+      state.timer.running ? s.timer_pause_btn : s.timer_start_btn,
+      s.timer_reset_btn,
   };
   const int focused      = ((state.timer.focused_index % 4) + 4) % 4;
   const int calc_btn_w   = (kPW - (kMarginX * 2) - (kButtonGap * 3)) / 4;

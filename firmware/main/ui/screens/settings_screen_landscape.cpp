@@ -3,10 +3,12 @@
 #include "platform/panel_config.hpp"
 #include "ui/draw.hpp"
 #include "ui/panel_font_assets_generated.hpp"
+#include "ui/strings.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -112,20 +114,24 @@ enum class SettingsItem {
   PartialRefresh = 1,
   FullRefresh = 2,
   Rotation = 3,
-  Connectivity = 4,
-  AutoSync = 5,
-  SyncNow = 6,
-  ResetAndWipe = 7,
+  Language = 4,
+  Connectivity = 5,
+  AutoSync = 6,
+  SyncNow = 7,
+  ChangeWifi = 8,
+  ResetAndWipe = 9,
 };
 
-constexpr std::array<SettingsItem, 8> kSettingsOrder = {
+constexpr std::array<SettingsItem, 10> kSettingsOrder = {
     SettingsItem::FontSize,
     SettingsItem::PartialRefresh,
     SettingsItem::FullRefresh,
     SettingsItem::Rotation,
+    SettingsItem::Language,
     SettingsItem::Connectivity,
     SettingsItem::AutoSync,
     SettingsItem::SyncNow,
+    SettingsItem::ChangeWifi,
     SettingsItem::ResetAndWipe,
 };
 
@@ -136,7 +142,19 @@ std::string upper_copy(const std::string& text) {
   return o;
 }
 
-std::string bool_text(const bool v) { return v ? "ON" : "OFF"; }
+std::string bool_text(const bool v, const UiStrings& s) { return v ? s.on : s.off; }
+
+std::string font_size_text(const std::string& raw, const UiStrings& s) {
+  if (raw == "small") return s.settings_small;
+  if (raw == "large") return s.settings_large;
+  return s.settings_medium;
+}
+
+std::string partial_refresh_text(const std::string& raw, const UiStrings& s) {
+  if (raw == "slow") return s.settings_slow;
+  if (raw == "fast") return s.settings_fast;
+  return s.settings_balanced;
+}
 
 int normalize_rotation_deg(const int raw) {
   const int n = ((raw % 360) + 360) % 360;
@@ -146,49 +164,85 @@ int normalize_rotation_deg(const int raw) {
   return 270;
 }
 
-std::string setting_label(const SettingsItem item) {
+std::string setting_label(const SettingsItem item, const UiStrings& s) {
   switch (item) {
-    case SettingsItem::FontSize:       return "FONT SIZE";
-    case SettingsItem::PartialRefresh: return "PARTIAL REFRESH";
-    case SettingsItem::FullRefresh:    return "FULL REFRESH";
-    case SettingsItem::Rotation:       return "ROTATION";
-    case SettingsItem::Connectivity:   return "WIFI + BT";
-    case SettingsItem::AutoSync:       return "AUTO SYNC";
-    case SettingsItem::SyncNow:        return "SYNC NOW";
-    case SettingsItem::ResetAndWipe:   return "RESET / WEB DATA";
+    case SettingsItem::FontSize:       return s.settings_font_size;
+    case SettingsItem::PartialRefresh: return s.settings_partial_refresh;
+    case SettingsItem::FullRefresh:    return s.settings_full_refresh;
+    case SettingsItem::Rotation:       return s.settings_rotation;
+    case SettingsItem::Language:       return s.settings_language;
+    case SettingsItem::Connectivity:   return s.settings_connectivity;
+    case SettingsItem::AutoSync:       return s.settings_auto_sync;
+    case SettingsItem::SyncNow:        return s.settings_sync_now;
+    case SettingsItem::ChangeWifi:     return s.settings_change_wifi;
+    case SettingsItem::ResetAndWipe:   return s.settings_reset;
   }
   return {};
 }
 
-std::string setting_value(const app::AppState& state, const SettingsItem item) {
+std::string setting_value(const app::AppState& state, const SettingsItem item,
+                          const UiStrings& s) {
   switch (item) {
     case SettingsItem::FontSize:
-      return upper_copy(state.settings.font_size.empty() ? "medium"
-                                                         : state.settings.font_size);
+      return font_size_text(
+          state.settings.font_size.empty() ? "medium" : state.settings.font_size, s);
     case SettingsItem::PartialRefresh:
-      return upper_copy(state.settings.partial_refresh_mode.empty()
-                            ? "balanced"
-                            : state.settings.partial_refresh_mode);
+      return partial_refresh_text(
+          state.settings.partial_refresh_mode.empty() ? "balanced"
+                                                      : state.settings.partial_refresh_mode, s);
     case SettingsItem::FullRefresh:
-      return "EVERY " + std::to_string(std::max(1, state.settings.full_refresh_every)) +
-             " PARTIALS";
+      return std::string(s.settings_every) + " " +
+             std::to_string(std::max(1, state.settings.full_refresh_every)) +
+             " " + s.settings_partials;
     case SettingsItem::Rotation:
       return std::to_string(normalize_rotation_deg(state.settings.rotation_deg));
+    case SettingsItem::Language:
+      return upper_copy(app::language_label(state.device_language));
     case SettingsItem::Connectivity:
-      return "WIFI " + bool_text(state.settings.wifi_enabled) +
-             " / BT " + bool_text(state.settings.bluetooth_enabled);
-    case SettingsItem::AutoSync:     return bool_text(state.settings.auto_sync_enabled);
-    case SettingsItem::SyncNow:      return "PRESS ENTER";
-    case SettingsItem::ResetAndWipe: return "PLACEHOLDER";
+      return std::string("WIFI ") + bool_text(state.settings.wifi_enabled, s) +
+             " / BT " + bool_text(state.settings.bluetooth_enabled, s);
+    case SettingsItem::AutoSync:     return bool_text(state.settings.auto_sync_enabled, s);
+    case SettingsItem::SyncNow: {
+      if (state.settings.sync_state == "syncing") return s.settings_syncing;
+      if (state.settings.last_sync_ms > 0) {
+        const std::time_t t =
+            static_cast<std::time_t>(state.settings.last_sync_ms / 1000);
+        const std::tm* tm_ptr = std::localtime(&t);
+        if (tm_ptr) {
+          char buf[16];
+          std::strftime(buf, sizeof(buf), "%H:%M", tm_ptr);
+          return std::string(buf);
+        }
+      }
+      if (state.settings.sync_state == "error") return s.settings_retry;
+      return s.settings_press_enter;
+    }
+    case SettingsItem::ChangeWifi:
+      return state.onboarding.wifi_ssid.empty() ? s.settings_not_set
+                                                : state.onboarding.wifi_ssid;
+    case SettingsItem::ResetAndWipe:
+      return state.settings.reset_pending ? s.settings_click_again : s.settings_press_enter;
   }
   return {};
 }
 
-std::string sync_footer_status(const app::AppState& state) {
-  if (state.settings.sync_state == "ok")      return "LAST SYNC OK";
-  if (state.settings.sync_state == "pending") return "SYNC IN PROGRESS";
-  if (state.settings.sync_state == "fail")    return "LAST SYNC FAIL";
-  return "LAST SYNC NEVER";
+std::string sync_footer_status(const app::AppState& state, const UiStrings& s) {
+  if (state.settings.sync_state == "syncing" ||
+      state.settings.sync_state == "pending") return s.settings_syncing;
+  if (state.settings.last_sync_ms > 0) {
+    const std::time_t t =
+        static_cast<std::time_t>(state.settings.last_sync_ms / 1000);
+    const std::tm* tm_ptr = std::localtime(&t);
+    if (tm_ptr) {
+      const std::string fmt =
+          std::string(s.settings_last_sync_prefix) + "  %Y-%m-%d  %H:%M";
+      char out[64];
+      std::strftime(out, sizeof(out), fmt.c_str(), tm_ptr);
+      return std::string(out);
+    }
+  }
+  if (state.settings.sync_state == "error") return s.settings_last_sync_failed;
+  return s.settings_last_sync_never;
 }
 
 }  // namespace
@@ -199,6 +253,7 @@ std::vector<uint8_t> render_settings_landscape_bitmap(const app::AppState& state
   using platform::kPanelHeight;
   using platform::kPanelWidth;
 
+  const auto& s = get_ui_strings(state.device_language);
   std::vector<uint8_t> image(kPanelBufferSize, 0xFF);
 
   // Font assignments matching Python settings.py:
@@ -220,11 +275,11 @@ std::vector<uint8_t> render_settings_landscape_bitmap(const app::AppState& state
   const int right = kPanelWidth - 24;
 
   // ── Title ──────────────────────────────────────────────────────────────────
-  ssl_text(image, left, ssl_ytop(16, "SETTINGS", title_font), "SETTINGS", title_font);
+  ssl_text(image, left, ssl_ytop(16, s.settings_title, title_font), s.settings_title, title_font);
 
   // ── Hint (right-aligned, y=52) ─────────────────────────────────────────────
   {
-    const std::string raw = "ROTATE TO SELECT  -  CLICK TO ENTER  -  HOLD TO HOME";
+    const std::string raw = s.settings_hint_landscape;
     const std::string hint = ssl_trunc(raw, hint_font, std::max(80, right - left));
     const int hint_w = ssl_tw(hint, hint_font);
     const int hint_x = std::max(left, right - hint_w);
@@ -248,10 +303,11 @@ std::vector<uint8_t> render_settings_landscape_bitmap(const app::AppState& state
   const int min_group_h = 14;
 
   // Matches Python's dynamic shrink loop.
+  // Groups: DISPLAY(6) + SYNC(3: AutoSync,SyncNow,ChangeWifi) + OTHER(1)
   auto content_h = [&]() -> int {
-    return group_h + (5 * row_h) + (4 * row_gap) + group_gap +
-           group_h + (2 * row_h) + row_gap       + group_gap +
-           group_h + row_h;
+    return group_h + (6 * row_h) + (5 * row_gap) + group_gap +
+           group_h + (3 * row_h) + (2 * row_gap) +
+           row_h;
   };
   const int avail = content_bottom - content_top;
   for (int iter = 0; iter < 120; ++iter) {
@@ -271,10 +327,12 @@ std::vector<uint8_t> render_settings_landscape_bitmap(const app::AppState& state
   int y = content_top;
 
   auto draw_group = [&](const char* name, const int first, const int count) {
-    ssl_text(image, left + 2,
-             ssl_ycenter(y, group_h, name, group_font),
-             name, group_font);
-    y += group_h;
+    if (name != nullptr && name[0] != '\0') {
+      ssl_text(image, left + 2,
+               ssl_ycenter(y, group_h, name, group_font),
+               name, group_font);
+      y += group_h;
+    }
 
     for (int i = 0; i < count; ++i) {
       const int idx = first + i;
@@ -285,7 +343,7 @@ std::vector<uint8_t> render_settings_landscape_bitmap(const app::AppState& state
 
       // Value (right side)
       const std::string val = ssl_trunc(
-          setting_value(state, item), value_font,
+          setting_value(state, item, s), value_font,
           std::max(120, ((right - left) * 50) / 100));
       const int val_w = ssl_tw(val, value_font);
       const int val_x = right - 12 - val_w;
@@ -296,7 +354,7 @@ std::vector<uint8_t> render_settings_landscape_bitmap(const app::AppState& state
       const int mk_x  = left + 2;
       const int lbl_x = mk_x + mk_w + 8;
       const int lbl_max = std::max(100, val_x - lbl_x - 12);
-      const std::string lbl = ssl_trunc(setting_label(item), rf, lbl_max);
+      const std::string lbl = ssl_trunc(setting_label(item, s), rf, lbl_max);
 
       ssl_text(image, mk_x,  ssl_ycenter(y0, row_h, marker, value_font), marker, value_font);
       ssl_text(image, lbl_x, ssl_ycenter(y0, row_h, lbl,    rf),         lbl,    rf);
@@ -310,9 +368,10 @@ std::vector<uint8_t> render_settings_landscape_bitmap(const app::AppState& state
     y += group_gap;
   };
 
-  draw_group("DISPLAY", 0, 5);
-  draw_group("SYNC",    5, 2);
-  draw_group("OTHER",   7, 1);
+  draw_group(s.settings_group_display, 0, 6);
+  draw_group(s.settings_group_sync,    6, 3);  // AutoSync, SyncNow, ChangeWifi
+  y = std::max(content_top, y - group_gap);
+  draw_group("",                     9, 1);  // ResetAndWipe
 
   // ── Footer ─────────────────────────────────────────────────────────────────
   fill_black_rect(image, left, footer_top - 1, right, footer_top);
@@ -325,7 +384,7 @@ std::vector<uint8_t> render_settings_landscape_bitmap(const app::AppState& state
              ssl_ycenter(footer_top, footer_h, notice, footer_font),
              notice, footer_font);
 
-  const std::string sync  = ssl_trunc(sync_footer_status(state), footer_font, 210);
+  const std::string sync  = ssl_trunc(sync_footer_status(state, s), footer_font, 210);
   const int sync_w        = ssl_tw(sync, footer_font);
   ssl_text(image, std::max(left, right - sync_w),
            ssl_ycenter(footer_top, footer_h, sync, footer_font),

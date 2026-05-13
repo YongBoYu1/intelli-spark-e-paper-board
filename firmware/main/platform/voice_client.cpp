@@ -1,5 +1,6 @@
 #include "platform/voice_client.hpp"
 
+#include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "mbedtls/base64.h"
@@ -114,60 +115,93 @@ static std::string extract_string(const std::string& json, const char* key) {
   return json.substr(start, end - start);
 }
 
-// Extract all {"tool":"...","args":{...}} objects from the actions array.
+// Parse one {"tool":"...","args":{...}} object from obj into action.
+static VoiceAction parse_action_object(const std::string& obj) {
+  VoiceAction action;
+  action.tool = extract_string(obj, "tool");
+
+  const size_t args_pos = obj.find("\"args\":");
+  if (args_pos != std::string::npos) {
+    size_t args_start = obj.find('{', args_pos + 7);
+    if (args_start != std::string::npos) {
+      int d = 0;
+      size_t args_end = args_start;
+      for (size_t i = args_start; i < obj.size(); i++) {
+        if (obj[i] == '{') d++;
+        else if (obj[i] == '}') {
+          d--;
+          if (d == 0) { args_end = i; break; }
+        }
+      }
+      action.args_json = obj.substr(args_start, args_end - args_start + 1);
+    }
+  }
+  return action;
+}
+
+// Extract action(s) from the response JSON.
+//
+// Supports two formats:
+//   1. Array  — "actions":[{"tool":"...","args":{...}}, ...]
+//      (legacy / alternative backend format)
+//   2. Singular — "action":{"tool":"...","args":{...}}
+//      (current backend: VoiceInterpretResponse.action)
+//
+// Returns an empty vector if neither key is found.
 static std::vector<VoiceAction> extract_actions(const std::string& json) {
   std::vector<VoiceAction> result;
-  // Locate "actions":[
+
+  // ── Format 1: plural array "actions":[...] ────────────────────────────────
   const size_t arr_start = json.find("\"actions\":[");
-  if (arr_start == std::string::npos) return result;
+  if (arr_start != std::string::npos) {
+    size_t pos = arr_start + 11;  // skip "actions":[
+    while (pos < json.size()) {
+      pos = json.find('{', pos);
+      if (pos == std::string::npos) break;
 
-  size_t pos = arr_start + 11;  // skip "actions":[
-  while (pos < json.size()) {
-    // Find next '{' (start of an action object)
-    pos = json.find('{', pos);
-    if (pos == std::string::npos) break;
-
-    // Find the matching '}' — simple brace counter (handles nested objects).
-    int depth = 0;
-    size_t obj_start = pos;
-    size_t obj_end   = pos;
-    for (size_t i = pos; i < json.size(); i++) {
-      if (json[i] == '{') depth++;
-      else if (json[i] == '}') {
-        depth--;
-        if (depth == 0) { obj_end = i; break; }
-      }
-    }
-    if (obj_end <= obj_start) break;
-
-    const std::string obj = json.substr(obj_start, obj_end - obj_start + 1);
-
-    VoiceAction action;
-    action.tool = extract_string(obj, "tool");
-
-    // Extract raw args JSON object.
-    const size_t args_pos = obj.find("\"args\":");
-    if (args_pos != std::string::npos) {
-      size_t args_start = obj.find('{', args_pos + 7);
-      if (args_start != std::string::npos) {
-        int d = 0;
-        size_t args_end = args_start;
-        for (size_t i = args_start; i < obj.size(); i++) {
-          if (obj[i] == '{') d++;
-          else if (obj[i] == '}') {
-            d--;
-            if (d == 0) { args_end = i; break; }
-          }
+      int depth = 0;
+      size_t obj_start = pos;
+      size_t obj_end   = pos;
+      for (size_t i = pos; i < json.size(); i++) {
+        if (json[i] == '{') depth++;
+        else if (json[i] == '}') {
+          depth--;
+          if (depth == 0) { obj_end = i; break; }
         }
-        action.args_json = obj.substr(args_start, args_end - args_start + 1);
       }
-    }
+      if (obj_end <= obj_start) break;
 
-    if (!action.tool.empty()) {
-      result.push_back(std::move(action));
+      VoiceAction action = parse_action_object(
+          json.substr(obj_start, obj_end - obj_start + 1));
+      if (!action.tool.empty()) result.push_back(std::move(action));
+      pos = obj_end + 1;
     }
-    pos = obj_end + 1;
+    return result;
   }
+
+  // ── Format 2: singular object "action":{...} ─────────────────────────────
+  // Backend (backend/voice_api/app.py) returns:
+  //   { "action": {"tool":"...", "args":{...}}, "plan":..., "transcript":"..." }
+  const size_t act_key = json.find("\"action\":");
+  if (act_key == std::string::npos) return result;
+
+  size_t obj_start = json.find('{', act_key + 9);  // skip past "action":
+  if (obj_start == std::string::npos) return result;
+
+  int depth = 0;
+  size_t obj_end = obj_start;
+  for (size_t i = obj_start; i < json.size(); i++) {
+    if (json[i] == '{') depth++;
+    else if (json[i] == '}') {
+      depth--;
+      if (depth == 0) { obj_end = i; break; }
+    }
+  }
+  if (obj_end <= obj_start) return result;
+
+  VoiceAction action = parse_action_object(
+      json.substr(obj_start, obj_end - obj_start + 1));
+  if (!action.tool.empty()) result.push_back(std::move(action));
   return result;
 }
 
@@ -185,11 +219,14 @@ static HttpResult http_post_json(const char* url,
   HttpResult result;
 
   esp_http_client_config_t cfg{};
-  cfg.url            = url;
-  cfg.method         = HTTP_METHOD_POST;
-  cfg.timeout_ms     = static_cast<int>(timeout_ms);
-  cfg.buffer_size    = 512;
-  cfg.buffer_size_tx = 512;
+  cfg.url                = url;
+  cfg.method             = HTTP_METHOD_POST;
+  cfg.timeout_ms         = static_cast<int>(timeout_ms);
+  cfg.buffer_size        = 512;
+  cfg.buffer_size_tx     = 512;
+  // Attach the bundled Mozilla CA store so HTTPS URLs are verified correctly.
+  // Has no effect for plain http:// connections.
+  cfg.crt_bundle_attach  = esp_crt_bundle_attach;
 
   esp_http_client_handle_t client = esp_http_client_init(&cfg);
   if (!client) {

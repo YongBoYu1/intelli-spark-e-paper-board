@@ -34,6 +34,7 @@ struct HomeDirtySnapshot {
   std::uint64_t hidden_reminder_digest{0};
   int hidden_reminder_count{0};
   std::string weather_condition{};
+  std::string weather_icon{};
   int weather_temperature_c{0};
   int weather_humidity_percent{0};
   std::string location{};

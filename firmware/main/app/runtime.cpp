@@ -6,6 +6,7 @@
 #include "platform/clock.hpp"
 #include "platform/display.hpp"
 #include "platform/panel_config.hpp"
+#include "platform/persistent_store.hpp"
 #include "ui/render_app.hpp"
 #include "ui/screens/home_screen.hpp"
 
@@ -34,6 +35,7 @@ constexpr double kHomeReminderReorderAreaLimitOverride = 0.30;
 constexpr double kHomeReminderCompactAreaLimitOverride = 0.40;
 constexpr double kHomeFocusMoveLeftTargetAreaLimitOverride = 0.35;
 constexpr double kHomeFocusCrossPanelAreaLimitOverride = 0.35;
+constexpr double kHomeFocusHideRowAreaLimitOverride = 0.35;
 constexpr bool kReinforceHomeFocusMoveLeftTargetPass = false;
 
 struct CalendarLandscapeRegions {
@@ -574,8 +576,34 @@ Runtime::Runtime(platform::Display& display) : display_(display) {}
 
 void Runtime::boot() {
   const std::uint64_t now_ms = platform::monotonic_ms();
-  const auto defaults = make_factory_defaults();
+  auto defaults = make_factory_defaults();
+
+  // ── Restore persisted user state from NVS ──────────────────────────────
+  // On first boot the NVS namespace is empty and persistent_load() returns
+  // all-defaults, so behaviour is unchanged.  After a successful setup the
+  // persisted flag prevents the device from falling back to the Landing
+  // screen after a watchdog or power-cycle reset.
+  const platform::PersistentState stored = platform::persistent_load();
+  if (stored.setup_completed) {
+    defaults.setup_completed = true;
+  }
+
   state_ = make_state_from_defaults(defaults, now_ms);
+
+  // Apply persisted overrides that live outside ProductDefaults.
+  if (stored.setup_completed) {
+    state_.setup_completed = true;
+    if (!stored.wifi_ssid.empty()) {
+      state_.onboarding.wifi_ssid = stored.wifi_ssid;
+    }
+    if (!stored.timezone.empty()) {
+      state_.onboarding.timezone = stored.timezone;
+    }
+    state_.device_language = language_from_index(stored.language_index);
+    state_.voice_locale    = state_.device_language;
+    state_.landing.language_index = stored.language_index;
+  }
+
   platform::apply_timezone(state_.onboarding.timezone);
   display_.init();
   stage_render();
@@ -587,7 +615,25 @@ void Runtime::dispatch(const Event& event) {
   if (effective.now_ms == 0) {
     effective.now_ms = platform::monotonic_ms();
   }
+
+  const bool prev_setup = state_.setup_completed;
   reduce(state_, effective);
+
+  // ── Persist state transitions to NVS ───────────────────────────────────
+  if (!prev_setup && state_.setup_completed) {
+    // Setup just completed — save everything the user configured.
+    platform::PersistentState stored;
+    stored.setup_completed = true;
+    stored.wifi_ssid       = state_.onboarding.wifi_ssid;
+    stored.timezone        = state_.onboarding.timezone;
+    stored.language_index  = language_index(state_.device_language);
+    platform::persistent_save(stored);
+  } else if (prev_setup && !state_.setup_completed) {
+    // Factory reset confirmed (ResetAndWipe) — erase NVS so next boot
+    // starts clean from the Landing screen.
+    platform::persistent_erase();
+  }
+
   platform::apply_timezone(state_.onboarding.timezone);
   stage_render();
   flush_pending(effective.now_ms);
@@ -600,6 +646,37 @@ void Runtime::flush_deferred(const std::uint64_t now_ms) {
 void Runtime::dispatch_voice_actions(
     const std::vector<fridge_ink::platform::VoiceAction>& actions) {
   apply_voice_actions(state_, actions);
+  stage_render();
+  flush_pending(platform::monotonic_ms());
+}
+
+void Runtime::apply_weather_result(const platform::WeatherResult& w) {
+  if (!w.ok) return;
+
+  auto& d = state_.dashboard;
+  d.location                = w.location;
+  d.weather_condition       = w.condition;
+  d.weather_icon            = w.icon_key;
+  d.weather_temperature_c   = w.temperature_c;
+  d.weather_feels_like_c    = w.feels_like_c;
+  d.weather_hi_c            = w.hi_c;
+  d.weather_lo_c            = w.lo_c;
+  d.weather_humidity_percent= w.humidity_percent;
+  d.weather_wind_kmh        = w.wind_kmh;
+  d.weather_uv_index        = w.uv_index;
+
+  for (std::size_t i = 0; i < w.forecast.size(); ++i) {
+    d.weather_forecast_days[i].dow       = w.forecast[i].dow;
+    d.weather_forecast_days[i].condition = w.forecast[i].condition;
+    d.weather_forecast_days[i].icon      = w.forecast[i].icon_key;
+    d.weather_forecast_days[i].hi_c      = w.forecast[i].hi_c;
+    d.weather_forecast_days[i].lo_c      = w.forecast[i].lo_c;
+  }
+
+  state_.home.weather_sync_state = "ok";
+  state_.weather.temperature_c   = w.temperature_c;
+  state_.weather.condition       = w.condition;
+
   stage_render();
   flush_pending(platform::monotonic_ms());
 }
@@ -854,6 +931,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
           {
               "home.menu_overlay_focus",
               "home.focus_move_row",
+              "home.focus_hide_row",
               "home.focus_move_left_target",
               "home.focus_to_left_panel",
               "home.focus_from_left_panel",
@@ -982,6 +1060,12 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
           effective_mode_limit,
           kHomeFocusCrossPanelAreaLimitOverride);
     }
+    if (pending_screen_ == Screen::Home &&
+        has_reason(pending_render_.dirty_reasons, "home.focus_hide_row")) {
+      effective_mode_limit = std::max(
+          effective_mode_limit,
+          kHomeFocusHideRowAreaLimitOverride);
+    }
     if (pending_screen_ == Screen::Memo &&
         has_reason(pending_render_.dirty_reasons, "memo.focus_move")) {
       effective_mode_limit = std::max(
@@ -1017,12 +1101,18 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
           pending_screen_ == Screen::Home &&
           (has_reason(pending_render_.dirty_reasons, "home.focus_to_left_panel") ||
            has_reason(pending_render_.dirty_reasons, "home.focus_from_left_panel"));
+      const bool reinforce_home_focus_hide_row =
+          pending_screen_ == Screen::Home &&
+          has_reason(pending_render_.dirty_reasons, "home.focus_hide_row");
 
       int partial_passes = 1;
       if (reinforce_home_reminder) {
         partial_passes = std::max(partial_passes, 2);
       }
       if (reinforce_home_focus_cross_panel) {
+        partial_passes = std::max(partial_passes, 2);
+      }
+      if (reinforce_home_focus_hide_row) {
         partial_passes = std::max(partial_passes, 2);
       }
 
@@ -1036,6 +1126,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             "[refresh] R1_PARTIAL_RECTS screen=%s count=%u rects=%s gate_ratio=%.3f limit=%.3f "
             "partial_count=%d/%d budget=%s passes=%d reinforce_home_reminder=%s "
             "reinforce_home_focus_left_target=%s reinforce_home_focus_cross_panel=%s "
+            "reinforce_home_focus_hide_row=%s "
             "force_calendar_partial=%s mode=%s dirty=%s",
             screen_name(pending_screen_),
             static_cast<unsigned>(aligned_rects.size()),
@@ -1049,6 +1140,7 @@ void Runtime::flush_pending(const std::uint64_t now_ms) {
             reinforce_home_reminder ? "on" : "off",
             reinforce_home_focus_left_target ? "on" : "off",
             reinforce_home_focus_cross_panel ? "on" : "off",
+            reinforce_home_focus_hide_row ? "on" : "off",
             calendar_force_partial ? "on" : "off",
             refresh_policy::mode_name(mode),
             format_reasons(pending_render_.dirty_reasons).c_str());
